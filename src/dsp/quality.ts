@@ -1,5 +1,3 @@
-import { absMaxNormalize } from './normalize.js';
-
 export function median3Profile(src: Float32Array): Float32Array {
   const n = src.length;
   const out = new Float32Array(n);
@@ -50,6 +48,5 @@ export function applyQualityAlgorithms(profile: Float32Array, algo: QualityAlgoN
     out = adaptiveFloorSuppressProfile(out);
     out = triSmoothProfile(out);
   }
-  absMaxNormalize(out);
   return out;
 }
