@@ -974,18 +974,23 @@
 
     const { a, b, gapMs } = genCalibrationReference();
 
+    // Ensure listen window is long enough for the reference signal
+    const maxRefLen = Math.max(a.length, b.length);
+    const refSec = maxRefLen / sr;
+    const calListenMs = Math.max(listenMs, Math.ceil((refSec + 0.05) * 1000));
+
     const tauL = [];
     const tauR = [];
     const pkL = [];
     const pkR = [];
 
-    log(`[cal] refined start: repeats=${repeats}, listen=${listenMs}ms`);
+    log(`[cal] refined start: repeats=${repeats}, listen=${calListenMs}ms`);
     for (let k=0;k<repeats;k++){
       log(`[cal] rep ${k+1}/${repeats}: L-only A…`);
-      const capLA = await pingAndCaptureOneSide(a, "L", gain, listenMs);
+      const capLA = await pingAndCaptureOneSide(a, "L", gain, calListenMs);
       await sleep(Math.max(0, gapMs));
       log(`[cal] rep ${k+1}/${repeats}: L-only B…`);
-      const capLB = await pingAndCaptureOneSide(b, "L", gain, listenMs);
+      const capLB = await pingAndCaptureOneSide(b, "L", gain, calListenMs);
 
       const mL = earlyPeakTauFromGolaySum(capLA.micWin, capLB.micWin, a, b);
       tauL.push(mL.tau);
@@ -994,10 +999,10 @@
       await sleep(repeatGap);
 
       log(`[cal] rep ${k+1}/${repeats}: R-only A…`);
-      const capRA = await pingAndCaptureOneSide(a, "R", gain, listenMs);
+      const capRA = await pingAndCaptureOneSide(a, "R", gain, calListenMs);
       await sleep(Math.max(0, gapMs));
       log(`[cal] rep ${k+1}/${repeats}: R-only B…`);
-      const capRB = await pingAndCaptureOneSide(b, "R", gain, listenMs);
+      const capRB = await pingAndCaptureOneSide(b, "R", gain, calListenMs);
 
       const mR = earlyPeakTauFromGolaySum(capRA.micWin, capRB.micWin, a, b);
       tauR.push(mR.tau);
