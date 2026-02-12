@@ -1,5 +1,4 @@
 import { store } from '../core/store.js';
-import { estimateMicXY } from '../spatial/geometry.js';
 import { log } from './readouts.js';
 import { renderCalibInfo } from './readouts.js';
 import { drawGeometry, getGeometryModelFromCurrent } from '../viz/geometry-plot.js';
@@ -62,7 +61,9 @@ export function applyGeometryWizard(): void {
       const rR = Math.hypot(h.mic.u - h.spR.u, micY - h.spR.f);
       s.calibration.distances = { L: rL, R: rR };
       s.calibration.micPosition = { x: micX, y: micY };
-      s.calibration.geometryError = estimateMicXY(rL, rR, dNew).err;
+      // geometryError now holds deltaConsistency (TDOA metric) — keep it
+      // unchanged since the wizard only adjusts visual geometry, not the
+      // underlying per-repeat TDOA measurements.
     }
   });
 

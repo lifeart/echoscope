@@ -36,5 +36,5 @@ export function assessMonoDecision(
   // Require ALL conditions: absolute time, relative time, peak similarity,
   // and spacing large enough to expect a difference
   const monoLikely = monoByTime && monoByRelTime && monoByPeak && expectDiff;
-  return { dt, dp, monoByTime, monoByPeak, expectDiff, monoLikely };
+  return { dt, dp, monoByTime, monoByRelTime, monoByPeak, expectDiff, monoLikely };
 }

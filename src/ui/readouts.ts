@@ -86,7 +86,7 @@ export function renderCalibInfo(): void {
     return;
   }
 
-  lines.push(`quality = ${calib.quality.toFixed(2)} (lock strength)`);
+  lines.push(`quality = ${calib.quality.toFixed(2)} (lock strength), angleReliable = ${calib.angleReliable ? 'YES' : 'no'}`);
   lines.push(`mono output likely = ${calib.monoLikely ? 'YES' : 'no'}`);
   lines.push(`d=${state.config.spacing.toFixed(3)}m, c=${state.config.speedOfSound.toFixed(1)}m/s`);
   lines.push(`tauMeasL=${(calib.tauMeasured.L * 1e3).toFixed(2)}ms (MAD=${(calib.tauMAD.L * 1e3).toFixed(2)}ms), peakL\u2248${calib.peaks.L.toFixed(3)}`);
@@ -94,7 +94,7 @@ export function renderCalibInfo(): void {
   lines.push(`tauSysCommon\u2248${(calib.systemDelay.common * 1e3).toFixed(2)}ms`);
   lines.push(`tauSysL\u2248${(calib.systemDelay.L * 1e3).toFixed(2)}ms, tauSysR\u2248${(calib.systemDelay.R * 1e3).toFixed(2)}ms`);
   lines.push(`rL\u2248${calib.distances.L.toFixed(3)}m, rR\u2248${calib.distances.R.toFixed(3)}m`);
-  lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, geomErr\u2248${calib.geometryError.toFixed(4)}`);
+  lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, deltaConsistency\u2248${calib.geometryError.toFixed(4)}`);
   lines.push(`env baseline = ${(calib.envBaseline && calib.envBaselinePings > 0) ? `YES (${calib.envBaselinePings} pings)` : 'no'}`);
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
   calibInfoEl.textContent = lines.join('\n');
@@ -104,8 +104,9 @@ export function renderCalibInfo(): void {
     const ma = s.monoAssessment;
     const t: string[] = [];
     t.push('Sanity decision breakdown (thresholds):');
-    t.push(`- |\u0394tau| = ${(ma.dt * 1e3).toFixed(3)} ms  (monoByTime if < 0.150 ms) => ${ma.monoByTime ? 'YES' : 'no'}`);
-    t.push(`- |\u0394peak| = ${ma.dp.toFixed(3)}     (monoByPeak if < 0.070) => ${ma.monoByPeak ? 'YES' : 'no'}`);
+    t.push(`- |\u0394tau| = ${(ma.dt * 1e3).toFixed(3)} ms  (monoByTime if < 0.070 ms) => ${ma.monoByTime ? 'YES' : 'no'}`);
+    t.push(`- |\u0394tau|/maxTDOA < 10%  (monoByRelTime) => ${ma.monoByRelTime ? 'YES' : 'no'}`);
+    t.push(`- |\u0394peak| = ${ma.dp.toFixed(3)}     (monoByPeak if < 0.050) => ${ma.monoByPeak ? 'YES' : 'no'}`);
     t.push(`- expectDiff = ${ma.expectDiff ? 'YES' : 'no'}  (based on d/c > 0.300 ms)`);
     t.push(`=> monoLikely = ${calib.monoLikely ? 'YES' : 'no'}`);
     t.push('');

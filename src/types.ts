@@ -113,6 +113,7 @@ export interface MonoAssessment {
   dt: number;
   dp: number;
   monoByTime: boolean;
+  monoByRelTime: boolean;
   monoByPeak: boolean;
   expectDiff: boolean;
   monoLikely: boolean;
