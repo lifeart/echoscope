@@ -97,6 +97,18 @@ export function renderCalibInfo(): void {
   lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, deltaConsistency\u2248${calib.geometryError.toFixed(4)}`);
   lines.push(`env baseline = ${(calib.envBaseline && calib.envBaselinePings > 0) ? `YES (${calib.envBaselinePings} pings)` : 'no'}`);
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
+
+  // Multiband info
+  if (calib.multiband) {
+    const mb = calib.multiband;
+    lines.push('');
+    lines.push(`Multiband: selected=${mb.selectedBand || '\u2014'} reason=${mb.selectionReason} agreement=${mb.bandAgreementCount}/${mb.bandResults.length}`);
+    for (const br of mb.bandResults) {
+      const tag = br.bandId === mb.selectedBand ? '\u2713' : ' ';
+      lines.push(`  [${tag}] ${br.bandId} ${br.bandHz[0]}\u2013${br.bandHz[1]}Hz: valid=${br.valid} q=${br.quality.toFixed(3)} tau=${(br.pilotTau * 1e3).toFixed(2)}ms cluster=${br.pilotClusterSize} angle=${br.angleReliable ? 'Y' : 'N'}`);
+    }
+  }
+
   calibInfoEl.textContent = lines.join('\n');
 
   if (sanityTextEl && calib.sanity.have) {

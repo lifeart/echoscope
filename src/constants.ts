@@ -64,3 +64,30 @@ export const MONO_THRESHOLDS = {
   peakDiff: 0.05,   // tighter peak similarity
   expectDiffSec: 0.0003,
 } as const;
+
+// --- Multiband calibration ---
+
+import type { BandConfig } from './types.js';
+
+/** Default frequency bands for multiband calibration (Phase 1: 2 bands) */
+export const MULTIBAND_BANDS: BandConfig[] = [
+  { id: 'M', label: 'Mid (900–2500 Hz)',      fLow: 900,  fHigh: 2500, filterTaps: 129 },
+  { id: 'H', label: 'High-mid (2500–5500 Hz)', fLow: 2500, fHigh: 5500, filterTaps: 129 },
+];
+
+/** Optional low band (Phase 2+ fallback) */
+export const MULTIBAND_BAND_L: BandConfig = {
+  id: 'L', label: 'Low-mid (300–900 Hz)', fLow: 300, fHigh: 900, filterTaps: 257,
+};
+
+/** Cross-band agreement window: two bands agree if |pilotTauA - pilotTauB| < this */
+export const MULTIBAND_AGREE_WIN = 0.0005; // 0.5 ms
+
+/** Calibration constants used by band runner */
+export const BAND_CALIB = {
+  TAU_MIN_ACOUSTIC: 0.0006,    // 0.6 ms coupling rejection floor
+  PILOT_PINGS: 8,
+  PILOT_CLUSTER_WIN: 0.0008,   // 0.8 ms pilot clustering diameter
+  CLUSTER_WINDOW: 0.0005,      // 0.5 ms repeat clustering diameter
+  EARLY_MS: 60,
+} as const;

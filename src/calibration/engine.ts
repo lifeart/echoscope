@@ -15,7 +15,10 @@ import { assessMonoDecision } from './mono-detect.js';
 import { computeCalibQuality } from './quality-score.js';
 import { computeEnvBaseline } from './env-baseline.js';
 import { estimateMicXY } from '../spatial/geometry.js';
-import type { CalibrationResult, CalibrationSanity, GolayConfig } from '../types.js';
+import { runBandCalibration, type RawPingCapture } from './band-runner.js';
+import { fuseBandResults, getSelectedBandResult } from './band-fusion.js';
+import { MULTIBAND_BANDS } from '../constants.js';
+import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo } from '../types.js';
 
 interface GolaySumResult {
   corr: Float32Array;
@@ -336,6 +339,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const PILOT_PINGS = 8;
   const pilotMeasurements: Array<{ meanTau: number; score: number }> = [];
 
+  // Store raw captures for multiband processing
+  const rawPilotCaptures: RawPingCapture[] = [];
+  const rawRepeatCaptures: RawPingCapture[] = [];
+
   console.debug(`[calib] pilot: capturing ${PILOT_PINGS} L/R pings, tauMinAcoustic=${(TAU_MIN_ACOUSTIC * 1000).toFixed(1)}ms...`);
   for (let pp = 0; pp < PILOT_PINGS; pp++) {
     const pCapLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
@@ -349,6 +356,12 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const pCapRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
     const pResR = golaySumCorrelation(pCapRA.micWin, pCapRB.micWin, a, b, sr);
+
+    // Save raw captures for multiband
+    rawPilotCaptures.push({
+      micLA: pCapLA.micWin, micLB: pCapLB.micWin,
+      micRA: pCapRA.micWin, micRB: pCapRB.micWin,
+    });
 
     // Collect ALL valid TDOA pairs per pilot ping (not just earliest)
     // so we can find acoustic modes even when coupling is the earliest/strongest
@@ -477,6 +490,12 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
     const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
+
+    // Save raw captures for multiband
+    rawRepeatCaptures.push({
+      micLA: capLA.micWin, micLB: capLB.micWin,
+      micRA: capRA.micWin, micRB: capRB.micWin,
+    });
 
     // --- Joint peak selection with TDOA gate + hard pilot window ---
     const candsL = findCandidatePeaks(resL.corr, earlyMs, sr);
@@ -798,21 +817,119 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
 
   console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.3=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15} angleReliable=${angleReliable}(maxDeltaDev=${maxDeltaDev.toFixed(3)}<0.6)`);
 
+  // --- Multiband analysis ---
+  // Run per-band calibration on the saved raw captures, then fuse.
+  // This uses the same mic captures but filtered into frequency bands.
+  // Multiband overrides (populated if multiband produces better results)
+  let multibandInfo: MultibandInfo | undefined;
+  let mbValid = valid;
+  let mbQuality = quality;
+  let mbAngleReliable = angleReliable;
+  let mbMonoLikely = mono.monoLikely;
+  let mbTauMeasured = { L: medTauL, R: medTauR };
+  let mbTauMAD = { L: madTauL, R: madTauR };
+  let mbPeaks = { L: medPkL, R: medPkR };
+  let mbGeometryError = deltaConsistency;
+  let mbDistances = { L: rL, R: rR };
+  let mbMicPosition = { x: micX, y: geo.y > 0 ? geo.y : micYPrior };
+  let mbSystemDelay = { common: tauSysCommon, L: tauSysL, R: tauSysR };
+
+  if (config.calibration.multiband && rawPilotCaptures.length > 0 && rawRepeatCaptures.length > 0) {
+    console.debug(`[calib] multiband: running ${MULTIBAND_BANDS.length} bands on ${rawPilotCaptures.length} pilot + ${rawRepeatCaptures.length} repeat captures`);
+
+    const bandResults = MULTIBAND_BANDS.map(band =>
+      runBandCalibration(band, rawPilotCaptures, rawRepeatCaptures, a, b, sr, d, c)
+    );
+
+    multibandInfo = fuseBandResults(bandResults);
+    const sel = getSelectedBandResult(multibandInfo);
+
+    console.debug(`[calib] multiband: selected=${multibandInfo.selectedBand} reason=${multibandInfo.selectionReason} agreement=${multibandInfo.bandAgreementCount} bands=${bandResults.map(b => `${b.bandId}(v=${b.valid} q=${b.quality.toFixed(3)})`).join(', ')}`);
+
+    // If multiband found a better result than wideband, override key fields
+    if (sel && sel.valid && sel.quality > quality) {
+      console.debug(`[calib] multiband: band ${sel.bandId} quality ${sel.quality.toFixed(3)} > wideband ${quality.toFixed(3)}, using multiband result`);
+
+      // Recompute geometry from the selected band's TDOA
+      const mbDeltaTau = sel.deltaTau;
+      const mbDeltaR = mbDeltaTau * c;
+
+      let mbMicX: number;
+      let mbRL: number;
+      let mbRR: number;
+
+      if (Math.abs(mbDeltaR) < 1e-6) {
+        mbMicX = 0;
+        mbRL = Math.sqrt((d / 2) * (d / 2) + micYPrior * micYPrior);
+        mbRR = mbRL;
+      } else {
+        const mbA = d / mbDeltaR;
+        const mbQa = mbA * mbA - 1;
+        const mbQb = mbA * mbDeltaR - d;
+        const mbQc = (mbDeltaR * mbDeltaR - d * d) / 4 - micYPrior * micYPrior;
+
+        if (Math.abs(mbQa) < 1e-12) {
+          mbMicX = mbQb !== 0 ? -mbQc / mbQb : 0;
+        } else {
+          const mbDisc = mbQb * mbQb - 4 * mbQa * mbQc;
+          if (mbDisc < 0) {
+            mbMicX = -mbDeltaR / 2;
+          } else {
+            const mbSqrtDisc = Math.sqrt(mbDisc);
+            const mbX1 = (-mbQb + mbSqrtDisc) / (2 * mbQa);
+            const mbX2 = (-mbQb - mbSqrtDisc) / (2 * mbQa);
+            const mbRL1 = -(mbA * mbX1 + mbDeltaR / 2);
+            const mbRL2 = -(mbA * mbX2 + mbDeltaR / 2);
+            if (mbRL1 > 0 && mbRL2 > 0) {
+              mbMicX = Math.abs(mbX1) <= Math.abs(mbX2) ? mbX1 : mbX2;
+            } else if (mbRL1 > 0) {
+              mbMicX = mbX1;
+            } else if (mbRL2 > 0) {
+              mbMicX = mbX2;
+            } else {
+              mbMicX = -mbDeltaR / 2;
+            }
+          }
+        }
+        mbRL = Math.sqrt((mbMicX + d / 2) * (mbMicX + d / 2) + micYPrior * micYPrior);
+        mbRR = Math.sqrt((mbMicX - d / 2) * (mbMicX - d / 2) + micYPrior * micYPrior);
+      }
+
+      // Apply multiband overrides
+      mbValid = sel.valid;
+      mbQuality = sel.quality;
+      mbAngleReliable = sel.angleReliable;
+      mbMonoLikely = sel.monoLikely;
+      mbTauMeasured = sel.tauMeasured;
+      mbTauMAD = sel.tauMAD;
+      mbPeaks = sel.peaks;
+      mbGeometryError = sel.deltaConsistency;
+      mbDistances = { L: mbRL, R: mbRR };
+      mbMicPosition = { x: mbMicX, y: micYPrior };
+      mbSystemDelay = {
+        common: Math.max(0, (sel.tauMeasured.L + sel.tauMeasured.R) / 2 - (mbRL + mbRR) / 2 / c),
+        L: Math.max(0, sel.tauMeasured.L - mbRL / c),
+        R: Math.max(0, sel.tauMeasured.R - mbRR / c),
+      };
+    }
+  }
+
   const result: CalibrationResult = {
-    valid,
-    quality,
-    angleReliable,
-    monoLikely: mono.monoLikely,
-    tauMeasured: { L: medTauL, R: medTauR },
-    tauMAD: { L: madTauL, R: madTauR },
-    peaks: { L: medPkL, R: medPkR },
-    distances: { L: rL, R: rR },
-    micPosition: { x: micX, y: geo.y > 0 ? geo.y : micYPrior },
-    systemDelay: { common: tauSysCommon, L: tauSysL, R: tauSysR },
-    geometryError: deltaConsistency,
+    valid: mbValid,
+    quality: mbQuality,
+    angleReliable: mbAngleReliable,
+    monoLikely: mbMonoLikely,
+    tauMeasured: mbTauMeasured,
+    tauMAD: mbTauMAD,
+    peaks: mbPeaks,
+    distances: mbDistances,
+    micPosition: mbMicPosition,
+    systemDelay: mbSystemDelay,
+    geometryError: mbGeometryError,
     envBaseline,
     envBaselinePings,
     sanity,
+    multiband: multibandInfo,
   };
 
   console.debug(`[calib] result: valid=${result.valid} quality=${result.quality.toFixed(3)} mono=${result.monoLikely} rL=${result.distances.L.toFixed(4)}m rR=${result.distances.R.toFixed(4)}m sysDelay={L:${(result.systemDelay.L * 1000).toFixed(3)}ms R:${(result.systemDelay.R * 1000).toFixed(3)}ms common:${(result.systemDelay.common * 1000).toFixed(3)}ms}`);

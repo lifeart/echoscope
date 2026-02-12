@@ -76,6 +76,57 @@ export interface DOAEstimate {
 }
 
 // --- Calibration ---
+
+/** Frequency band configuration for multiband calibration */
+export interface BandConfig {
+  /** Band identifier */
+  id: string;
+  /** Human-readable label */
+  label: string;
+  /** Lower cutoff frequency (Hz) */
+  fLow: number;
+  /** Upper cutoff frequency (Hz) */
+  fHigh: number;
+  /** FIR filter tap count (odd) */
+  filterTaps: number;
+}
+
+/** Per-band calibration result from band runner */
+export interface BandCalibrationResult {
+  bandId: string;
+  bandHz: [number, number];
+  valid: boolean;
+  quality: number;
+  angleReliable: boolean;
+  pilotTau: number;
+  pilotMAD: number;
+  pilotClusterSize: number;
+  pilotAboveFloor: boolean;
+  pilotWin: number;
+  repeatClusterSize: number;
+  softFilteredCount: number;
+  deltaConsistency: number;
+  maxDeltaDev: number;
+  corrQualOk: boolean;
+  tauMeasured: { L: number; R: number };
+  tauMAD: { L: number; R: number };
+  peaks: { L: number; R: number };
+  deltaTau: number;
+  monoLikely: boolean;
+}
+
+/** Multiband fusion summary attached to CalibrationResult */
+export interface MultibandInfo {
+  /** Which band was selected as the final answer */
+  selectedBand: string;
+  /** How many bands agreed on the same acoustic mode */
+  bandAgreementCount: number;
+  /** Per-band results for diagnostics */
+  bandResults: BandCalibrationResult[];
+  /** Why this band was selected */
+  selectionReason: 'agreement' | 'best-quality' | 'only-valid' | 'fallback';
+}
+
 export interface CalibrationResult {
   valid: boolean;
   quality: number;
@@ -93,6 +144,8 @@ export interface CalibrationResult {
   envBaseline: Float32Array | null;
   envBaselinePings: number;
   sanity: CalibrationSanity;
+  /** Multiband info (present when multiband calibration was used) */
+  multiband?: MultibandInfo;
 }
 
 export interface CalibrationSanity {
@@ -237,7 +290,7 @@ export interface AppConfig {
   directionAxis: 'horizontal' | 'vertical';
   clutterSuppression: { enabled: boolean; strength: number };
   envBaseline: { enabled: boolean; strength: number; pings: number };
-  calibration: { repeats: number; gapMs: number; useCalib: boolean };
+  calibration: { repeats: number; gapMs: number; useCalib: boolean; multiband: boolean };
   devicePreset: string;
   heatBins: number;
   speedOfSound: number;

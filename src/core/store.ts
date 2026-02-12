@@ -39,7 +39,7 @@ const defaultConfig: AppConfig = {
   directionAxis: 'horizontal',
   clutterSuppression: { enabled: true, strength: 0.65 },
   envBaseline: { enabled: true, strength: 0.55, pings: 4 },
-  calibration: { repeats: 3, gapMs: 120, useCalib: true },
+  calibration: { repeats: 3, gapMs: 120, useCalib: true, multiband: true },
   devicePreset: 'custom',
   heatBins: DEFAULT_HEAT_BINS,
   speedOfSound: SPEED_OF_SOUND,

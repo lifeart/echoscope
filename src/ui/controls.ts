@@ -51,6 +51,7 @@ export function readConfigFromDOM(): void {
     s.config.calibration.repeats = inputVal('calRepeats');
     s.config.calibration.gapMs = inputVal('calRepeatGapMs');
     s.config.calibration.useCalib = checkVal('useCalib');
+    s.config.calibration.multiband = checkVal('useMultiband');
   });
 }
 
