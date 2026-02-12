@@ -98,12 +98,17 @@ interface CandidatePeak {
   absVal: number;
 }
 
-/** Find the top N local maxima above 20% of the global max in the early window. */
+/**
+ * Find local maxima above 15% of the global max in the early window.
+ * Returns up to `maxPeaks` candidates, guaranteeing the earliest 5 peaks
+ * are always included (so the direct path isn't crowded out by stronger
+ * reflections in the top-N list).
+ */
 function findCandidatePeaks(
   corr: Float32Array,
   earlyMs: number,
   sampleRate: number,
-  maxPeaks = 5,
+  maxPeaks = 15,
 ): CandidatePeak[] {
   const earlyEnd = Math.min(corr.length, Math.floor(sampleRate * (earlyMs / 1000)));
   let globalMax = 0;
@@ -113,28 +118,35 @@ function findCandidatePeaks(
   }
   if (globalMax < 1e-9) return [];
 
-  const threshold = 0.20 * globalMax;
-  const peaks: CandidatePeak[] = [];
+  const threshold = 0.15 * globalMax;
+  const allPeaks: CandidatePeak[] = [];
   for (let i = 1; i < earlyEnd - 1; i++) {
     const v = Math.abs(corr[i]);
     if (v >= threshold && v >= Math.abs(corr[i - 1]) && v >= Math.abs(corr[i + 1])) {
-      peaks.push({ idx: i, tau: i / sampleRate, absVal: v });
+      allPeaks.push({ idx: i, tau: i / sampleRate, absVal: v });
     }
   }
-  peaks.sort((a, b) => b.absVal - a.absVal);
-  return peaks.slice(0, maxPeaks);
+  if (allPeaks.length <= maxPeaks) return allPeaks;
+
+  // Ensure earliest peaks are always represented (direct path protection)
+  allPeaks.sort((a, b) => a.idx - b.idx);
+  const earlyGuaranteed = 5;
+  const earliest = allPeaks.slice(0, earlyGuaranteed);
+  const rest = allPeaks.slice(earlyGuaranteed);
+  rest.sort((a, b) => b.absVal - a.absVal);
+  return [...earliest, ...rest.slice(0, maxPeaks - earlyGuaranteed)];
 }
 
 /**
  * Select the best (τL, τR) pair satisfying the TDOA constraint |τL − τR| ≤ maxTDOA.
  *
  * Strategy (among valid pairs with ≥30 % of the strongest pair's score):
- *  - If `anchorTau` is provided: pick the pair whose mean tau is closest
- *    to the anchor.  This locks subsequent repeats to the arrival cluster
- *    established by repeat 1, preventing mode-hopping between direct path
- *    and reflections.
- *  - Otherwise (first repeat / no anchor): pick the earliest pair.
+ *  - If `anchorTau` is provided (e.g. sanity check): pick the pair whose
+ *    mean tau is closest to the anchor.
+ *  - Otherwise (calibration loop): pick the earliest pair.
  *    Direct path always arrives before reflections.
+ *
+ * Cross-repeat consistency is handled by the caller via clustering, not here.
  */
 function selectTDOAPair(
   peaksL: CandidatePeak[],
@@ -239,11 +251,27 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   // At 48 kHz, d=0.195m: 0.568ms + 0.042ms = 0.610ms.
   const maxTDOA = d / c + 2 / sr;
 
-  const tauL: number[] = [], tauR: number[] = [];
-  const pkL: number[] = [], pkR: number[] = [];
-  let tauAnchor: number | undefined; // progressive anchor: set by repeat 1
+  // --- Pilot ping: steered Golay at θ=0° to find the acoustic arrival time ---
+  // Uses the STRONGEST correlation peak as reference.  This is almost always
+  // the main acoustic direct-path arrival (system delay + propagation).
+  // Coupling / electronic artifacts are weaker because they don't carry the
+  // full emitted signal energy through the speaker→air→mic path.
+  const pilotCapA = await pingAndCaptureSteered(a, 0, gain, listenMs);
+  await sleep(Math.max(0, gapMs));
+  const pilotCapB = await pingAndCaptureSteered(b, 0, gain, listenMs);
+  const pilotCorr = golaySumCorrelation(pilotCapA.micWin, pilotCapB.micWin, a, b, sr);
+  const pilotEarlyEnd = Math.min(pilotCorr.corr.length, Math.floor(sr * (earlyMs / 1000)));
+  const pilotPk = findPeakAbs(pilotCorr.corr, 0, pilotEarlyEnd);
+  const pilotTau = pilotPk.index / sr;
+  console.debug(`[calib] pilot ping: tau=${(pilotTau * 1000).toFixed(3)}ms idx=${pilotPk.index} peak=${pilotPk.absValue.toFixed(4)}`);
+  await sleep(repeatGap);
 
-  console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin)`);
+  interface RepeatMeasurement {
+    tauL: number; tauR: number; qualL: number; qualR: number; valid: boolean;
+  }
+  const allRepeats: RepeatMeasurement[] = [];
+
+  console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin) pilotAnchor=${(pilotTau * 1000).toFixed(3)}ms`);
 
   for (let k = 0; k < repeats; k++) {
     // --- Capture L channel ---
@@ -263,52 +291,63 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     // --- Joint peak selection with TDOA gate ---
     const candsL = findCandidatePeaks(resL.corr, earlyMs, sr);
     const candsR = findCandidatePeaks(resR.corr, earlyMs, sr);
-    const tdoaPair = selectTDOAPair(candsL, candsR, maxTDOA, tauAnchor);
-
-    let chosenTauL: number, chosenTauR: number;
-    let chosenIdxL: number, chosenIdxR: number;
+    // Anchor to pilot tau: ensures we pick the acoustic arrival, not coupling artifacts
+    const tdoaPair = selectTDOAPair(candsL, candsR, maxTDOA, pilotTau);
 
     if (tdoaPair) {
-      chosenTauL = tdoaPair.tauL;
-      chosenTauR = tdoaPair.tauR;
-      chosenIdxL = tdoaPair.idxL;
-      chosenIdxR = tdoaPair.idxR;
-      const avgTau = (tdoaPair.tauL + tdoaPair.tauR) / 2;
-      // Set anchor on first repeat; subsequent repeats lock to it
-      if (tauAnchor === undefined) tauAnchor = avgTau;
+      const corrQualL = correlationQuality(resL.corr, tdoaPair.idxL, sr);
+      const corrQualR = correlationQuality(resR.corr, tdoaPair.idxR, sr);
+      allRepeats.push({ tauL: tdoaPair.tauL, tauR: tdoaPair.tauR, qualL: corrQualL, qualR: corrQualR, valid: true });
       const delta = Math.abs(tdoaPair.tauL - tdoaPair.tauR) * 1000;
-      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms anchor=${(tauAnchor * 1000).toFixed(3)}ms candsL=${candsL.length} candsR=${candsR.length}`);
+      const dist = Math.abs((tdoaPair.tauL + tdoaPair.tauR) / 2 - pilotTau) * 1000;
+      console.debug(`[calib] repeat ${k + 1}/${repeats} OK: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms distFromPilot=${dist.toFixed(3)}ms corrQual=${corrQualL.toFixed(3)}/${corrQualR.toFixed(3)} candsL=${candsL.length} candsR=${candsR.length}`);
     } else {
-      // Fallback: onset detection per channel (no valid TDOA pair found)
+      // No valid TDOA pair — discard this repeat from stats (log for debug only)
       const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
       const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
-      chosenTauL = mL.tau;
-      chosenTauR = mR.tau;
-      chosenIdxL = mL.idx;
-      chosenIdxR = mR.idx;
-      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: NO valid pair (candsL=${candsL.length} candsR=${candsR.length}), onset fallback: L@${(mL.tau * 1000).toFixed(3)}ms R@${(mR.tau * 1000).toFixed(3)}ms`);
+      allRepeats.push({ tauL: mL.tau, tauR: mR.tau, qualL: 0, qualR: 0, valid: false });
+      console.debug(`[calib] repeat ${k + 1}/${repeats} DISCARDED: no valid TDOA pair (candsL=${candsL.length} candsR=${candsR.length}), onset: L@${(mL.tau * 1000).toFixed(3)}ms R@${(mR.tau * 1000).toFixed(3)}ms delta=${(Math.abs(mL.tau - mR.tau) * 1000).toFixed(3)}ms`);
     }
-
-    // Compute correlation quality (sidelobe RMS metric)
-    const corrQualL = correlationQuality(resL.corr, chosenIdxL, sr);
-    const corrQualR = correlationQuality(resR.corr, chosenIdxR, sr);
-    tauL.push(chosenTauL); pkL.push(corrQualL);
-    tauR.push(chosenTauR); pkR.push(corrQualR);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} quality: corrQualL=${corrQualL.toFixed(4)} corrQualR=${corrQualR.toFixed(4)} rawPeakL=${resL.rawPeak.toFixed(1)} rawPeakR=${resR.rawPeak.toFixed(1)} corrLenL=${resL.corr.length} corrLenR=${resR.corr.length}`);
 
     await sleep(repeatGap);
   }
 
-  const medTauL = median(tauL);
-  const medTauR = median(tauR);
-  const medPkL = median(pkL);
-  const medPkR = median(pkR);
-  const madTauL = mad(tauL, medTauL);
-  const madTauR = mad(tauR, medTauR);
+  // --- Cluster valid repeats by mean-tau proximity ---
+  // Finds the largest group of repeats whose mean arrival times are within
+  // 0.5ms of each other.  Eliminates mode-hopping between direct path and
+  // reflections across repeats.
+  const validRepeats = allRepeats.filter(r => r.valid);
+  const CLUSTER_WINDOW = 0.0005; // 0.5ms
+  let bestCluster: RepeatMeasurement[] = [];
 
+  for (let i = 0; i < validRepeats.length; i++) {
+    const center = (validRepeats[i].tauL + validRepeats[i].tauR) / 2;
+    const cluster = validRepeats.filter(r => {
+      const mean = (r.tauL + r.tauR) / 2;
+      return Math.abs(mean - center) <= CLUSTER_WINDOW;
+    });
+    if (cluster.length > bestCluster.length) {
+      bestCluster = cluster;
+    }
+  }
+
+  const clusterSize = bestCluster.length;
+  const tauL = bestCluster.map(r => r.tauL);
+  const tauR = bestCluster.map(r => r.tauR);
+  const pkL = bestCluster.map(r => r.qualL);
+  const pkR = bestCluster.map(r => r.qualR);
+
+  const medTauL = tauL.length > 0 ? median(tauL) : 0;
+  const medTauR = tauR.length > 0 ? median(tauR) : 0;
+  const medPkL = pkL.length > 0 ? median(pkL) : 0;
+  const medPkR = pkR.length > 0 ? median(pkR) : 0;
+  const madTauL = tauL.length > 1 ? mad(tauL, medTauL) : Infinity;
+  const madTauR = tauR.length > 1 ? mad(tauR, medTauR) : Infinity;
+
+  console.debug(`[calib] clustering: ${validRepeats.length}/${repeats} valid, cluster=${clusterSize} (window=${CLUSTER_WINDOW * 1000}ms)`);
+  console.debug(`[calib] all repeats: ${allRepeats.map((r, i) => `#${i + 1}${r.valid ? '' : '(disc)'} L=${(r.tauL * 1000).toFixed(3)} R=${(r.tauR * 1000).toFixed(3)}`).join(' | ')}`);
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
   console.debug(`[calib] correlation quality: medCorrQualL=${medPkL.toFixed(4)} medCorrQualR=${medPkR.toFixed(4)}`);
-  console.debug(`[calib] raw tauL=[${tauL.map(t => (t * 1000).toFixed(3)).join(', ')}]ms tauR=[${tauR.map(t => (t * 1000).toFixed(3)).join(', ')}]ms`);
 
   const rMin = 0.04;
   const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
@@ -416,13 +455,15 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   }
 
   // Mark calibration invalid when measurements are clearly unreliable
-  const maxMadMs = 1000 * Math.max(madTauL, madTauR);
+  const maxMadMs = Number.isFinite(madTauL) && Number.isFinite(madTauR)
+    ? 1000 * Math.max(madTauL, madTauR) : Infinity;
   const geometryValid = geo.err < 1.0; // y² was non-negative (triangle inequality holds)
-  const measurementsStable = maxMadMs < 5.0; // worst-channel MAD < 5ms
+  const measurementsStable = maxMadMs < 2.0; // worst-channel MAD < 2ms
   const micPlausible = Math.abs(geo.x) < d * 3; // mic X within 3× speaker spacing
-  const valid = measurementsStable && (geometryValid || micPlausible) && quality > 0.15;
+  const enoughRepeats = clusterSize >= 2; // need ≥2 consistent repeats
+  const valid = enoughRepeats && measurementsStable && (geometryValid || micPlausible) && quality > 0.15;
 
-  console.debug(`[calib] validity: valid=${valid} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
+  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
 
   const result: CalibrationResult = {
     valid,
