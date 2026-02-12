@@ -1,0 +1,1344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta name="theme-color" content="#111111"/>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>Echolocation Lab (MBP + iPhone)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0b0b; color:#eaeaea; }
+    header { padding:14px 14px 10px; position:sticky; top:0; background:rgba(11,11,11,.92); backdrop-filter: blur(8px); border-bottom:1px solid #222; z-index:2; }
+    h1 { margin:0; font-size:16px; font-weight:650; letter-spacing:.2px; }
+    main { padding:14px; max-width: 1100px; margin: 0 auto; }
+    .grid { display:grid; grid-template-columns: 1fr; gap:12px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 430px 1fr; } }
+    .card { border:1px solid #222; border-radius:12px; padding:12px; background:#111; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    label { display:block; font-size:12px; color:#bdbdbd; margin-bottom:4px; }
+    input[type="number"] { width: 112px; }
+    input, button, select { background:#0d0d0d; color:#eaeaea; border:1px solid #2a2a2a; border-radius:10px; padding:10px 10px; font-size:14px; }
+    input[type="range"] { width: 260px; }
+    input[type="checkbox"] { transform: scale(1.15); }
+    button { cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .hint { font-size:12px; color:#b8b8b8; line-height:1.35; margin:8px 0 0; }
+    .warn { color:#ffbf80; }
+    .ok { color:#a8ffb0; }
+    .bad { color:#ff8f8f; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; white-space:pre-wrap; }
+    canvas { width:100%; height:auto; background:#070707; border:1px solid #222; border-radius:12px; }
+    .small { font-size:12px; color:#bdbdbd; }
+    .pill { display:inline-block; padding:6px 10px; border:1px solid #2a2a2a; border-radius:999px; background:#0a0a0a; font-size:12px; color:#cfcfcf; }
+    details { border:1px solid #222; border-radius:12px; padding:10px; background:#0f0f0f; }
+    summary { cursor:pointer; user-select:none; font-weight:600; }
+    hr { border:0; border-top:1px solid #222; margin:12px 0; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Echolocation Lab — Stereo TX steering + matched filter (MBP + iPhone)</h1>
+</header>
+
+<main>
+  <div class="grid">
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <button id="btnInit">Init Audio</button>
+        <button id="btnPing" disabled>Ping</button>
+        <button id="btnScan" disabled>Scan</button>
+        <button id="btnStop" disabled>Stop</button>
+      </div>
+
+      <p class="hint warn">
+        Run on <b>https</b> (or localhost). Keep volume low to avoid feedback. On iPhone, tap buttons to start/resume audio.
+      </p>
+
+      <hr/>
+
+      <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="mode">
+            <option value="chirp">Chirp</option>
+            <option value="mls">MLS (PRBS)</option>
+            <option value="golay">Golay pair (A+B)</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Angle θ (deg): <span id="angleVal">0</span></label>
+          <input id="angle" type="range" min="-60" max="60" step="1" value="0"/>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Speaker spacing d (m)</label>
+          <input id="spacing" type="number" step="0.01" value="0.20">
+        </div>
+        <div>
+          <label>Speed of sound c (m/s)</label>
+          <input id="c" type="number" step="1" value="343">
+        </div>
+        <div>
+          <label>Output gain</label>
+          <input id="gain" type="number" step="0.01" value="0.22">
+        </div>
+      </div>
+
+      <div id="chirpBox" style="margin-top:10px">
+        <div class="row">
+          <div>
+            <label>Chirp f1 (Hz)</label>
+            <input id="f1" type="number" step="10" value="2000">
+          </div>
+          <div>
+            <label>Chirp f2 (Hz)</label>
+            <input id="f2" type="number" step="10" value="9000">
+          </div>
+          <div>
+            <label>Chirp T (ms)</label>
+            <input id="T" type="number" step="1" value="7">
+          </div>
+        </div>
+      </div>
+
+      <div id="mlsBox" style="display:none; margin-top:10px">
+        <div class="row">
+          <div>
+            <label>MLS order (m)</label>
+            <input id="mlsOrder" type="number" step="1" value="12">
+          </div>
+          <div>
+            <label>Chip rate (Hz)</label>
+            <input id="chipRate" type="number" step="50" value="4000">
+          </div>
+        </div>
+        <p class="hint">MLS length = 2^m − 1. Higher m improves SNR but increases compute.</p>
+      </div>
+
+      <div id="golayBox" style="display:none; margin-top:10px">
+        <div class="row">
+          <div>
+            <label>Golay order (n)</label>
+            <input id="golayOrder" type="number" step="1" value="10">
+          </div>
+          <div>
+            <label>Chip rate (Hz)</label>
+            <input id="golayChipRate" type="number" step="50" value="5000">
+          </div>
+          <div>
+            <label>Gap A→B (ms)</label>
+            <input id="golayGapMs" type="number" step="1" value="12">
+          </div>
+        </div>
+        <p class="hint">
+          Golay length = 2^n. Transmits A then B; correlations are summed (sidelobe cancellation → cleaner impulse response).
+        </p>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Listen window (ms)</label>
+          <input id="listenMs" type="number" step="5" value="140">
+        </div>
+        <div>
+          <label>Min range (m)</label>
+          <input id="minR" type="number" step="0.1" value="0.3">
+        </div>
+        <div>
+          <label>Max range (m)</label>
+          <input id="maxR" type="number" step="0.1" value="4.0">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Scan step (deg)</label>
+          <input id="scanStep" type="number" step="1" value="10">
+        </div>
+        <div>
+          <label>Scan dwell (ms)</label>
+          <input id="scanDwell" type="number" step="10" value="140">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div class="pill"><span id="bestReadout">Best: —</span></div>
+        <label style="display:flex; align-items:center; gap:8px; margin:0;">
+          <input id="showTrace" type="checkbox" checked>
+          Show best-target trace
+        </label>
+      </div>
+
+      <hr/>
+
+      <!-- Calibration -->
+      <div class="row" style="justify-content:space-between">
+        <button id="btnCalibrate" disabled>Calibrate (refined)</button>
+        <label style="display:flex; align-items:center; gap:8px; margin:0;">
+          <input id="useCalib" type="checkbox" checked>
+          Use calibration to lock direct-path search
+        </label>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Calibration repeats (N)</label>
+          <input id="calRepeats" type="number" step="1" value="3">
+        </div>
+        <div>
+          <label>Inter-repeat gap (ms)</label>
+          <input id="calRepeatGapMs" type="number" step="10" value="120">
+        </div>
+      </div>
+
+      <p class="hint">
+        Refined calibration runs L-only and R-only multiple times, takes medians, estimates per-channel system delays, and detects mono/stereo output behavior.
+      </p>
+
+      <div class="mono" id="calibInfo" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
+
+      <details style="margin-top:12px;">
+        <summary>Device Info</summary>
+        <div class="row" style="margin-top:10px;">
+          <button id="btnRefreshDevices" disabled>Refresh device list</button>
+          <span class="small">(Device labels appear after mic permission.)</span>
+        </div>
+        <div class="mono" id="deviceInfo" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
+      </details>
+
+      <div class="mono" id="log" style="margin-top:12px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a; min-height:130px;"></div>
+    </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="small">Top: Range profile. Bottom: Angle × Range heatmap + optional best-target trace overlay.</div>
+        <div class="small" id="status">Status: idle</div>
+      </div>
+
+      <div style="margin-top:10px">
+        <canvas id="profile" width="1000" height="260"></canvas>
+      </div>
+
+      <div style="margin-top:10px">
+        <canvas id="heatmap" width="1000" height="520"></canvas>
+      </div>
+
+      <p class="hint">
+        If audio goes silent after switching apps/locking screen: return and tap <b>Init Audio</b> to resume.
+      </p>
+    </section>
+
+  </div>
+</main>
+
+<script>
+(() => {
+  const el = (id) => document.getElementById(id);
+
+  const logEl = el("log");
+  const statusEl = el("status");
+  const bestReadoutEl = el("bestReadout");
+  const calibInfoEl = el("calibInfo");
+
+  const btnInit = el("btnInit");
+  const btnPing = el("btnPing");
+  const btnScan = el("btnScan");
+  const btnStop = el("btnStop");
+  const btnCalibrate = el("btnCalibrate");
+
+  const modeEl = el("mode");
+  const chirpBox = el("chirpBox");
+  const mlsBox = el("mlsBox");
+  const golayBox = el("golayBox");
+
+  const angleEl = el("angle");
+  const angleValEl = el("angleVal");
+
+  const showTraceEl = el("showTrace");
+  const useCalibEl = el("useCalib");
+
+  const btnRefreshDevices = el("btnRefreshDevices");
+  const deviceInfoEl = el("deviceInfo");
+
+  const profileCanvas = el("profile");
+  const heatCanvas = el("heatmap");
+  const pctx = profileCanvas.getContext("2d");
+  const hctx = heatCanvas.getContext("2d");
+
+  function log(msg) {
+    logEl.textContent += msg + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setStatus(msg) { statusEl.textContent = "Status: " + msg; }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+  function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+  angleEl.addEventListener("input", () => angleValEl.textContent = angleEl.value);
+
+  function syncModeUI() {
+    const m = modeEl.value;
+    chirpBox.style.display = (m === "chirp") ? "" : "none";
+    mlsBox.style.display = (m === "mls") ? "" : "none";
+    golayBox.style.display = (m === "golay") ? "" : "none";
+  }
+  modeEl.addEventListener("change", syncModeUI);
+  syncModeUI();
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  }
+
+  // ---------- Audio engine ----------
+  let ac = null;
+  let sr = 48000;
+  let micStream = null;
+  let micSource = null;
+  let micTapNode = null;
+  let useWorklet = false;
+
+  // Ring buffer
+  let ring = null;
+  let ringSize = 0;
+  let ringWrite = 0;
+
+  // Scan control
+  let scanning = false;
+
+  // Heatmap storage
+  let heat = null;
+  let heatAngles = [];
+  const heatBins = 240;
+
+  // Best-target trace storage
+  let bestBin = null;
+  let bestVal = null;
+
+  function resetHeat(angles) {
+    heatAngles = angles.slice();
+    heat = new Float32Array(heatAngles.length * heatBins);
+    heat.fill(0);
+    bestBin = new Int16Array(heatAngles.length);
+    bestVal = new Float32Array(heatAngles.length);
+    for (let i=0;i<heatAngles.length;i++){ bestBin[i] = -1; bestVal[i] = 0; }
+  }
+
+  function resumeIfSuspended() {
+    if (ac && ac.state !== "running") return ac.resume();
+    return Promise.resolve();
+  }
+
+  function allocRing(seconds=2.2) {
+    ringSize = Math.floor(sr * seconds);
+    ring = new Float32Array(ringSize);
+    ringWrite = 0;
+  }
+
+  function pushSamples(samples) {
+    const n = samples.length;
+    for (let i=0;i<n;i++){
+      ring[ringWrite] = samples[i];
+      ringWrite = (ringWrite + 1) % ringSize;
+    }
+  }
+
+  function readRingWindow(endIndexExclusive, length) {
+    const out = new Float32Array(length);
+    let idx = (endIndexExclusive - length) % ringSize;
+    if (idx < 0) idx += ringSize;
+    for (let i=0;i<length;i++){
+      out[i] = ring[idx];
+      idx = (idx + 1) % ringSize;
+    }
+    return out;
+  }
+
+  // ---------- Device info ----------
+  async function refreshDeviceInfo() {
+    const lines = [];
+    lines.push(`Time: ${new Date().toISOString()}`);
+    lines.push(`UserAgent: ${navigator.userAgent}`);
+    if (navigator.userAgentData && navigator.userAgentData.platform) lines.push(`UAData.platform: ${navigator.userAgentData.platform}`);
+    lines.push(`Platform: ${navigator.platform || "n/a"}`);
+    lines.push(`Languages: ${(navigator.languages || []).join(", ") || "n/a"}`);
+    lines.push(`SecureContext: ${window.isSecureContext}`);
+    lines.push("");
+
+    if (ac) {
+      lines.push(`AudioContext.state: ${ac.state}`);
+      lines.push(`AudioContext.sampleRate: ${ac.sampleRate} Hz`);
+      if (typeof ac.baseLatency === "number") lines.push(`AudioContext.baseLatency: ${ac.baseLatency.toFixed(4)} s`);
+      if (typeof ac.outputLatency === "number") lines.push(`AudioContext.outputLatency: ${ac.outputLatency.toFixed(4)} s`);
+    } else {
+      lines.push("AudioContext: not initialized");
+    }
+
+    lines.push("");
+    lines.push("MediaDevices:");
+    if (!navigator.mediaDevices) {
+      lines.push("  mediaDevices: not available");
+      deviceInfoEl.textContent = lines.join("\n");
+      return;
+    }
+
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const groups = { audioinput: [], audiooutput: [], videoinput: [], other: [] };
+      for (const d of devs) {
+        const k = groups[d.kind] ? d.kind : "other";
+        groups[k].push(d);
+      }
+      for (const kind of ["audioinput","audiooutput","videoinput","other"]) {
+        if (!groups[kind].length) continue;
+        lines.push(`  ${kind}:`);
+        for (const d of groups[kind]) {
+          const label = d.label || "(label hidden until permission)";
+          const id = d.deviceId ? (d.deviceId.length > 10 ? d.deviceId.slice(0,10)+"…" : d.deviceId) : "n/a";
+          const gid = d.groupId ? (d.groupId.length > 10 ? d.groupId.slice(0,10)+"…" : d.groupId) : "n/a";
+          lines.push(`    - label="${label}" id=${id} group=${gid}`);
+        }
+      }
+    } catch (e) {
+      lines.push("  enumerateDevices failed: " + (e?.message || e));
+    }
+
+    deviceInfoEl.textContent = lines.join("\n");
+  }
+
+  async function initAudio() {
+    if (ac) {
+      await resumeIfSuspended();
+      log("[ok] audio resumed");
+      await refreshDeviceInfo();
+      return;
+    }
+
+    ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
+    sr = ac.sampleRate;
+
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
+    });
+
+    micSource = ac.createMediaStreamSource(micStream);
+    allocRing(2.2);
+
+    useWorklet = false;
+    try {
+      const workletCode = `
+        class MicTapProcessor extends AudioWorkletProcessor {
+          process(inputs) {
+            const input = inputs[0];
+            if (input && input[0] && input[0].length) this.port.postMessage(input[0]);
+            return true;
+          }
+        }
+        registerProcessor('mic-tap', MicTapProcessor);
+      `;
+      const blob = new Blob([workletCode], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      await ac.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+
+      micTapNode = new AudioWorkletNode(ac, "mic-tap");
+      micTapNode.port.onmessage = (e) => {
+        const a = e.data;
+        const copy = new Float32Array(a.length);
+        copy.set(a);
+        pushSamples(copy);
+      };
+      micSource.connect(micTapNode);
+      useWorklet = true;
+    } catch (e) {
+      const sp = ac.createScriptProcessor(1024, 1, 1);
+      sp.onaudioprocess = (ev) => {
+        const input = ev.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(input.length);
+        copy.set(input);
+        pushSamples(copy);
+      };
+      micTapNode = sp;
+      micSource.connect(sp);
+      useWorklet = false;
+    }
+
+    await resumeIfSuspended();
+
+    btnPing.disabled = false;
+    btnScan.disabled = false;
+    btnStop.disabled = false;
+    btnCalibrate.disabled = false;
+    btnRefreshDevices.disabled = false;
+
+    log(`[ok] audio initialized: sr=${sr} Hz, capture=${useWorklet ? "AudioWorklet" : "ScriptProcessor"}, ring=${ringSize} samples`);
+    setStatus("ready");
+    await refreshDeviceInfo();
+    renderCalibInfo();
+  }
+
+  // ---------- Signal generation ----------
+  function hann(n, N) {
+    if (N <= 1) return 1;
+    return 0.5 - 0.5 * Math.cos(2 * Math.PI * n / (N - 1));
+  }
+  function fAttach(f){ return clamp(f, 800, 12000); }
+
+  function genChirp(f1, f2, Tms) {
+    f1 = fAttach(f1); f2 = fAttach(f2);
+    const T = Tms / 1000;
+    const N = Math.max(1, Math.floor(sr * T));
+    const out = new Float32Array(N);
+    const k = (f2 - f1) / T;
+    for (let n=0;n<N;n++){
+      const t = n / sr;
+      const phase = 2*Math.PI*(f1*t + 0.5*k*t*t);
+      out[n] = Math.sin(phase) * hann(n, N);
+    }
+    return out;
+  }
+
+  // Golay
+  function genGolayPair(orderN) {
+    const n = orderN|0;
+    if (n < 1 || n > 14) throw new Error("Golay order must be 1..14 (length 2^n)");
+    let A = new Int8Array([1]);
+    let B = new Int8Array([1]);
+    for (let k=0;k<n;k++){
+      const A2 = new Int8Array(A.length + B.length);
+      const B2 = new Int8Array(A.length + B.length);
+      A2.set(A, 0);
+      A2.set(B, A.length);
+      B2.set(A, 0);
+      for (let i=0;i<B.length;i++) B2[A.length + i] = -B[i];
+      A = A2; B = B2;
+    }
+    return { A, B };
+  }
+
+  function chipBinarySequence(seq, chipRate, amplitude=0.6) {
+    const chipSamps = Math.max(1, Math.floor(sr / chipRate));
+    const N = seq.length * chipSamps;
+    const out = new Float32Array(N);
+    let k=0;
+    for (let i=0;i<seq.length;i++){
+      const v = seq[i] * amplitude;
+      for (let j=0;j<chipSamps;j++) out[k++] = v;
+    }
+    const fade = Math.min(192, out.length);
+    for (let i=0;i<fade;i++){
+      const g = i/fade;
+      out[i] *= g;
+      out[out.length-1-i] *= g;
+    }
+    return out;
+  }
+
+  function genGolayChipped(orderN, chipRate) {
+    const { A, B } = genGolayPair(orderN);
+    const a = chipBinarySequence(A, chipRate, 0.55);
+    const b = chipBinarySequence(B, chipRate, 0.55);
+    return { a, b };
+  }
+
+  // MLS (kept minimal; calibration uses Golay)
+  function genMLS(order) {
+    const m = order|0;
+    if (m < 2 || m > 16) throw new Error("MLS order must be 2..16");
+    const tapsMap = {
+      2: [2,1], 3:[3,2], 4:[4,3], 5:[5,3], 6:[6,5], 7:[7,6], 8:[8,6,5,4],
+      9:[9,5], 10:[10,7], 11:[11,9], 12:[12,6,4,1], 13:[13,4,3,1],
+      14:[14,5,3,1], 15:[15,14], 16:[16,15,13,4]
+    };
+    const taps = tapsMap[m];
+    const L = (1<<m) - 1;
+    let reg = (1<<m) - 1;
+    const seq = new Int8Array(L);
+    for (let i=0;i<L;i++){
+      const lsb = reg & 1;
+      seq[i] = lsb ? 1 : -1;
+      let fb = 0;
+      for (let t=0;t<taps.length;t++){
+        const bitIndex = taps[t] - 1;
+        fb ^= (reg >> bitIndex) & 1;
+      }
+      reg = (reg >> 1) | (fb << (m-1));
+    }
+    return seq;
+  }
+
+  function genMLSChipped(order, chipRate) {
+    return chipBinarySequence(genMLS(order), chipRate, 0.6);
+  }
+
+  // ---------- Stereo TX building ----------
+  function buildStereoPingCustom(mono, gainL, gainR, delayL, delayR) {
+    const buf = ac.createBuffer(1, mono.length, sr);
+    buf.copyToChannel(mono, 0);
+
+    const srcL = ac.createBufferSource();
+    const srcR = ac.createBufferSource();
+    srcL.buffer = buf;
+    srcR.buffer = buf;
+
+    const gL = ac.createGain();
+    const gR = ac.createGain();
+    gL.gain.value = gainL;
+    gR.gain.value = gainR;
+
+    const dL = ac.createDelay(0.12);
+    const dR = ac.createDelay(0.12);
+    dL.delayTime.value = delayL;
+    dR.delayTime.value = delayR;
+
+    const merger = ac.createChannelMerger(2);
+    srcL.connect(gL).connect(dL).connect(merger, 0, 0);
+    srcR.connect(gR).connect(dR).connect(merger, 0, 1);
+
+    return { srcL, srcR, out: merger, pingSec: mono.length/sr, delayL, delayR };
+  }
+
+  function buildSteeredStereoPing(mono, dtSeconds, gain) {
+    const t0 = 0.012;
+    let delayL = t0, delayR = t0;
+    if (dtSeconds >= 0) delayR = t0 + dtSeconds;
+    else delayL = t0 + (-dtSeconds);
+    return buildStereoPingCustom(mono, gain, gain, delayL, delayR);
+  }
+
+  // ---------- Matched filtering ----------
+  function correlate(x, s) {
+    const Nx = x.length, Ns = s.length;
+    const L = Nx - Ns + 1;
+    const out = new Float32Array(L);
+    for (let tau=0;tau<L;tau++){
+      let acc=0;
+      for (let i=0;i<Ns;i++) acc += x[tau+i]*s[i];
+      out[tau]=acc;
+    }
+    return out;
+  }
+
+  function absMaxNormalize(a) {
+    let mx=0;
+    for (let i=0;i<a.length;i++){ const v=Math.abs(a[i]); if(v>mx) mx=v; }
+    if (mx <= 1e-12) return a;
+    const inv = 1/mx;
+    for (let i=0;i<a.length;i++) a[i]*=inv;
+    return a;
+  }
+
+  function findPeak(a, start=0, end=a.length) {
+    let bestI=start, bestV=-Infinity;
+    for (let i=start;i<end;i++){
+      const v=a[i];
+      if (v>bestV){ bestV=v; bestI=i; }
+    }
+    return { index: bestI, value: bestV };
+  }
+
+  function median(arr) {
+    const a = arr.slice().sort((x,y)=>x-y);
+    const n = a.length;
+    if (!n) return NaN;
+    if (n%2) return a[(n/2)|0];
+    return 0.5*(a[n/2-1] + a[n/2]);
+  }
+
+  function mad(arr, med) {
+    // median absolute deviation
+    const d = arr.map(x => Math.abs(x - med));
+    return median(d);
+  }
+
+  // Direct-path search: early OR locked around predicted (only if calibration quality ok)
+  function findDirectPathTau(corr, predictedTau0SecOrNull, lockStrength) {
+    const earlyEnd = Math.min(corr.length, Math.floor(sr * 0.060)); // 60ms
+    if (predictedTau0SecOrNull === null || !Number.isFinite(predictedTau0SecOrNull) || lockStrength <= 0) {
+      const dp = findPeak(corr, 0, earlyEnd);
+      return dp.index / sr;
+    }
+    const center = Math.floor(predictedTau0SecOrNull * sr);
+    const winSec = 0.006 + 0.010*(1.0 - lockStrength); // tighter if high quality
+    const win = Math.floor(sr * winSec);
+    const start = clamp(center - win, 0, corr.length);
+    const end = clamp(center + win, 0, corr.length);
+    if (end - start < 64) {
+      const dp = findPeak(corr, 0, earlyEnd);
+      return dp.index / sr;
+    }
+    const dp = findPeak(corr, start, end);
+    // If too weak, fallback
+    if (Math.abs(dp.value) < 0.06) {
+      const fb = findPeak(corr, 0, earlyEnd);
+      return fb.index / sr;
+    }
+    return dp.index / sr;
+  }
+
+  function pickBestFromProfile(prof) {
+    let bi = 0, bv = -Infinity;
+    for (let i=0;i<prof.length;i++){
+      const v = prof[i];
+      if (v > bv) { bv = v; bi = i; }
+    }
+    return { bin: bi, val: (bv < 0 ? 0 : bv) };
+  }
+
+  // ---------- Visualization ----------
+  function clearCanvas(ctx, w, h) {
+    ctx.fillStyle = "#070707";
+    ctx.fillRect(0,0,w,h);
+  }
+
+  function drawProfile(corr, tau0, c, minR, maxR) {
+    const w = profileCanvas.width, h = profileCanvas.height;
+    clearCanvas(pctx, w, h);
+
+    pctx.strokeStyle = "#333";
+    pctx.lineWidth = 1;
+    pctx.beginPath();
+    pctx.moveTo(50, 10);
+    pctx.lineTo(50, h-30);
+    pctx.lineTo(w-10, h-30);
+    pctx.stroke();
+
+    const minTau = (2*minR)/c;
+    const maxTau = (2*maxR)/c;
+
+    pctx.strokeStyle = "#8dd0ff";
+    pctx.lineWidth = 2;
+    pctx.beginPath();
+    let started=false;
+
+    for (let i=0;i<corr.length;i++){
+      const tau = (i/sr) - tau0;
+      if (tau < minTau || tau > maxTau) continue;
+      const R = (c*tau)/2;
+
+      const x = 50 + (R - minR) / (maxR - minR) * (w - 70);
+      const y = (h-30) - ((corr[i] * 0.5 + 0.5) * (h-50));
+
+      if (!started) { pctx.moveTo(x,y); started=true; }
+      else pctx.lineTo(x,y);
+    }
+    pctx.stroke();
+
+    pctx.fillStyle = "#bdbdbd";
+    pctx.font = "12px system-ui";
+    pctx.fillText(`Range profile (calibrated). minR=${minR}m maxR=${maxR}m`, 54, 22);
+  }
+
+  function drawHeatmap(minR, maxR) {
+    const w = heatCanvas.width, h = heatCanvas.height;
+    clearCanvas(hctx, w, h);
+
+    if (!heat || heatAngles.length === 0) return;
+
+    let mx=1e-9;
+    for (let i=0;i<heat.length;i++) if (heat[i]>mx) mx=heat[i];
+
+    const rows = heatAngles.length;
+    const cols = heatBins;
+
+    const img = hctx.createImageData(w, h);
+    const data = img.data;
+
+    for (let y=0;y<h;y++){
+      const rowF = y/(h-1);
+      const r = Math.floor(rowF*(rows-1));
+      for (let x=0;x<w;x++){
+        const colF = x/(w-1);
+        const c = Math.floor(colF*(cols-1));
+        const v = heat[r*cols + c] / mx;
+        const g = Math.floor(255 * clamp(v,0,1));
+        const idx = (y*w + x)*4;
+        data[idx+0]=g; data[idx+1]=g; data[idx+2]=g; data[idx+3]=255;
+      }
+    }
+    hctx.putImageData(img, 0, 0);
+
+    hctx.fillStyle = "#eaeaea";
+    hctx.font = "12px system-ui";
+    hctx.fillText("Angle × Range heatmap (brighter = stronger echo energy)", 12, 18);
+
+    hctx.fillStyle = "#bdbdbd";
+    hctx.fillText(`angles: ${heatAngles[0]}..${heatAngles[heatAngles.length-1]} deg`, 12, 36);
+    hctx.fillText(`range: ${minR}..${maxR} m`, 12, 52);
+
+    if (showTraceEl.checked && bestBin && bestBin.length === rows) {
+      hctx.strokeStyle = "rgba(255,120,120,0.95)";
+      hctx.lineWidth = 2;
+      hctx.beginPath();
+      let started=false;
+      for (let r=0;r<rows;r++){
+        const b = bestBin[r];
+        if (b < 0) continue;
+        const x = (b/(cols-1)) * (w-1);
+        const y = (r/(rows-1)) * (h-1);
+        if (!started) { hctx.moveTo(x,y); started=true; }
+        else hctx.lineTo(x,y);
+      }
+      hctx.stroke();
+
+      hctx.fillStyle = "rgba(255,120,120,0.95)";
+      for (let r=0;r<rows;r++){
+        const b = bestBin[r];
+        if (b < 0) continue;
+        const x = (b/(cols-1)) * (w-1);
+        const y = (r/(rows-1)) * (h-1);
+        hctx.beginPath(); hctx.arc(x, y, 3, 0, Math.PI*2); hctx.fill();
+      }
+      hctx.fillText("Best-target trace", 12, 70);
+    }
+  }
+
+  // ---------- Calibration state ----------
+  const calib = {
+    valid: false,
+    quality: 0,      // 0..1 used as lockStrength
+    monoLikely: false,
+
+    d: NaN,
+    c: NaN,
+
+    // measured direct path times (seconds) for each channel (median)
+    tauMeasL: NaN,
+    tauMeasR: NaN,
+
+    // peak strengths (median)
+    peakL: NaN,
+    peakR: NaN,
+
+    // estimated acoustic distances (meters) (relative, after tauSysCommon)
+    rL: NaN,
+    rR: NaN,
+
+    // estimated mic position relative to speaker line
+    x: NaN,
+    y: NaN,
+    geomErr: NaN,
+
+    // estimated system delays (seconds) per channel
+    tauSysCommon: NaN,
+    tauSysL: NaN,
+    tauSysR: NaN,
+
+    // variability metrics
+    tauMadL: NaN,
+    tauMadR: NaN
+  };
+
+  function renderCalibInfo() {
+    const lines = [];
+    lines.push(`Calibration: ${calib.valid ? "VALID" : "not calibrated"}`);
+    if (!calib.valid) {
+      lines.push("Tap: Calibrate (refined)");
+      lines.push("Goal: robust direct-path locking across devices / speaker-mic geometries.");
+      calibInfoEl.textContent = lines.join("\n");
+      return;
+    }
+
+    lines.push(`quality = ${calib.quality.toFixed(2)} (lock strength)`);
+    lines.push(`mono output likely = ${calib.monoLikely ? "YES" : "no"}`);
+    lines.push(`d=${calib.d.toFixed(3)}m, c=${calib.c.toFixed(1)}m/s`);
+    lines.push(`tauMeasL=${(calib.tauMeasL*1e3).toFixed(2)}ms (MAD=${(calib.tauMadL*1e3).toFixed(2)}ms), peakL≈${calib.peakL.toFixed(3)}`);
+    lines.push(`tauMeasR=${(calib.tauMeasR*1e3).toFixed(2)}ms (MAD=${(calib.tauMadR*1e3).toFixed(2)}ms), peakR≈${calib.peakR.toFixed(3)}`);
+    lines.push(`tauSysCommon≈${(calib.tauSysCommon*1e3).toFixed(2)}ms`);
+    lines.push(`tauSysL≈${(calib.tauSysL*1e3).toFixed(2)}ms, tauSysR≈${(calib.tauSysR*1e3).toFixed(2)}ms`);
+    lines.push(`rL≈${calib.rL.toFixed(3)}m, rR≈${calib.rR.toFixed(3)}m`);
+    lines.push(`mic(x,y)≈(${calib.x.toFixed(3)}, ${calib.y.toFixed(3)})m, geomErr≈${calib.geomErr.toFixed(4)}`);
+    lines.push(`Direct-path lock: ${(useCalibEl.checked && calib.quality>0.2) ? "ON" : "OFF/weak"}`);
+    calibInfoEl.textContent = lines.join("\n");
+  }
+
+  function estimateMicXY(rL, rR, d) {
+    const x = (rL*rL - rR*rR) / (2*d);
+    const y2 = rL*rL - (x + d/2)*(x + d/2);
+    const y = Math.sqrt(Math.max(0, y2));
+    const y2b = rR*rR - (x - d/2)*(x - d/2);
+    const err = Math.abs(y2 - y2b);
+    return { x, y, err };
+  }
+
+  function predictedTau0ForPing(delayL, delayR) {
+    if (!calib.valid || !useCalibEl.checked) return null;
+    // Only lock strongly if calibration quality is decent.
+    const lockStrength = calib.quality;
+    if (lockStrength <= 0.2) return null;
+
+    // per-channel prediction: tauSys + output delay + (r/c)
+    const tL = calib.tauSysL + delayL + (calib.rL / calib.c);
+    const tR = calib.tauSysR + delayR + (calib.rR / calib.c);
+    return Math.min(tL, tR);
+  }
+
+  // ---------- Calibration measurement helpers ----------
+  function genCalibrationReference() {
+    // Always use Golay for calibration (cleanest direct path)
+    const n = parseInt(el("golayOrder").value, 10);
+    const chipRate = parseFloat(el("golayChipRate").value);
+    const gapMs = Math.max(6, parseFloat(el("golayGapMs").value));
+    const { a, b } = genGolayChipped(n, chipRate);
+    return { a, b, gapMs };
+  }
+
+  function buildCorrelationSumForGolay(micWin, a, b, gapMsBetweenCapturesIgnored) {
+    // Note: micWin is per capture. For calibration we capture A and B separately.
+    // Here we keep function signatures from earlier patterns; not used directly.
+    return null;
+  }
+
+  async function pingAndCaptureOneSide(monoRef, which, gain, listenMs) {
+    const delay = 0.012;
+    const gL = (which === "L") ? gain : 0.0;
+    const gR = (which === "R") ? gain : 0.0;
+
+    const ping = buildStereoPingCustom(monoRef, gL, gR, delay, delay);
+    ping.out.connect(ac.destination);
+
+    const tStart = ac.currentTime + 0.03;
+    ping.srcL.start(tStart);
+    ping.srcR.start(tStart);
+
+    const emitDelay = delay + ping.pingSec;
+    await sleep((emitDelay + 0.040) * 1000);
+
+    const end = ringWrite;
+    const listenSamples = Math.max(2048, Math.floor(sr * (listenMs/1000)));
+    const micWin = readRingWindow(end, listenSamples);
+
+    ping.out.disconnect();
+    return { micWin, which, delay };
+  }
+
+  function earlyPeakTauFromGolaySum(micWinA, micWinB, a, b) {
+    const corrA = correlate(micWinA, a); absMaxNormalize(corrA);
+    const corrB = correlate(micWinB, b); absMaxNormalize(corrB);
+    const L = Math.min(corrA.length, corrB.length);
+    const sum = new Float32Array(L);
+    for (let i=0;i<L;i++) sum[i] = corrA[i] + corrB[i];
+    absMaxNormalize(sum);
+
+    const earlyEnd = Math.min(sum.length, Math.floor(sr * 0.060)); // 60ms
+    const pk = findPeak(sum, 0, earlyEnd);
+    return { tau: pk.index/sr, peak: pk.value };
+  }
+
+  // Mono-output detector:
+  // If L-only and R-only produce almost identical tau and peak stats, output routing likely mono.
+  function assessMonoLikelihood(tauL, tauR, peakL, peakR, d, c) {
+    const dt = Math.abs(tauL - tauR);
+    const dp = Math.abs(peakL - peakR);
+    // If timing differs by less than ~0.15ms and peaks within 0.07, it's very likely mono.
+    // (0.15ms corresponds to ~5cm acoustic difference at 343m/s)
+    const monoByTime = dt < 0.00015;
+    const monoByPeak = dp < 0.07;
+    // Also: if speaker spacing is large enough that we'd *expect* difference
+    // but we see none, increase confidence.
+    const expectDiff = (d/c) > 0.0003; // 0.3ms scale
+    return (monoByTime && monoByPeak && expectDiff);
+  }
+
+  // Compute calibration quality 0..1
+  function computeCalibQuality(stats) {
+    // stats: {tauMadL, tauMadR, peakL, peakR, geomErr, monoLikely}
+    // Smaller MAD => better. Larger peaks => better.
+    const madMs = 1000 * Math.max(stats.tauMadL, stats.tauMadR); // ms
+    const madScore = clamp(1.0 - (madMs / 1.2), 0, 1); // <=1.2ms MAD is okay
+    const peakScore = clamp((Math.min(stats.peakL, stats.peakR) - 0.10) / 0.25, 0, 1); // peaks above ~0.35 are great
+    const geomScore = clamp(1.0 - (stats.geomErr / 0.05), 0, 1); // heuristic
+    const monoPenalty = stats.monoLikely ? 0.25 : 1.0;
+    // combine
+    return clamp(0.45*madScore + 0.35*peakScore + 0.20*geomScore, 0, 1) * monoPenalty;
+  }
+
+  async function calibrateRefined() {
+    if (!ac) throw new Error("Init audio first");
+    await resumeIfSuspended();
+    setStatus("calibrating");
+
+    const d = parseFloat(el("spacing").value);
+    const c = parseFloat(el("c").value);
+    const gain = parseFloat(el("gain").value);
+    const listenMs = Math.max(140, parseFloat(el("listenMs").value)); // stable early search
+    const repeats = clamp(parseInt(el("calRepeats").value, 10) || 1, 1, 9);
+    const repeatGap = Math.max(30, parseFloat(el("calRepeatGapMs").value));
+
+    if (!(d > 0.02)) throw new Error("Speaker spacing d must be set (meters)");
+    if (!(c > 200 && c < 400)) throw new Error("Speed of sound c looks wrong");
+
+    const { a, b, gapMs } = genCalibrationReference();
+
+    const tauL = [];
+    const tauR = [];
+    const pkL = [];
+    const pkR = [];
+
+    log(`[cal] refined start: repeats=${repeats}, listen=${listenMs}ms`);
+    for (let k=0;k<repeats;k++){
+      log(`[cal] rep ${k+1}/${repeats}: L-only A…`);
+      const capLA = await pingAndCaptureOneSide(a, "L", gain, listenMs);
+      await sleep(Math.max(0, gapMs));
+      log(`[cal] rep ${k+1}/${repeats}: L-only B…`);
+      const capLB = await pingAndCaptureOneSide(b, "L", gain, listenMs);
+
+      const mL = earlyPeakTauFromGolaySum(capLA.micWin, capLB.micWin, a, b);
+      tauL.push(mL.tau);
+      pkL.push(mL.peak);
+
+      await sleep(repeatGap);
+
+      log(`[cal] rep ${k+1}/${repeats}: R-only A…`);
+      const capRA = await pingAndCaptureOneSide(a, "R", gain, listenMs);
+      await sleep(Math.max(0, gapMs));
+      log(`[cal] rep ${k+1}/${repeats}: R-only B…`);
+      const capRB = await pingAndCaptureOneSide(b, "R", gain, listenMs);
+
+      const mR = earlyPeakTauFromGolaySum(capRA.micWin, capRB.micWin, a, b);
+      tauR.push(mR.tau);
+      pkR.push(mR.peak);
+
+      await sleep(repeatGap);
+    }
+
+    // Robust medians and MAD
+    const medTauL = median(tauL);
+    const medTauR = median(tauR);
+    const medPkL = median(pkL);
+    const medPkR = median(pkR);
+    const madTauL = mad(tauL, medTauL);
+    const madTauR = mad(tauR, medTauR);
+
+    // System delay separation:
+    // We estimate a shared-ish tauSysCommon from min(medTauL, medTauR) - rMin/c.
+    // Then derive relative distances. This keeps geometry stable across devices.
+    const rMin = 0.04;
+    const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
+
+    let rL = c * Math.max(0, medTauL - tauSysCommon);
+    let rR = c * Math.max(0, medTauR - tauSysCommon);
+    rL = Math.max(rMin, rL);
+    rR = Math.max(rMin, rR);
+
+    const geo = estimateMicXY(rL, rR, d);
+
+    // Per-channel tauSys: tauMeas - r/c
+    const tauSysL = Math.max(0, medTauL - (rL/c));
+    const tauSysR = Math.max(0, medTauR - (rR/c));
+
+    const monoLikely = assessMonoLikelihood(medTauL, medTauR, medPkL, medPkR, d, c);
+
+    // Quality
+    const q = computeCalibQuality({
+      tauMadL: madTauL,
+      tauMadR: madTauR,
+      peakL: medPkL,
+      peakR: medPkR,
+      geomErr: geo.err,
+      monoLikely
+    });
+
+    // Commit calibration
+    calib.valid = true;
+    calib.quality = q;
+    calib.monoLikely = monoLikely;
+
+    calib.d = d;
+    calib.c = c;
+
+    calib.tauMeasL = medTauL;
+    calib.tauMeasR = medTauR;
+
+    calib.peakL = medPkL;
+    calib.peakR = medPkR;
+
+    calib.tauMadL = madTauL;
+    calib.tauMadR = madTauR;
+
+    calib.tauSysCommon = tauSysCommon;
+    calib.tauSysL = tauSysL;
+    calib.tauSysR = tauSysR;
+
+    calib.rL = rL;
+    calib.rR = rR;
+
+    calib.x = geo.x;
+    calib.y = geo.y;
+    calib.geomErr = geo.err;
+
+    renderCalibInfo();
+
+    log(`[cal] medTauL=${(medTauL*1e3).toFixed(2)}ms (MAD ${(madTauL*1e3).toFixed(2)}ms), medTauR=${(medTauR*1e3).toFixed(2)}ms (MAD ${(madTauR*1e3).toFixed(2)}ms)`);
+    log(`[cal] peaks: L≈${medPkL.toFixed(3)}, R≈${medPkR.toFixed(3)} | monoLikely=${monoLikely ? "YES" : "no"}`);
+    log(`[cal] tauSysCommon≈${(tauSysCommon*1e3).toFixed(2)}ms, tauSysL≈${(tauSysL*1e3).toFixed(2)}ms, tauSysR≈${(tauSysR*1e3).toFixed(2)}ms`);
+    log(`[cal] rL≈${rL.toFixed(3)}m rR≈${rR.toFixed(3)}m mic(x,y)≈(${geo.x.toFixed(3)},${geo.y.toFixed(3)}) geomErr≈${geo.err.toFixed(4)}`);
+    log(`[cal] quality=${q.toFixed(2)} (direct-path lock will be ${ (useCalibEl.checked && q>0.2) ? "stronger" : "weak/off" })`);
+
+    if (monoLikely) {
+      log("[cal][warn] Output appears mono (L-only and R-only too similar). Steering still works partially via speaker directivity, but geometry inference is limited.");
+    }
+    if (q < 0.25) {
+      log("[cal][warn] Calibration quality is low (too much reflection/variance). App will avoid aggressive direct-path locking.");
+    }
+
+    setStatus("ready");
+  }
+
+  // ---------- Mode refs ----------
+  function buildRefForMode(mode) {
+    if (mode === "chirp") {
+      const f1 = parseFloat(el("f1").value);
+      const f2 = parseFloat(el("f2").value);
+      const Tms = parseFloat(el("T").value);
+      return { type: "single", ref: genChirp(f1, f2, Tms) };
+    }
+    if (mode === "mls") {
+      const m = parseInt(el("mlsOrder").value, 10);
+      const chipRate = parseFloat(el("chipRate").value);
+      return { type: "single", ref: genMLSChipped(m, chipRate) };
+    }
+    const n = parseInt(el("golayOrder").value, 10);
+    const chipRate = parseFloat(el("golayChipRate").value);
+    const gapMs = parseFloat(el("golayGapMs").value);
+    const { a, b } = genGolayChipped(n, chipRate);
+    return { type: "pair", a, b, gapMs };
+  }
+
+  async function pingAndCaptureSteered(monoRef, dt, gain, listenMs) {
+    const ping = buildSteeredStereoPing(monoRef, dt, gain);
+    ping.out.connect(ac.destination);
+
+    const tStart = ac.currentTime + 0.03;
+    ping.srcL.start(tStart);
+    ping.srcR.start(tStart);
+
+    const emitDelay = Math.max(ping.delayL, ping.delayR) + ping.pingSec;
+    await sleep((emitDelay + 0.040) * 1000);
+
+    const end = ringWrite;
+    const listenSamples = Math.max(2048, Math.floor(sr * (listenMs/1000)));
+    const micWin = readRingWindow(end, listenSamples);
+
+    ping.out.disconnect();
+    return { micWin, delayL: ping.delayL, delayR: ping.delayR };
+  }
+
+  function corrAndBuildProfile(micWin, ref, c, minR, maxR, predictedTau0OrNull, lockStrength) {
+    const corr = correlate(micWin, ref);
+    absMaxNormalize(corr);
+
+    const tau0 = findDirectPathTau(corr, predictedTau0OrNull, lockStrength);
+
+    const minTau = (2*minR)/c;
+    const maxTau = (2*maxR)/c;
+
+    const prof = new Float32Array(heatBins);
+    prof.fill(0);
+
+    for (let i=0;i<corr.length;i++){
+      const tau = (i/sr) - tau0;
+      if (tau < minTau || tau > maxTau) continue;
+      const R = (c*tau)/2;
+      const bin = Math.floor((R - minR)/(maxR-minR) * (heatBins-1));
+      const v = Math.abs(corr[i]);
+      if (v > prof[bin]) prof[bin] = v;
+    }
+
+    const best = pickBestFromProfile(prof);
+    const bestR = minR + (best.bin/(heatBins-1)) * (maxR-minR);
+
+    return { corr, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR };
+  }
+
+  // ---------- Main ping cycle ----------
+  async function doPing(angleDeg, updateHeatRowIndex=null) {
+    await resumeIfSuspended();
+
+    const d = parseFloat(el("spacing").value);
+    const c = parseFloat(el("c").value);
+    const gain = parseFloat(el("gain").value);
+    const listenMs = parseFloat(el("listenMs").value);
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+
+    const theta = angleDeg * Math.PI / 180;
+    const dt = (d * Math.sin(theta)) / c;
+
+    const mode = modeEl.value;
+    const ref = buildRefForMode(mode);
+
+    const lockStrength = (calib.valid && useCalibEl.checked) ? calib.quality : 0;
+
+    let corrFinal = null;
+    let tau0Final = 0;
+    let profFinal = new Float32Array(heatBins); profFinal.fill(0);
+    let bestBinFinal = -1;
+    let bestValFinal = 0;
+    let bestRFinal = NaN;
+
+    if (ref.type === "single") {
+      const cap = await pingAndCaptureSteered(ref.ref, dt, gain, listenMs);
+      const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
+      const res = corrAndBuildProfile(cap.micWin, ref.ref, c, minR, maxR, predTau0, lockStrength);
+
+      corrFinal = res.corr;
+      tau0Final = res.tau0;
+      profFinal = res.prof;
+      bestBinFinal = res.bestBin;
+      bestValFinal = res.bestVal;
+      bestRFinal = res.bestR;
+
+      log(`[ping] θ=${angleDeg}° mode=${mode} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best≈${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)}) lock=${lockStrength.toFixed(2)}`);
+    } else {
+      const capA = await pingAndCaptureSteered(ref.a, dt, gain, listenMs);
+      const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
+      const resA = corrAndBuildProfile(capA.micWin, ref.a, c, minR, maxR, predTau0A, lockStrength);
+
+      await sleep(Math.max(0, ref.gapMs));
+
+      const capB = await pingAndCaptureSteered(ref.b, dt, gain, listenMs);
+      const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
+      const resB = corrAndBuildProfile(capB.micWin, ref.b, c, minR, maxR, predTau0B, lockStrength);
+
+      const L = Math.min(resA.corr.length, resB.corr.length);
+      const corrSum = new Float32Array(L);
+      for (let i=0;i<L;i++) corrSum[i] = resA.corr[i] + resB.corr[i];
+      absMaxNormalize(corrSum);
+
+      tau0Final = 0.5*(resA.tau0 + resB.tau0);
+      for (let i=0;i<heatBins;i++) profFinal[i] = Math.max(resA.prof[i], resB.prof[i]);
+
+      const best = pickBestFromProfile(profFinal);
+      bestBinFinal = best.bin;
+      bestValFinal = best.val;
+      bestRFinal = minR + (bestBinFinal/(heatBins-1))*(maxR-minR);
+
+      corrFinal = corrSum;
+
+      log(`[ping] θ=${angleDeg}° mode=golay dt=${(dt*1e6).toFixed(1)}µs tau0≈${(tau0Final*1e3).toFixed(2)}ms best≈${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)}) lock=${lockStrength.toFixed(2)}`);
+    }
+
+    if (updateHeatRowIndex !== null && heat) {
+      const row = updateHeatRowIndex;
+      for (let b=0;b<heatBins;b++){
+        const idx = row*heatBins + b;
+        heat[idx] = Math.max(heat[idx]*0.90, profFinal[b]);
+      }
+      bestBin[row] = bestBinFinal;
+      bestVal[row] = bestValFinal;
+    }
+
+    if (Number.isFinite(bestRFinal)) {
+      bestReadoutEl.textContent = `Best: θ=${angleDeg}°  R≈${bestRFinal.toFixed(2)} m  strength=${bestValFinal.toFixed(3)}`;
+    } else {
+      bestReadoutEl.textContent = "Best: —";
+    }
+
+    drawProfile(corrFinal, tau0Final, c, minR, maxR);
+    drawHeatmap(minR, maxR);
+  }
+
+  // ---------- Scan ----------
+  async function doScan() {
+    scanning = true;
+    btnStop.disabled = false;
+    btnScan.disabled = true;
+    btnPing.disabled = true;
+    setStatus("scanning");
+
+    const step = Math.max(1, parseInt(el("scanStep").value, 10));
+    const dwell = Math.max(30, parseInt(el("scanDwell").value, 10));
+
+    const angles = [];
+    for (let a=-60; a<=60; a+=step) angles.push(a);
+    resetHeat(angles);
+
+    for (let i=0;i<angles.length;i++){
+      if (!scanning) break;
+      const a = angles[i];
+      angleEl.value = String(a);
+      angleValEl.textContent = String(a);
+
+      await doPing(a, i);
+      await sleep(dwell);
+    }
+
+    scanning = false;
+    btnStop.disabled = false;
+    btnScan.disabled = false;
+    btnPing.disabled = false;
+    setStatus("ready");
+    log("[scan] done");
+  }
+
+  function stopAll() {
+    scanning = false;
+    setStatus(ac ? "ready" : "idle");
+    log("[stop] stopped");
+  }
+
+  // ---------- UI wiring ----------
+  btnInit.addEventListener("click", async () => {
+    try { setStatus("initializing"); await initAudio(); }
+    catch (e) { setStatus("error"); log("[err] init failed: " + (e?.message || e)); }
+  });
+
+  btnPing.addEventListener("click", async () => {
+    try { setStatus("pinging"); await doPing(parseFloat(angleEl.value), null); setStatus("ready"); }
+    catch (e) { setStatus("error"); log("[err] ping failed: " + (e?.message || e)); }
+  });
+
+  btnScan.addEventListener("click", async () => {
+    try { await doScan(); }
+    catch (e) { setStatus("error"); log("[err] scan failed: " + (e?.message || e)); stopAll(); }
+  });
+
+  btnStop.addEventListener("click", () => stopAll());
+
+  btnCalibrate.addEventListener("click", async () => {
+    try { await calibrateRefined(); }
+    catch (e) { setStatus("error"); log("[err] calibrate failed: " + (e?.message || e)); renderCalibInfo(); }
+  });
+
+  btnRefreshDevices.addEventListener("click", async () => {
+    try { await refreshDeviceInfo(); }
+    catch (e) { log("[err] refresh devices failed: " + (e?.message || e)); }
+  });
+
+  showTraceEl.addEventListener("change", () => {
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawHeatmap(minR, maxR);
+  });
+
+  useCalibEl.addEventListener("change", () => renderCalibInfo());
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resumeIfSuspended().catch(()=>{});
+  });
+
+  // ---------- Initial empty render ----------
+  (async () => {
+    setStatus("idle");
+    pctx.fillStyle = "#070707"; pctx.fillRect(0,0,profileCanvas.width,profileCanvas.height);
+    pctx.fillStyle = "#bdbdbd"; pctx.font = "12px system-ui";
+    pctx.fillText("Range profile will appear here after Ping.", 54, 22);
+
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    resetHeat([-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60]);
+    drawHeatmap(minR, maxR);
+
+    await refreshDeviceInfo();
+    renderCalibInfo();
+  })();
+
+})();
+</script>
+</body>
+</html>
