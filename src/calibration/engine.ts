@@ -4,7 +4,7 @@ import { sleep, median, mad } from '../utils.js';
 import { clamp } from '../utils.js';
 import { fftCorrelate } from '../dsp/fft-correlate.js';
 import { absMaxNormalize } from '../dsp/normalize.js';
-import { compensateLatency } from '../audio/latency.js';
+import { measureRoundTripLatency } from '../audio/latency.js';
 import { findPeakAbs } from '../dsp/peak.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { applyQualityAlgorithms } from '../dsp/quality.js';
@@ -24,11 +24,8 @@ function golaySumCorrelation(
   b: Float32Array,
   sampleRate: number,
 ): Float32Array {
-  const { baseLatency, outputLatency } = store.get().audio;
-  const adjA = compensateLatency(micWinA, baseLatency, outputLatency, sampleRate).adjusted;
-  const adjB = compensateLatency(micWinB, baseLatency, outputLatency, sampleRate).adjusted;
-  const corrA = fftCorrelate(adjA, a, sampleRate).correlation; absMaxNormalize(corrA);
-  const corrB = fftCorrelate(adjB, b, sampleRate).correlation; absMaxNormalize(corrB);
+  const corrA = fftCorrelate(micWinA, a, sampleRate).correlation; absMaxNormalize(corrA);
+  const corrB = fftCorrelate(micWinB, b, sampleRate).correlation; absMaxNormalize(corrB);
   const L = Math.min(corrA.length, corrB.length);
   const sum = new Float32Array(L);
   for (let i = 0; i < L; i++) sum[i] = corrA[i] + corrB[i];
@@ -83,6 +80,12 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   if (!(d > 0.02)) throw new Error('Speaker spacing d must be set (meters)');
   if (!(c > 200 && c < 400)) throw new Error('Speed of sound c looks wrong');
 
+  const { baseLatency, outputLatency } = state.audio;
+  const rtLatencyMs = measureRoundTripLatency(baseLatency, outputLatency);
+
+  console.debug(`[calib] starting: sr=${sr} d=${d.toFixed(3)}m c=${c.toFixed(1)} gain=${gain.toFixed(2)} repeats=${repeats} listenMs=${listenMs} envPings=${extraCalPings}`);
+  console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
+
   const earlyMs = 60;
   const golayConfig: GolayConfig = {
     order: (config.probe.type === 'golay') ? config.probe.params.order : 10,
@@ -92,6 +95,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const { a, b } = genGolayChipped(golayConfig, sr);
   const gapMs = golayConfig.gapMs;
 
+  console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} gapMs=${gapMs}`);
+
   const tauL: number[] = [], tauR: number[] = [];
   const pkL: number[] = [], pkR: number[] = [];
 
@@ -100,9 +105,12 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const capLB = await pingAndCaptureOneSide(b, 'L', gain, listenMs);
 
+    console.debug(`[calib] repeat ${k + 1}/${repeats} L capture: micWin=${capLA.micWin.length} samples (${(capLA.micWin.length / sr * 1000).toFixed(1)}ms) ref=${a.length}`);
+
     const sumL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
     const mL = earlyPeakFromCorrelation(sumL, earlyMs, sr);
     tauL.push(mL.tau); pkL.push(mL.peak);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms peak=${mL.peak.toFixed(4)} idx=${mL.idx} corrLen=${sumL.length}`);
 
     await sleep(repeatGap);
 
@@ -113,6 +121,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     const sumR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
     const mR = earlyPeakFromCorrelation(sumR, earlyMs, sr);
     tauR.push(mR.tau); pkR.push(mR.peak);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms peak=${mR.peak.toFixed(4)} idx=${mR.idx} corrLen=${sumR.length}`);
 
     await sleep(repeatGap);
   }
@@ -123,6 +132,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const medPkR = median(pkR);
   const madTauL = mad(tauL, medTauL);
   const madTauR = mad(tauR, medTauR);
+
+  console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
+  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)}`);
+  console.debug(`[calib] raw tauL=[${tauL.map(t => (t * 1000).toFixed(3)).join(', ')}]ms tauR=[${tauR.map(t => (t * 1000).toFixed(3)).join(', ')}]ms`);
 
   const rMin = 0.04;
   const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
@@ -136,12 +149,19 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const tauSysL = Math.max(0, medTauL - (rL / c));
   const tauSysR = Math.max(0, medTauR - (rR / c));
 
+  console.debug(`[calib] distances: rL=${rL.toFixed(4)}m rR=${rR.toFixed(4)}m tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
+  console.debug(`[calib] system delays: L=${(tauSysL * 1000).toFixed(4)}ms R=${(tauSysR * 1000).toFixed(4)}ms delta=${((tauSysL - tauSysR) * 1000).toFixed(4)}ms`);
+  console.debug(`[calib] geometry: mic=(${geo.x.toFixed(4)}, ${geo.y.toFixed(4)}) err=${geo.err.toFixed(4)} spacing=${d.toFixed(3)}m`);
+
   const mono = assessMonoDecision(medTauL, medTauR, medPkL, medPkR, d, c);
+  console.debug(`[calib] mono assessment: monoLikely=${mono.monoLikely} dt=${(mono.dt * 1000).toFixed(4)}ms dp=${mono.dp.toFixed(4)} monoByTime=${mono.monoByTime} monoByPeak=${mono.monoByPeak}`);
+
   const quality = computeCalibQuality({
     tauMadL: madTauL, tauMadR: madTauR,
     peakL: medPkL, peakR: medPkR,
     geomErr: geo.err, monoLikely: mono.monoLikely,
   });
+  console.debug(`[calib] quality score: ${quality.toFixed(4)}`);
 
   // Sanity capture
   const capLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
@@ -164,6 +184,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     pk1.index / sr, pk2.index / sr,
     pk1.absValue, pk2.absValue, d, c,
   );
+
+  console.debug(`[calib] sanity check: tauL=${(pk1.index / sr * 1000).toFixed(4)}ms tauR=${(pk2.index / sr * 1000).toFixed(4)}ms peakL=${pk1.absValue.toFixed(4)} peakR=${pk2.absValue.toFixed(4)} mono=${mono2.monoLikely}`);
 
   const sanity: CalibrationSanity = {
     have: true,
@@ -194,6 +216,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     }
     envBaseline = computeEnvBaseline(profiles, heatBins);
     envBaselinePings = profiles.length;
+    console.debug(`[calib] env baseline: ${envBaselinePings} pings captured (steered at 0deg), envTau0=${(0.5 * (medTauL + medTauR) * 1000).toFixed(4)}ms`);
   }
 
   // Mark calibration invalid when measurements are clearly unreliable
@@ -202,6 +225,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const measurementsStable = maxMadMs < 5.0; // worst-channel MAD < 5ms
   const micPlausible = Math.abs(geo.x) < d * 3; // mic X within 3× speaker spacing
   const valid = measurementsStable && (geometryValid || micPlausible) && quality > 0.15;
+
+  console.debug(`[calib] validity: valid=${valid} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
 
   const result: CalibrationResult = {
     valid,
@@ -218,6 +243,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     envBaselinePings,
     sanity,
   };
+
+  console.debug(`[calib] result: valid=${result.valid} quality=${result.quality.toFixed(3)} mono=${result.monoLikely} rL=${result.distances.L.toFixed(4)}m rR=${result.distances.R.toFixed(4)}m sysDelay={L:${(result.systemDelay.L * 1000).toFixed(3)}ms R:${(result.systemDelay.R * 1000).toFixed(3)}ms common:${(result.systemDelay.common * 1000).toFixed(3)}ms}`);
 
   store.set('calibration', result);
   store.set('status', 'ready');

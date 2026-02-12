@@ -3,7 +3,6 @@ import { bus } from '../core/event-bus.js';
 import { sleep } from '../utils.js';
 import { fftCorrelate } from '../dsp/fft-correlate.js';
 import { absMaxNormalize } from '../dsp/normalize.js';
-import { compensateLatency } from '../audio/latency.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { estimateBestFromProfile } from '../dsp/peak.js';
@@ -35,9 +34,7 @@ function corrAndBuildProfile(
   sampleRate: number,
   heatBins: number,
 ) {
-  const { baseLatency, outputLatency } = store.get().audio;
-  const adjusted = compensateLatency(micWin, baseLatency, outputLatency, sampleRate).adjusted;
-  const corr = fftCorrelate(adjusted, ref, sampleRate).correlation;
+  const corr = fftCorrelate(micWin, ref, sampleRate).correlation;
   absMaxNormalize(corr);
   const tau0 = findDirectPathTau(corr, predictedTau0OrNull, lockStrength, sampleRate);
   const prof = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR, sampleRate, heatBins);
