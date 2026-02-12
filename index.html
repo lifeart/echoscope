@@ -284,6 +284,14 @@
         <canvas id="heatmap" width="1000" height="520"></canvas>
       </div>
 
+      <div style="margin-top:10px">
+        <canvas id="geometry" width="1000" height="280"></canvas>
+      </div>
+
+      <p class="hint">
+        Geometry view shows speaker baseline, calibrated mic position, steering ray, and current detected target.
+      </p>
+
       <p class="hint">
         If audio goes silent after switching apps/locking screen: return and tap <b>Init Audio</b> to resume.
       </p>
@@ -331,8 +339,10 @@
 
   const profileCanvas = el("profile");
   const heatCanvas = el("heatmap");
+  const geometryCanvas = el("geometry");
   const pctx = profileCanvas.getContext("2d");
   const hctx = heatCanvas.getContext("2d");
+  const gctx = geometryCanvas.getContext("2d");
 
   function log(msg) {
     logEl.textContent += msg + "\n";
@@ -461,7 +471,8 @@
     const a = resizeCanvasForDPR(profileCanvas);
     const b = resizeCanvasForDPR(heatCanvas);
     const c = resizeCanvasForDPR(calibPlot);
-    return a || b || c;
+    const d = resizeCanvasForDPR(geometryCanvas);
+    return a || b || c || d;
   }
 
   function median3Profile(src) {
@@ -584,7 +595,12 @@
     return `hsla(${hue}, 96%, 62%, 0.95)`;
   }
 
-  angleEl.addEventListener("input", () => angleValEl.textContent = angleEl.value);
+  angleEl.addEventListener("input", () => {
+    angleValEl.textContent = angleEl.value;
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawGeometry(minR, maxR);
+  });
 
   function syncModeUI() {
     const m = modeEl.value;
@@ -628,6 +644,11 @@
   let lastProfileC = 343;
   let lastProfileMinR = 0.3;
   let lastProfileMaxR = 4.0;
+
+  // Last detected target state (for geometry view)
+  let lastTargetAngle = NaN;
+  let lastTargetRange = NaN;
+  let lastTargetStrength = 0;
 
   // Best-target trace storage
   let bestBin = null;
@@ -1222,6 +1243,117 @@
     }
   }
 
+  function drawGeometry(minR, maxR) {
+    const w = geometryCanvas.width, h = geometryCanvas.height;
+    const s = canvasPixelScale(geometryCanvas);
+    clearCanvas(gctx, w, h);
+
+    const left = 34 * s;
+    const right = w - 24 * s;
+    const top = 20 * s;
+    const bottom = h - 26 * s;
+    const originY = bottom - 30 * s;
+    const centerX = 0.5 * (left + right);
+
+    const d = parseFloat(el("spacing").value);
+    const halfD = (Number.isFinite(d) && d > 0.02) ? (d / 2) : 0.1;
+    const axis = getDirectionAxis();
+    const axisLabel = (axis === "vertical") ? "Z" : "X";
+    const axisDirs = (axis === "vertical") ? ["Bottom", "Top"] : ["Left", "Right"];
+
+    const maxRange = (Number.isFinite(maxR) && maxR > 0.2) ? maxR : 4.0;
+    const minRange = (Number.isFinite(minR) && minR >= 0) ? minR : 0.3;
+    const yMax = Math.max(maxRange * 1.10, minRange + 0.4);
+
+    const micU = (calib.valid && Number.isFinite(calib.x)) ? calib.x : 0;
+    const micY = (calib.valid && Number.isFinite(calib.y) && calib.y >= 0) ? calib.y : 0.12;
+
+    let uLimit = Math.max(Math.abs(halfD) * 1.9, 0.22);
+    uLimit = Math.max(uLimit, Math.abs(micU) * 1.3);
+
+    if (Number.isFinite(lastTargetAngle) && Number.isFinite(lastTargetRange)) {
+      const tu = lastTargetRange * Math.sin(lastTargetAngle * Math.PI / 180);
+      uLimit = Math.max(uLimit, Math.abs(tu) * 1.25);
+    }
+
+    function toPx(u, fwd) {
+      const x = centerX + (u / Math.max(1e-6, uLimit)) * ((right - left) * 0.48);
+      const y = originY - (fwd / Math.max(1e-6, yMax)) * (originY - top);
+      return { x, y };
+    }
+
+    gctx.strokeStyle = "#2f2f2f";
+    gctx.lineWidth = 1 * s;
+    gctx.beginPath();
+    gctx.moveTo(centerX, top);
+    gctx.lineTo(centerX, originY);
+    gctx.stroke();
+
+    gctx.strokeStyle = "#3a3a3a";
+    gctx.beginPath();
+    gctx.moveTo(left, originY);
+    gctx.lineTo(right, originY);
+    gctx.stroke();
+
+    const spL = toPx(-halfD, 0);
+    const spR = toPx(halfD, 0);
+    gctx.strokeStyle = "#6f6f6f";
+    gctx.lineWidth = 2 * s;
+    gctx.beginPath();
+    gctx.moveTo(spL.x, spL.y);
+    gctx.lineTo(spR.x, spR.y);
+    gctx.stroke();
+
+    function drawNode(p, color, rPx, label) {
+      gctx.fillStyle = color;
+      gctx.beginPath();
+      gctx.arc(p.x, p.y, rPx, 0, Math.PI * 2);
+      gctx.fill();
+      gctx.fillStyle = "#d8d8d8";
+      gctx.font = `${11 * s}px system-ui`;
+      gctx.fillText(label, p.x + 7 * s, p.y - 7 * s);
+    }
+
+    drawNode(spL, "#8dd0ff", 5 * s, "Speaker L");
+    drawNode(spR, "#8dd0ff", 5 * s, "Speaker R");
+
+    const micP = toPx(micU, Math.max(0, micY));
+    drawNode(micP, calib.valid ? "#ffbf80" : "#8a8a8a", 5 * s, calib.valid ? "Mic (calibrated)" : "Mic (uncalibrated)");
+
+    const steerDeg = parseFloat(angleEl.value) || 0;
+    const steerU = yMax * Math.sin(steerDeg * Math.PI / 180);
+    const steerF = yMax * Math.cos(steerDeg * Math.PI / 180);
+    const steerEnd = toPx(steerU, Math.max(0, steerF));
+
+    gctx.strokeStyle = "rgba(160,210,255,0.85)";
+    gctx.lineWidth = 1.5 * s;
+    gctx.setLineDash([5 * s, 5 * s]);
+    gctx.beginPath();
+    gctx.moveTo(centerX, originY);
+    gctx.lineTo(steerEnd.x, steerEnd.y);
+    gctx.stroke();
+    gctx.setLineDash([]);
+
+    const gate = getStrengthGate();
+    if (Number.isFinite(lastTargetAngle) && Number.isFinite(lastTargetRange) && lastTargetStrength > gate) {
+      const targetU = lastTargetRange * Math.sin(lastTargetAngle * Math.PI / 180);
+      const targetF = Math.max(0, lastTargetRange * Math.cos(lastTargetAngle * Math.PI / 180));
+      const tp = toPx(targetU, targetF);
+      gctx.fillStyle = traceColorFromConfidence(clamp((lastTargetStrength - gate) / Math.max(1e-6, 1 - gate), 0, 1));
+      gctx.beginPath();
+      gctx.arc(tp.x, tp.y, 6 * s, 0, Math.PI * 2);
+      gctx.fill();
+      gctx.fillStyle = "#eaeaea";
+      gctx.font = `${11 * s}px system-ui`;
+      gctx.fillText(`Target ${lastTargetRange.toFixed(2)}m @ ${lastTargetAngle.toFixed(0)}°`, tp.x + 8 * s, tp.y - 10 * s);
+    }
+
+    gctx.fillStyle = "#bdbdbd";
+    gctx.font = `${12 * s}px system-ui`;
+    gctx.fillText(`Geometry view (${axisLabel}-axis steering: ${axisDirs[0]} ↔ ${axisDirs[1]})`, 12 * s, 16 * s);
+    gctx.fillText(`Spacing d=${Number.isFinite(d) ? d.toFixed(2) : "?"}m | Calib=${calib.valid ? "on" : "off"}`, 12 * s, h - 8 * s);
+  }
+
   // ---------- Sanity plot ----------
   // Draw early correlation curves for L and R with peaks.
   function drawCalibSanityPlot(curveL, peakIdxL, curveR, peakIdxR, earlyMs) {
@@ -1669,6 +1801,7 @@
     if (mono.monoLikely) log("[cal][warn] Output appears mono (L-only and R-only too similar).");
     if (q < 0.25) log("[cal][warn] Calibration quality is low; app avoids aggressive direct-path locking.");
 
+    drawGeometry(minR, maxR);
     setStatus("ready");
   }
 
@@ -1815,6 +1948,16 @@
       if (updateHeatRowIndex !== null) profFinal.fill(0);
     }
 
+    if (!isWeak && Number.isFinite(bestRFinal)) {
+      lastTargetAngle = angleDeg;
+      lastTargetRange = bestRFinal;
+      lastTargetStrength = bestValFinal;
+    } else if (updateHeatRowIndex === null) {
+      lastTargetAngle = NaN;
+      lastTargetRange = NaN;
+      lastTargetStrength = 0;
+    }
+
     if (updateHeatRowIndex !== null && heat) {
       const row = updateHeatRowIndex;
       for (let b=0;b<heatBins;b++){
@@ -1853,6 +1996,7 @@
 
     drawProfile(corrFinal, tau0Final, c, minR, maxR);
     drawHeatmap(minR, maxR);
+    drawGeometry(minR, maxR);
   }
 
   function predictedTau0ForPing(delayL, delayR) {
@@ -1874,6 +2018,8 @@
 
     const step = Math.max(1, parseInt(el("scanStep").value, 10));
     const dwell = Math.max(30, parseInt(el("scanDwell").value, 10));
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
 
     const angles = [];
     for (let a=-60; a<=60; a+=step) angles.push(a);
@@ -1903,9 +2049,23 @@
       lastDirectionAngle = angles[bestRow];
       lastDirectionStrength = bestScore;
       updateDirectionReadout(lastDirectionAngle, lastDirectionStrength, gate);
+
+      const b = bestBin[bestRow];
+      if (b >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
+        const rDet = minR + (b / Math.max(1, heatBins - 1)) * (maxR - minR);
+        lastTargetAngle = angles[bestRow];
+        lastTargetRange = rDet;
+        lastTargetStrength = bestScore;
+        bestReadoutEl.textContent = `Best: θ=${lastTargetAngle.toFixed(0)}°  R≈${rDet.toFixed(2)} m  strength=${bestScore.toFixed(3)}`;
+      }
     } else {
       updateDirectionReadout(NaN, 0, gate);
+      lastTargetAngle = NaN;
+      lastTargetRange = NaN;
+      lastTargetStrength = 0;
     }
+
+    drawGeometry(minR, maxR);
 
     scanning = false;
     btnStop.disabled = false;
@@ -1947,6 +2107,7 @@
     const minR = parseFloat(el("minR").value);
     const maxR = parseFloat(el("maxR").value);
     drawHeatmap(minR, maxR);
+    drawGeometry(minR, maxR);
 
     if (calib.sanity.have && calib.sanity.curveL && calib.sanity.curveR) {
       drawCalibSanityPlot(calib.sanity.curveL, calib.sanity.peakIdxL, calib.sanity.curveR, calib.sanity.peakIdxR, calib.sanity.earlyMs);
@@ -1996,6 +2157,9 @@
 
   dirAxisEl.addEventListener("change", () => {
     updateDirectionReadout(lastDirectionAngle, lastDirectionStrength, getStrengthGate());
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawGeometry(minR, maxR);
   });
 
   useCalibEl.addEventListener("change", () => renderCalibInfo());
@@ -2018,6 +2182,7 @@
     const maxR = parseFloat(el("maxR").value);
     resetHeat([-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60]);
     drawHeatmap(minR, maxR);
+    drawGeometry(minR, maxR);
 
     drawSanityPlaceholder();
 
