@@ -54,13 +54,13 @@ export const LAPTOP_PRESET_SCAN = {
 };
 
 export const QUALITY_WEIGHTS = {
-  mad: 0.45,
+  mad: 0.50,
   peak: 0.35,
-  geom: 0.20,
+  geom: 0.15,
 } as const;
 
 export const MONO_THRESHOLDS = {
-  timeSec: 0.00015,
-  peakDiff: 0.07,
+  timeSec: 0.00007, // ~3.4 samples at 48kHz — truly identical channels only
+  peakDiff: 0.05,   // tighter peak similarity
   expectDiffSec: 0.0003,
 } as const;

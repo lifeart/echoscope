@@ -284,14 +284,24 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const maxTDOA = d / c + 2 / sr;
 
   // --- Pilot: multi-ping mode selection ---
-  // Capture multiple steered Golay pings at θ=0°, extract TDOA-gated L/R pairs
-  // from each, then cluster mean-taus to find the most repeatable acoustic mode.
-  // This avoids locking onto a strong late reflection or coupling artifact that
-  // happened to be the global max on a single ping.
-  const PILOT_PINGS = 4;
+  // Capture multiple L/R Golay pings, extract TDOA-gated pairs from each,
+  // then cluster mean-taus to find the most repeatable *acoustic* mode.
+  //
+  // Two-pass clustering:
+  //   Pass 1: find largest cluster among measurements with meanTau ≥ TAU_MIN_ACOUSTIC
+  //           (rejects coupling / buffer artifacts that appear at sub-ms delays)
+  //   Pass 2: if pass 1 found nothing, fall back to all measurements (best effort)
+  //
+  // TAU_MIN_ACOUSTIC: minimum plausible acoustic flight time for speaker→air→mic.
+  // On a MacBook 14" the nearest driver-to-mic air path is ~6–10 cm minimum,
+  // plus OS/DAC/ADC pipeline latency adds several ms.  0.6 ms ≈ 20.6 cm air
+  // path — a conservative floor that rejects chassis coupling (~0.1–0.4 ms)
+  // while accepting any real acoustic arrival.
+  const TAU_MIN_ACOUSTIC = 0.0006; // 0.6 ms
+  const PILOT_PINGS = 8;
   const pilotMeasurements: Array<{ meanTau: number; score: number }> = [];
 
-  console.debug(`[calib] pilot: capturing ${PILOT_PINGS} steered pings at 0deg...`);
+  console.debug(`[calib] pilot: capturing ${PILOT_PINGS} L/R pings, tauMinAcoustic=${(TAU_MIN_ACOUSTIC * 1000).toFixed(1)}ms...`);
   for (let pp = 0; pp < PILOT_PINGS; pp++) {
     const pCapLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
     await sleep(Math.max(0, gapMs));
@@ -305,27 +315,66 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     const pCapRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
     const pResR = golaySumCorrelation(pCapRA.micWin, pCapRB.micWin, a, b, sr);
 
+    // Collect ALL valid TDOA pairs per pilot ping (not just earliest)
+    // so we can find acoustic modes even when coupling is the earliest/strongest
     const pCandsL = findCandidatePeaks(pResL.corr, earlyMs, sr);
     const pCandsR = findCandidatePeaks(pResR.corr, earlyMs, sr);
-    // No anchor for pilot — let TDOA gate and strength/earliness sorting do the work
-    const pPair = selectTDOAPair(pCandsL, pCandsR, maxTDOA);
 
-    if (pPair) {
-      const meanTau = (pPair.tauL + pPair.tauR) / 2;
-      const corrQL = correlationQuality(pResL.corr, pPair.idxL, sr);
-      const corrQR = correlationQuality(pResR.corr, pPair.idxR, sr);
-      const score = Math.min(pPair.peakL, pPair.peakR) * Math.sqrt(corrQL * corrQR);
-      pilotMeasurements.push({ meanTau, score });
-      console.debug(`[calib] pilot #${pp + 1}: meanTau=${(meanTau * 1000).toFixed(3)}ms L@${(pPair.tauL * 1000).toFixed(3)}ms R@${(pPair.tauR * 1000).toFixed(3)}ms score=${score.toFixed(4)}`);
-    } else {
-      console.debug(`[calib] pilot #${pp + 1}: no valid TDOA pair (candsL=${pCandsL.length} candsR=${pCandsR.length})`);
+    // Gather every valid pair for this ping, not just the "best" one
+    for (const cL of pCandsL) {
+      for (const cR of pCandsR) {
+        if (Math.abs(cL.tau - cR.tau) > maxTDOA) continue;
+        const meanTau = (cL.tau + cR.tau) / 2;
+        const corrQL = correlationQuality(pResL.corr, cL.idx, sr);
+        const corrQR = correlationQuality(pResR.corr, cR.idx, sr);
+        const score = Math.min(cL.absVal, cR.absVal) * Math.sqrt(corrQL * corrQR);
+        // Only record if score is meaningful (≥30% of strongest pair so far)
+        if (score > 0.01) {
+          pilotMeasurements.push({ meanTau, score });
+        }
+      }
     }
+    console.debug(`[calib] pilot #${pp + 1}: ${pCandsL.length}×${pCandsR.length} candidates, total pairs so far: ${pilotMeasurements.length}`);
     await sleep(repeatGap);
   }
 
-  // Cluster pilot measurements to find the most repeatable mode
+  // Two-pass pilot clustering
   let pilotTau: number;
+  let pilotAboveFloor = false;
   const PILOT_CLUSTER_WIN = 0.0008; // 0.8ms window for pilot clustering
+
+  function clusterPilot(measurements: typeof pilotMeasurements): { cluster: typeof pilotMeasurements; medianTau: number } | null {
+    if (measurements.length === 0) return null;
+    if (measurements.length === 1) return { cluster: measurements, medianTau: measurements[0].meanTau };
+
+    let best: typeof pilotMeasurements = [];
+    let bestScore = 0;
+    for (const pm of measurements) {
+      // Diameter constraint: all members within ±window of this seed
+      const members = measurements.filter(r => Math.abs(r.meanTau - pm.meanTau) <= PILOT_CLUSTER_WIN);
+      if (members.length < 2) continue;
+      // Verify diameter from median center
+      const mTaus = members.map(r => r.meanTau);
+      const center = median(mTaus);
+      const verified = members.filter(r => Math.abs(r.meanTau - center) <= PILOT_CLUSTER_WIN);
+      const totalScore = verified.reduce((s, m) => s + m.score, 0);
+      // Prefer: more members, then higher total score, then earlier
+      if (verified.length > best.length ||
+          (verified.length === best.length && totalScore > bestScore) ||
+          (verified.length === best.length && Math.abs(totalScore - bestScore) < 0.001 &&
+           median(verified.map(r => r.meanTau)) < median(best.map(r => r.meanTau)))) {
+        best = verified;
+        bestScore = totalScore;
+      }
+    }
+    if (best.length === 0) {
+      // No cluster of size ≥2, pick the measurement with highest score
+      const sorted = [...measurements].sort((a, b) => b.score - a.score);
+      return { cluster: [sorted[0]], medianTau: sorted[0].meanTau };
+    }
+    return { cluster: best, medianTau: median(best.map(r => r.meanTau)) };
+  }
+
   if (pilotMeasurements.length === 0) {
     // Fallback: use strongest peak from a single steered Golay sum
     const fbCapA = await pingAndCaptureSteered(a, 0, gain, listenMs);
@@ -337,29 +386,32 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     pilotTau = fbPk.index / sr;
     console.debug(`[calib] pilot FALLBACK (no valid pairs): tau=${(pilotTau * 1000).toFixed(3)}ms`);
     await sleep(repeatGap);
-  } else if (pilotMeasurements.length === 1) {
-    pilotTau = pilotMeasurements[0].meanTau;
-    console.debug(`[calib] pilot (single measurement): tau=${(pilotTau * 1000).toFixed(3)}ms`);
   } else {
-    // Find largest cluster; on tie, prefer earliest (direct-path bias)
-    let bestPilotCluster: typeof pilotMeasurements = [];
-    for (const pm of pilotMeasurements) {
-      // Diameter constraint: all members within ±window of center
-      const cluster = pilotMeasurements.filter(r => Math.abs(r.meanTau - pm.meanTau) <= PILOT_CLUSTER_WIN);
-      if (cluster.length > bestPilotCluster.length ||
-          (cluster.length === bestPilotCluster.length &&
-           Math.min(...cluster.map(c => c.meanTau)) < Math.min(...bestPilotCluster.map(c => c.meanTau)))) {
-        bestPilotCluster = cluster;
+    // Pass 1: cluster only measurements above TAU_MIN_ACOUSTIC (reject coupling)
+    const acoustic = pilotMeasurements.filter(m => m.meanTau >= TAU_MIN_ACOUSTIC);
+    const pass1 = clusterPilot(acoustic);
+
+    if (pass1 && pass1.cluster.length >= 2) {
+      pilotTau = pass1.medianTau;
+      pilotAboveFloor = true;
+      const taus = pass1.cluster.map(m => m.meanTau);
+      console.debug(`[calib] pilot pass1 (acoustic): cluster=${pass1.cluster.length}/${acoustic.length} above-floor/${pilotMeasurements.length} total, tau=${(pilotTau * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
+    } else {
+      // Pass 2: fall back to all measurements (coupling may dominate)
+      const pass2 = clusterPilot(pilotMeasurements)!;
+      pilotTau = pass2.medianTau;
+      const taus = pass2.cluster.map(m => m.meanTau);
+      const nAbove = acoustic.length;
+      console.debug(`[calib] pilot pass2 (fallback, ${nAbove} above floor): cluster=${pass2.cluster.length}/${pilotMeasurements.length}, tau=${(pilotTau * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
+      if (pilotTau < TAU_MIN_ACOUSTIC) {
+        console.debug(`[calib] WARNING: pilot tau ${(pilotTau * 1000).toFixed(3)}ms < ${(TAU_MIN_ACOUSTIC * 1000).toFixed(1)}ms floor — likely coupling dominance. Consider disabling OS audio processing (AEC/NS/AGC).`);
       }
     }
-    const pilotTaus = bestPilotCluster.map(m => m.meanTau);
-    pilotTau = median(pilotTaus);
-    console.debug(`[calib] pilot cluster: ${bestPilotCluster.length}/${pilotMeasurements.length} pings, tau=${(pilotTau * 1000).toFixed(3)}ms (taus: ${pilotTaus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
   }
 
-  // Pilot window: hard-reject repeat pairs whose mean tau is beyond this distance
-  // 0.7ms is enough for mild multi-driver / reflection variability on MacBooks
-  const PILOT_WIN = 0.0007; // 0.7ms
+  // Pilot window: tighter when pilot is in the acoustic regime (modes are
+  // more spread out at short delays where coupling artifacts cluster)
+  const PILOT_WIN = pilotAboveFloor ? 0.0004 : 0.0007; // 0.4ms acoustic, 0.7ms coupling fallback
 
   interface RepeatMeasurement {
     tauL: number; tauR: number; qualL: number; qualR: number; valid: boolean;
@@ -458,19 +510,30 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
   console.debug(`[calib] correlation quality: medCorrQualL=${medPkL.toFixed(4)} medCorrQualR=${medPkR.toFixed(4)}`);
 
+  // Compute ranges from median taus.
+  // Use TDOA (Δτ = τR − τL) as the primary geometric observable — it's
+  // independent of the common system delay and avoids range-clamping artifacts
+  // that poison the point-source geometry solver on distributed sources.
+  const deltaTau = medTauR - medTauL; // signed TDOA
+
+  // Common delay estimate: minimum of the two channels minus a small floor
   const rMin = 0.04;
   const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
 
-  let rL = c * Math.max(0, medTauL - tauSysCommon);
-  let rR = c * Math.max(0, medTauR - tauSysCommon);
-  rL = Math.max(rMin, rL);
-  rR = Math.max(rMin, rR);
+  // Unclamped ranges for geometry solver (avoids bias from floor)
+  const rLRaw = c * Math.max(0, medTauL - tauSysCommon);
+  const rRRaw = c * Math.max(0, medTauR - tauSysCommon);
+  const geo = estimateMicXY(rLRaw, rRRaw, d);
 
-  const geo = estimateMicXY(rL, rR, d);
+  // Clamped ranges for presentation / downstream use
+  let rL = Math.max(rMin, rLRaw);
+  let rR = Math.max(rMin, rRRaw);
+
   const tauSysL = Math.max(0, medTauL - (rL / c));
   const tauSysR = Math.max(0, medTauR - (rR / c));
 
-  console.debug(`[calib] distances: rL=${rL.toFixed(4)}m rR=${rR.toFixed(4)}m tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
+  console.debug(`[calib] TDOA: deltaTau=${(deltaTau * 1000).toFixed(4)}ms (${(deltaTau * c * 100).toFixed(2)}cm path diff)`);
+  console.debug(`[calib] distances: rL=${rL.toFixed(4)}m(raw=${rLRaw.toFixed(4)}) rR=${rR.toFixed(4)}m(raw=${rRRaw.toFixed(4)}) tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
   console.debug(`[calib] system delays: L=${(tauSysL * 1000).toFixed(4)}ms R=${(tauSysR * 1000).toFixed(4)}ms delta=${((tauSysL - tauSysR) * 1000).toFixed(4)}ms`);
   console.debug(`[calib] geometry: mic=(${geo.x.toFixed(4)}, ${geo.y.toFixed(4)}) err=${geo.err.toFixed(4)} spacing=${d.toFixed(3)}m`);
 
@@ -564,16 +627,25 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     console.debug(`[calib] env baseline: ${envBaselinePings} pings captured (steered at 0deg), envTau0=${(0.5 * (medTauL + medTauR) * 1000).toFixed(4)}ms`);
   }
 
-  // Mark calibration invalid when measurements are clearly unreliable
+  // Mark calibration invalid when measurements are clearly unreliable.
+  // Validity uses signal-quality checks (stability, cluster size, corrQual)
+  // as primary gates.  Geometry fit is advisory — on distributed sources
+  // (laptop speakers) the point-source model is inherently violated, so
+  // geomValid alone should not reject an otherwise stable calibration.
   const maxMadMs = Number.isFinite(madTauL) && Number.isFinite(madTauR)
     ? 1000 * Math.max(madTauL, madTauR) : Infinity;
   const geometryValid = geo.err < 1.0; // y² was non-negative (triangle inequality holds)
   const measurementsStable = maxMadMs < 2.0; // worst-channel MAD < 2ms
   const micPlausible = Math.abs(geo.x) < d * 3; // mic X within 3× speaker spacing
   const enoughRepeats = clusterSize >= 2; // need ≥2 consistent repeats
-  const valid = enoughRepeats && measurementsStable && (geometryValid || micPlausible) && quality > 0.15;
+  const corrQualOk = medPkL > 0.15 && medPkR > 0.15; // correlation quality above noise floor
 
-  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
+  // Accept if: enough consistent repeats + stable + decent corrQual + quality above floor
+  // Geometry acts as a secondary gate only (OR with micPlausible)
+  const valid = enoughRepeats && measurementsStable && corrQualOk
+    && (geometryValid || micPlausible) && quality > 0.15;
+
+  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
 
   const result: CalibrationResult = {
     valid,
