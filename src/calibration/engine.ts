@@ -55,7 +55,41 @@ function earlyPeakFromCorrelation(
 ): { idx: number; tau: number; peak: number } {
   const earlyEnd = Math.min(sumCorr.length, Math.floor(sampleRate * (earlyMs / 1000)));
   const pk = findPeakAbs(sumCorr, 0, earlyEnd);
+  if (pk.absValue < 1e-9) return { idx: 0, tau: 0, peak: 0 };
+
+  // Onset detection: prefer the earliest local maximum above 35% of the
+  // global peak.  This prevents the correlator from locking onto a stronger
+  // late reflection instead of the (possibly weaker) direct arrival.
+  const threshold = 0.35 * pk.absValue;
+  for (let i = 1; i < earlyEnd - 1; i++) {
+    const v = Math.abs(sumCorr[i]);
+    if (v >= threshold && v >= Math.abs(sumCorr[i - 1]) && v >= Math.abs(sumCorr[i + 1])) {
+      return { idx: i, tau: i / sampleRate, peak: v };
+    }
+  }
   return { idx: pk.index, tau: pk.index / sampleRate, peak: pk.absValue };
+}
+
+/**
+ * Measure correlation quality as 1 − k·sidelobeRMS (after absMaxNormalize).
+ * A clean Golay-sum correlation has near-zero sidelobes → quality ≈ 1.
+ * Strong reflections or noise raise the RMS → quality drops.
+ */
+function correlationQuality(
+  corr: Float32Array,
+  peakIdx: number,
+  sampleRate: number,
+): number {
+  const guard = Math.max(3, Math.floor(sampleRate * 0.0005)); // ±0.5 ms guard
+  let sumSq = 0, n = 0;
+  for (let i = 0; i < corr.length; i++) {
+    if (Math.abs(i - peakIdx) <= guard) continue;
+    sumSq += corr[i] * corr[i];
+    n++;
+  }
+  if (n === 0) return 0;
+  const rms = Math.sqrt(sumSq / n);
+  return clamp(1 - 2.5 * rms, 0, 1);
 }
 
 export function predictedTau0ForPing(
@@ -114,9 +148,14 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
   console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} (${golayDurMs.toFixed(1)}ms) gapMs=${gapMs}`);
 
+  // Compute reference energy for peak normalization.
+  // Ideal Golay sum peak = 2 * refEnergy; normalize rawPeak to 0-1.
+  let refEnergy = 0;
+  for (let i = 0; i < a.length; i++) refEnergy += a[i] * a[i];
+  const idealPeak = 2 * refEnergy;
+
   const tauL: number[] = [], tauR: number[] = [];
   const pkL: number[] = [], pkR: number[] = [];
-  const rawPkL: number[] = [], rawPkR: number[] = [];
 
   for (let k = 0; k < repeats; k++) {
     const capLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
@@ -125,8 +164,9 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
 
     const resL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
     const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
-    tauL.push(mL.tau); pkL.push(mL.peak); rawPkL.push(resL.rawPeak);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms peak=${mL.peak.toFixed(4)} rawPeak=${resL.rawPeak.toFixed(1)} idx=${mL.idx} corrLen=${resL.corr.length} micWin=${capLA.micWin.length}`);
+    const normPkL = clamp(resL.rawPeak / idealPeak, 0, 1);
+    tauL.push(mL.tau); pkL.push(normPkL);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms normPeak=${normPkL.toFixed(4)} rawPeak=${resL.rawPeak.toFixed(1)} idealPeak=${idealPeak.toFixed(0)} idx=${mL.idx} corrLen=${resL.corr.length} micWin=${capLA.micWin.length}`);
 
     await sleep(repeatGap);
 
@@ -136,8 +176,9 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
 
     const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
     const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
-    tauR.push(mR.tau); pkR.push(mR.peak); rawPkR.push(resR.rawPeak);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms peak=${mR.peak.toFixed(4)} rawPeak=${resR.rawPeak.toFixed(1)} idx=${mR.idx} corrLen=${resR.corr.length} micWin=${capRA.micWin.length}`);
+    const normPkR = clamp(resR.rawPeak / idealPeak, 0, 1);
+    tauR.push(mR.tau); pkR.push(normPkR);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms normPeak=${normPkR.toFixed(4)} rawPeak=${resR.rawPeak.toFixed(1)} idealPeak=${idealPeak.toFixed(0)} idx=${mR.idx} corrLen=${resR.corr.length} micWin=${capRA.micWin.length}`);
 
     await sleep(repeatGap);
   }
@@ -150,7 +191,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const madTauR = mad(tauR, medTauR);
 
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
-  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)} rawPeaks L=[${rawPkL.map(p => p.toFixed(1)).join(', ')}] R=[${rawPkR.map(p => p.toFixed(1)).join(', ')}]`);
+  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)} (normalized by idealPeak=${idealPeak.toFixed(0)})`);
   console.debug(`[calib] raw tauL=[${tauL.map(t => (t * 1000).toFixed(3)).join(', ')}]ms tauR=[${tauR.map(t => (t * 1000).toFixed(3)).join(', ')}]ms`);
 
   const rMin = 0.04;
