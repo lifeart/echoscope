@@ -126,20 +126,27 @@ function findCandidatePeaks(
 }
 
 /**
- * Select the best (τL, τR) pair that satisfies the same-wavefront TDOA
- * constraint: |τL − τR| ≤ d/c + margin.  Among valid pairs, pick the one
- * with the highest combined peak strength.
+ * Select the best (τL, τR) pair satisfying the TDOA constraint |τL − τR| ≤ maxTDOA.
+ *
+ * Strategy (among valid pairs with ≥30 % of the strongest pair's score):
+ *  - If `anchorTau` is provided: pick the pair whose mean tau is closest
+ *    to the anchor.  This locks subsequent repeats to the arrival cluster
+ *    established by repeat 1, preventing mode-hopping between direct path
+ *    and reflections.
+ *  - Otherwise (first repeat / no anchor): pick the earliest pair.
+ *    Direct path always arrives before reflections.
  */
 function selectTDOAPair(
   peaksL: CandidatePeak[],
   peaksR: CandidatePeak[],
   maxTDOA: number,
+  anchorTau?: number,
 ): { tauL: number; tauR: number; peakL: number; peakR: number; idxL: number; idxR: number } | null {
   if (peaksL.length === 0 || peaksR.length === 0) return null;
 
   const validPairs: Array<{
     tauL: number; tauR: number; peakL: number; peakR: number;
-    idxL: number; idxR: number; score: number;
+    idxL: number; idxR: number; score: number; avgTau: number;
   }> = [];
 
   for (const pL of peaksL) {
@@ -150,19 +157,26 @@ function selectTDOAPair(
         peakL: pL.absVal, peakR: pR.absVal,
         idxL: pL.idx, idxR: pR.idx,
         score: pL.absVal + pR.absVal,
+        avgTau: (pL.tau + pR.tau) / 2,
       });
     }
   }
   if (validPairs.length === 0) return null;
 
-  // Among valid pairs with sufficient strength (≥30% of strongest),
-  // prefer the earliest arrival.  Direct path always arrives before reflections.
+  // Keep only sufficiently strong pairs (≥30% of strongest)
   const maxScore = Math.max(...validPairs.map(p => p.score));
   const strong = validPairs.filter(p => p.score >= 0.30 * maxScore);
-  strong.sort((a, b) => (a.tauL + a.tauR) - (b.tauL + b.tauR));
 
-  const c = strong[0];
-  return { tauL: c.tauL, tauR: c.tauR, peakL: c.peakL, peakR: c.peakR, idxL: c.idxL, idxR: c.idxR };
+  if (anchorTau !== undefined) {
+    // Lock to the established arrival cluster
+    strong.sort((a, b) => Math.abs(a.avgTau - anchorTau) - Math.abs(b.avgTau - anchorTau));
+  } else {
+    // First repeat: prefer the earliest arrival (direct path)
+    strong.sort((a, b) => a.avgTau - b.avgTau);
+  }
+
+  const p = strong[0];
+  return { tauL: p.tauL, tauR: p.tauR, peakL: p.peakL, peakR: p.peakR, idxL: p.idxL, idxR: p.idxR };
 }
 
 export function predictedTau0ForPing(
@@ -221,11 +235,15 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
   console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} (${golayDurMs.toFixed(1)}ms) gapMs=${gapMs}`);
 
-  // Max TDOA for same wavefront: d/c + 0.3ms margin
-  const maxTDOA = d / c + 0.0003;
+  // Max TDOA for same wavefront: d/c + 2 samples (peak quantization margin).
+  // At 48 kHz, d=0.195m: 0.568ms + 0.042ms = 0.610ms.
+  const maxTDOA = d / c + 2 / sr;
 
   const tauL: number[] = [], tauR: number[] = [];
   const pkL: number[] = [], pkR: number[] = [];
+  let tauAnchor: number | undefined; // progressive anchor: set by repeat 1
+
+  console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin)`);
 
   for (let k = 0; k < repeats; k++) {
     // --- Capture L channel ---
@@ -245,7 +263,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     // --- Joint peak selection with TDOA gate ---
     const candsL = findCandidatePeaks(resL.corr, earlyMs, sr);
     const candsR = findCandidatePeaks(resR.corr, earlyMs, sr);
-    const tdoaPair = selectTDOAPair(candsL, candsR, maxTDOA);
+    const tdoaPair = selectTDOAPair(candsL, candsR, maxTDOA, tauAnchor);
 
     let chosenTauL: number, chosenTauR: number;
     let chosenIdxL: number, chosenIdxR: number;
@@ -255,8 +273,11 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       chosenTauR = tdoaPair.tauR;
       chosenIdxL = tdoaPair.idxL;
       chosenIdxR = tdoaPair.idxR;
+      const avgTau = (tdoaPair.tauL + tdoaPair.tauR) / 2;
+      // Set anchor on first repeat; subsequent repeats lock to it
+      if (tauAnchor === undefined) tauAnchor = avgTau;
       const delta = Math.abs(tdoaPair.tauL - tdoaPair.tauR) * 1000;
-      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms candsL=${candsL.length} candsR=${candsR.length}`);
+      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms anchor=${(tauAnchor * 1000).toFixed(3)}ms candsL=${candsL.length} candsR=${candsR.length}`);
     } else {
       // Fallback: onset detection per channel (no valid TDOA pair found)
       const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
@@ -333,10 +354,11 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const curveL = resLSanity.corr.slice(0, earlyNL);
   const curveR = resRSanity.corr.slice(0, earlyNR);
 
-  // Use TDOA-gated peak selection for sanity check too
+  // Use TDOA-gated peak selection for sanity check, anchored to calibration median
+  const sanityAnchor = (medTauL + medTauR) / 2;
   const sanityCandL = findCandidatePeaks(resLSanity.corr, earlyMs, sr);
   const sanityCandR = findCandidatePeaks(resRSanity.corr, earlyMs, sr);
-  const sanityPair = selectTDOAPair(sanityCandL, sanityCandR, maxTDOA);
+  const sanityPair = selectTDOAPair(sanityCandL, sanityCandR, maxTDOA, sanityAnchor);
 
   let sanityTauL: number, sanityTauR: number;
   let sanityPkL: number, sanityPkR: number;
