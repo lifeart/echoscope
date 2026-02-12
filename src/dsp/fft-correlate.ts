@@ -2,6 +2,9 @@ import { fft, ifft, nextPow2, zeroPad } from './fft.js';
 import type { CorrelationResult } from '../types.js';
 
 export function fftCorrelate(signal: Float32Array, reference: Float32Array, _sampleRate: number): CorrelationResult {
+  if (signal.length === 0 || reference.length === 0 || signal.length < reference.length) {
+    return { correlation: new Float32Array(0), tau0: 0, method: 'fft' };
+  }
   const L = signal.length + reference.length - 1;
   const N = nextPow2(L);
 

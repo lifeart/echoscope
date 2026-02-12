@@ -53,29 +53,32 @@ export class MultiTargetTracker {
     // 1. Predict all tracks
     this.tracks = this.tracks.map(t => predict(t, dt, this.config.kalman));
 
-    // 2. Associate measurements to tracks (nearest-neighbor gating)
-    const assigned = new Set<number>();
+    // 2. Associate measurements to tracks (sorted nearest-neighbor gating)
+    const assignedTracks = new Set<number>();
+    const assignedMeas = new Set<number>();
     const unassigned: Measurement[] = [];
 
-    for (const meas of measurements) {
-      let bestTrackIdx = -1;
-      let bestDist = Infinity;
-
-      for (let t = 0; t < this.tracks.length; t++) {
-        if (assigned.has(t)) continue;
-        const dist = mahalanobisDistance(this.tracks[t], meas, this.config.kalman);
-        if (dist < this.config.gatingThreshold && dist < bestDist) {
-          bestDist = dist;
-          bestTrackIdx = t;
+    // Build all gated (measurement, track) pairs and sort by distance
+    const candidates: Array<{ mi: number; ti: number; dist: number }> = [];
+    for (let mi = 0; mi < measurements.length; mi++) {
+      for (let ti = 0; ti < this.tracks.length; ti++) {
+        const dist = mahalanobisDistance(this.tracks[ti], measurements[mi], this.config.kalman);
+        if (dist < this.config.gatingThreshold) {
+          candidates.push({ mi, ti, dist });
         }
       }
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
 
-      if (bestTrackIdx >= 0) {
-        this.tracks[bestTrackIdx] = update(this.tracks[bestTrackIdx], meas, this.config.kalman);
-        assigned.add(bestTrackIdx);
-      } else {
-        unassigned.push(meas);
-      }
+    for (const { mi, ti } of candidates) {
+      if (assignedTracks.has(ti) || assignedMeas.has(mi)) continue;
+      this.tracks[ti] = update(this.tracks[ti], measurements[mi], this.config.kalman);
+      assignedTracks.add(ti);
+      assignedMeas.add(mi);
+    }
+
+    for (let mi = 0; mi < measurements.length; mi++) {
+      if (!assignedMeas.has(mi)) unassigned.push(measurements[mi]);
     }
 
     // 3. Track initiation (M-of-N logic)
@@ -119,6 +122,11 @@ export class MultiTargetTracker {
     // 4. Track deletion (miss count threshold)
     this.tracks = this.tracks.filter(t => t.missCount < this.config.deleteThreshold);
 
+    // Reset ID counter when all tracks are dropped to prevent unbounded growth
+    if (this.tracks.length === 0 && this.candidates.length === 0) {
+      nextTrackId = 1;
+    }
+
     return this.getTracks();
   }
 
@@ -126,5 +134,6 @@ export class MultiTargetTracker {
     this.tracks = [];
     this.candidates = [];
     this.frameCount = 0;
+    nextTrackId = 1;
   }
 }

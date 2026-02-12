@@ -85,6 +85,7 @@ export function designBandpass(
  * Returns filtered signal with same length as input (group-delay compensated).
  */
 export function applyBandpass(signal: Float32Array, coeffs: BandpassCoeffs): Float32Array {
+  if (coeffs.fLow >= coeffs.fHigh) return new Float32Array(signal);
   const sigLen = signal.length;
   const tapLen = coeffs.taps.length;
   const convLen = sigLen + tapLen - 1;

@@ -48,11 +48,11 @@ export function gccPhat(sig1: Float32Array, sig2: Float32Array, sampleRate: numb
   const delaySamples = peakIdx <= N / 2 ? peakIdx : peakIdx - N;
   const peakDelay = delaySamples / sampleRate;
 
-  // Confidence: ratio of peak to mean
+  // Confidence: peak normalized by N for size-independent metric
   let sum = 0;
   for (let i = 0; i < N; i++) sum += Math.abs(outR[i]);
   const mean = sum / N;
-  const confidence = mean > 1e-12 ? peakVal / (mean * N) : 0;
+  const confidence = mean > 1e-12 ? peakVal / mean : 0;
 
   return { gcc: outR, peakDelay, confidence: Math.min(1, confidence) };
 }

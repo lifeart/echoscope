@@ -2,7 +2,6 @@ import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
 import { sleep } from '../utils.js';
 import { fftCorrelate } from '../dsp/fft-correlate.js';
-import { absMaxNormalize } from '../dsp/normalize.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { estimateBestFromProfile } from '../dsp/peak.js';
@@ -23,6 +22,18 @@ export function resetClutter(): void {
   clutterState = { model: null };
 }
 
+function signalEnergy(a: Float32Array): number {
+  let e = 0;
+  for (let i = 0; i < a.length; i++) e += a[i] * a[i];
+  return e;
+}
+
+function energyNormalize(corr: Float32Array, refEnergy: number): void {
+  if (refEnergy <= 1e-12) return;
+  const inv = 1 / refEnergy;
+  for (let i = 0; i < corr.length; i++) corr[i] *= inv;
+}
+
 function corrAndBuildProfile(
   micWin: Float32Array,
   ref: Float32Array,
@@ -35,7 +46,7 @@ function corrAndBuildProfile(
   heatBins: number,
 ) {
   const corr = fftCorrelate(micWin, ref, sampleRate).correlation;
-  absMaxNormalize(corr);
+  energyNormalize(corr, signalEnergy(ref));
   const tau0 = findDirectPathTau(corr, predictedTau0OrNull, lockStrength, sampleRate);
   const prof = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR, sampleRate, heatBins);
   const best = estimateBestFromProfile(prof, minR, maxR);
@@ -70,7 +81,7 @@ async function captureGolaySteered(
   const L = Math.min(corrA.length, corrB.length);
   const corrSum = new Float32Array(L);
   for (let i = 0; i < L; i++) corrSum[i] = corrA[i] + corrB[i];
-  absMaxNormalize(corrSum);
+  energyNormalize(corrSum, signalEnergy(a) + signalEnergy(b));
 
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));

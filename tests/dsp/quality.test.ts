@@ -122,10 +122,11 @@ describe('adaptiveFloorSuppressProfile', () => {
 });
 
 describe('applyQualityAlgorithms', () => {
-  it('fast mode returns input unchanged', () => {
+  it('fast mode returns a copy with same values', () => {
     const src = new Float32Array([0.1, 0.5, 0.9, 0.3]);
     const out = applyQualityAlgorithms(src, 'fast');
-    expect(out).toBe(src); // same reference
+    expect(out).toStrictEqual(src);
+    expect(out).not.toBe(src); // must be a new copy
   });
 
   it('balanced mode applies median + smooth without normalization', () => {

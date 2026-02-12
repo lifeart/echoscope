@@ -133,9 +133,10 @@ export function initApp(): void {
       renderCalibInfo();
       const calib = store.get().calibration;
       if (calib?.sanity.have && calib.sanity.curveL && calib.sanity.curveR) {
-        drawCalibSanityPlot(calib.sanity.curveL, calib.sanity.peakIndexL, calib.sanity.curveR, calib.sanity.peakIndexR, calib.sanity.earlyMs);
         const sanityDetails = el('sanityDetails') as HTMLDetailsElement | null;
         if (sanityDetails) sanityDetails.open = true;
+        // Draw AFTER opening details so canvas has correct dimensions for DPR scaling
+        drawCalibSanityPlot(calib.sanity.curveL, calib.sanity.peakIndexL, calib.sanity.curveR, calib.sanity.peakIndexR, calib.sanity.earlyMs);
       }
       drawGeometry(store.get().config.minRange, store.get().config.maxRange);
     } catch (e: any) {

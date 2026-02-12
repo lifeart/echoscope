@@ -33,10 +33,11 @@ export function srpPhatDOA(
   const gccResults = pairs.map(([i, j]) => gccPhat(channels[i], channels[j], sampleRate));
 
   // Sweep angles
+  const stepDeg = Math.max(0.1, angleRange.stepDeg);
   let bestAngle = 0;
   let bestPower = -Infinity;
 
-  for (let angle = angleRange.minDeg; angle <= angleRange.maxDeg; angle += angleRange.stepDeg) {
+  for (let angle = angleRange.minDeg; angle <= angleRange.maxDeg; angle += stepDeg) {
     const theta = angle * Math.PI / 180;
     let totalPower = 0;
 

@@ -85,6 +85,7 @@ export async function initAudio(): Promise<void> {
       bus.emit('audio:samples', copy);
     };
     micSource.connect(sp);
+    sp.connect(ac.destination);
     micTapNode = sp;
     captureMethod = 'script-processor';
   }

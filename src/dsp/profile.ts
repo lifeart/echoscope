@@ -9,8 +9,10 @@ export function buildRangeProfileFromCorrelation(
   sampleRate: number,
   heatBins: number,
 ): Float32Array {
+  if (heatBins <= 0) return new Float32Array(0);
   const prof = new Float32Array(heatBins);
   if (!corr || corr.length === 0) return prof;
+  if (sampleRate <= 0) return prof;
   if (!(Number.isFinite(c) && c > 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR)) return prof;
 
   const minTau = (2 * minR) / c;

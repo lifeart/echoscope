@@ -1,4 +1,5 @@
 export function estimateMicXY(rL: number, rR: number, d: number): { x: number; y: number; err: number } {
+  if (d === 0) return { x: 0, y: 0, err: 0 };
   const x = (rL * rL - rR * rR) / (2 * d);
   const y2 = rR * rR - (x - d / 2) * (x - d / 2);
   const y = Math.sqrt(Math.max(0, y2));

@@ -28,16 +28,24 @@ export function drawHeatmap(minR: number, maxR: number): void {
   const rowDen = Math.max(1, rows - 1);
   const colDen = Math.max(1, cols - 1);
 
-  const img = ctx.createImageData(w, h);
+  // Cap heatmap resolution at DPR 2 to limit memory on high-DPR screens
+  const maxDPR = 2;
+  const rect = r.canvas.getBoundingClientRect();
+  const heatW = Math.min(w, Math.round(rect.width * maxDPR)) || w;
+  const heatH = Math.min(h, Math.round(rect.height * maxDPR)) || h;
+  const heatWDen = Math.max(1, heatW - 1);
+  const heatHDen = Math.max(1, heatH - 1);
+
+  const img = ctx.createImageData(heatW, heatH);
   const data = img.data;
 
-  for (let y = 0; y < h; y++) {
-    const rowPos = (y / hDen) * rowDen;
+  for (let y = 0; y < heatH; y++) {
+    const rowPos = (y / heatHDen) * rowDen;
     const r0 = Math.floor(rowPos);
     const r1 = Math.min(rows - 1, r0 + 1);
     const fr = rowPos - r0;
-    for (let x = 0; x < w; x++) {
-      const colPos = (x / wDen) * colDen;
+    for (let x = 0; x < heatW; x++) {
+      const colPos = (x / heatWDen) * colDen;
       const c0 = Math.floor(colPos);
       const c1 = Math.min(cols - 1, c0 + 1);
       const fc = colPos - c0;
@@ -50,11 +58,19 @@ export function drawHeatmap(minR: number, maxR: number): void {
       const v1 = v10 + (v11 - v10) * fc;
       const v = (v0 + (v1 - v0) * fr) / mx;
       const g = Math.floor(255 * clamp(v, 0, 1));
-      const idx = (y * w + x) * 4;
+      const idx = (y * heatW + x) * 4;
       data[idx] = g; data[idx + 1] = g; data[idx + 2] = g; data[idx + 3] = 255;
     }
   }
-  ctx.putImageData(img, 0, 0);
+  // Draw scaled: ImageData is at capped resolution, stretch to full canvas
+  if (heatW === w && heatH === h) {
+    ctx.putImageData(img, 0, 0);
+  } else {
+    const tmp = new OffscreenCanvas(heatW, heatH);
+    const tmpCtx = tmp.getContext('2d')!;
+    tmpCtx.putImageData(img, 0, 0);
+    ctx.drawImage(tmp, 0, 0, w, h);
+  }
 
   ctx.fillStyle = '#eaeaea';
   ctx.font = `${12 * s}px system-ui`;

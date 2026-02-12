@@ -15,6 +15,11 @@ export function delayAndSum(
   if (nChannels < 2 || nSamples === 0) {
     return channels[0] ?? new Float32Array(0);
   }
+  const nMics = geometry.microphones.length;
+  if (nChannels !== nMics) {
+    console.warn(`[beamformer] channel count (${nChannels}) !== mic count (${nMics}); using first channel`);
+    return channels[0];
+  }
 
   const theta = steeringAngleDeg * Math.PI / 180;
   const c = geometry.speedOfSound;

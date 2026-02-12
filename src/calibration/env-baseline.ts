@@ -4,7 +4,8 @@ export function computeEnvBaseline(profiles: Float32Array[], heatBins: number): 
   if (profiles.length === 0) return null;
   const acc = new Float32Array(heatBins);
   for (const prof of profiles) {
-    for (let k = 0; k < heatBins; k++) acc[k] += prof[k];
+    const len = Math.min(heatBins, prof.length);
+    for (let k = 0; k < len; k++) acc[k] += prof[k];
   }
   const inv = 1 / profiles.length;
   for (let k = 0; k < heatBins; k++) acc[k] *= inv;

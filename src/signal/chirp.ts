@@ -6,7 +6,7 @@ import type { ChirpConfig } from '../types.js';
 export function genChirp(config: ChirpConfig, sampleRate: number): Float32Array {
   const f1 = clamp(config.f1, MIN_FREQUENCY, MAX_FREQUENCY);
   const f2 = clamp(config.f2, MIN_FREQUENCY, MAX_FREQUENCY);
-  const T = config.durationMs / 1000;
+  const T = Math.max(config.durationMs, 0.1) / 1000;
   const N = Math.max(1, Math.floor(sampleRate * T));
   const out = new Float32Array(N);
   const k = (f2 - f1) / T;

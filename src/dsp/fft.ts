@@ -1,4 +1,5 @@
 export function nextPow2(n: number): number {
+  if (n > 0x40000000) throw new Error('FFT size exceeds maximum (2^30)');
   let p = 1;
   while (p < n) p <<= 1;
   return p;

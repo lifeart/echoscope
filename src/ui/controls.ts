@@ -6,8 +6,9 @@ function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-function inputVal(id: string): number {
-  return parseFloat((el(id) as HTMLInputElement)?.value ?? '0');
+function inputVal(id: string, fallback = 0): number {
+  const v = parseFloat((el(id) as HTMLInputElement)?.value ?? '');
+  return Number.isFinite(v) ? v : fallback;
 }
 
 function selectVal(id: string): string {

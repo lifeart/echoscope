@@ -17,9 +17,10 @@ export function genMLS(order: number): Int8Array {
   for (let i = 0; i < L; i++) {
     const lsb = reg & 1;
     seq[i] = lsb ? 1 : -1;
-    let fb = 0;
+    let fb = reg & 1; // constant term of primitive polynomial (always 1)
     for (let t = 0; t < taps.length; t++) {
-      fb ^= (reg >> (taps[t] - 1)) & 1;
+      if (taps[t] === m) continue; // skip leading term x^m
+      fb ^= (reg >> taps[t]) & 1;
     }
     reg = (reg >> 1) | (fb << (m - 1));
   }
@@ -35,7 +36,7 @@ export function chipBinarySequence(seq: Int8Array, chipRate: number, sampleRate:
     const v = seq[i] * amplitude;
     for (let j = 0; j < chipSamps; j++) out[k++] = v;
   }
-  const fade = Math.min(FADE_SAMPLES, out.length);
+  const fade = Math.min(FADE_SAMPLES, Math.floor(out.length / 2));
   for (let i = 0; i < fade; i++) {
     const g = i / fade;
     out[i] *= g;

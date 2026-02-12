@@ -119,6 +119,7 @@ export async function pingAndCaptureSteered(
 }
 
 export function computeSteeringDelay(angleDeg: number, spacing: number, speedOfSound: number): number {
+  if (speedOfSound <= 0) return 0;
   const theta = angleDeg * Math.PI / 180;
   return (spacing * Math.sin(theta)) / speedOfSound;
 }

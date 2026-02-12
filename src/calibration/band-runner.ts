@@ -374,7 +374,10 @@ export function runBandCalibration(
   const deltaConsistent = deltaConsistency < 0.3;
   const enoughRepeats = clusterSize >= 2;
   const corrQualOk = medPkL > 0.15 && medPkR > 0.15;
-  const valid = enoughRepeats && measurementsStable && corrQualOk && deltaConsistent && quality > 0.15;
+  // micPlausible: inferred mic X from TDOA must be within 3× speaker spacing
+  const micX = -(deltaTau * c) / 2;
+  const micPlausible = Math.abs(micX) < d * 3;
+  const valid = enoughRepeats && measurementsStable && corrQualOk && deltaConsistent && micPlausible && quality > 0.15;
   const angleReliable = valid && maxDeltaDev < 0.6;
 
   console.debug(`[calib:band:${band.id}] pilot: tau=${(pilotTau * 1000).toFixed(3)}ms mad=${(pilotClusterMad * 1000).toFixed(3)}ms cluster=${pilotClusterSize} aboveFloor=${pilotAboveFloor}`);

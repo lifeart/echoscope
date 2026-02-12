@@ -32,6 +32,17 @@ export function drawProfile(
   const minTau = (2 * minR) / c;
   const maxTau = (2 * maxR) / c;
 
+  // Find max absolute value for auto-scaling
+  let absMax = 0;
+  for (let i = 0; i < corr.length; i++) {
+    const tau = (i / sr) - tau0;
+    if (tau < minTau || tau > maxTau) continue;
+    const v = Math.abs(corr[i]);
+    if (v > absMax) absMax = v;
+  }
+  if (absMax < 1e-12) absMax = 1;
+  const scale = 1 / absMax;
+
   ctx.strokeStyle = '#8dd0ff';
   ctx.lineWidth = 2 * s;
   ctx.beginPath();
@@ -42,7 +53,7 @@ export function drawProfile(
     if (tau < minTau || tau > maxTau) continue;
     const R = (c * tau) / 2;
     const x = xPad + (R - minR) / (maxR - minR) * xSpan;
-    const y = yBottom - ((corr[i] * 0.5 + 0.5) * ySpan);
+    const y = yBottom - ((corr[i] * scale * 0.5 + 0.5) * ySpan);
     if (!started) { ctx.moveTo(x, y); started = true; }
     else ctx.lineTo(x, y);
   }

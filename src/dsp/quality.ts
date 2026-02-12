@@ -41,7 +41,7 @@ export function adaptiveFloorSuppressProfile(src: Float32Array): Float32Array {
 export type QualityAlgoName = 'fast' | 'balanced' | 'max';
 
 export function applyQualityAlgorithms(profile: Float32Array, algo: QualityAlgoName): Float32Array {
-  if (algo === 'fast') return profile;
+  if (algo === 'fast') return new Float32Array(profile);
   let out = median3Profile(profile);
   out = triSmoothProfile(out);
   if (algo === 'max') {
