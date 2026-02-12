@@ -26,8 +26,6 @@
     button:disabled { opacity:.5; cursor:not-allowed; }
     .hint { font-size:12px; color:#b8b8b8; line-height:1.35; margin:8px 0 0; }
     .warn { color:#ffbf80; }
-    .ok { color:#a8ffb0; }
-    .bad { color:#ff8f8f; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; white-space:pre-wrap; }
     canvas { width:100%; height:auto; background:#070707; border:1px solid #222; border-radius:12px; }
     .small { font-size:12px; color:#bdbdbd; }
@@ -179,7 +177,7 @@
 
       <!-- Calibration -->
       <div class="row" style="justify-content:space-between">
-        <button id="btnCalibrate" disabled>Calibrate (refined)</button>
+        <button id="btnCalibrate" disabled>Calibrate (refined + sanity)</button>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="useCalib" type="checkbox" checked>
           Use calibration to lock direct-path search
@@ -197,11 +195,16 @@
         </div>
       </div>
 
-      <p class="hint">
-        Refined calibration runs L-only and R-only multiple times, takes medians, estimates per-channel system delays, and detects mono/stereo output behavior.
-      </p>
+      <details id="sanityDetails" style="margin-top:12px;">
+        <summary>Calibration sanity view</summary>
+        <p class="hint">
+          Shows early (<b>60ms</b>) Golay-summed correlations for <b>L-only</b> and <b>R-only</b>, with peak markers and mono decision breakdown.
+        </p>
+        <canvas id="calibPlot" width="1000" height="260"></canvas>
+        <div class="mono" id="sanityText" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
+      </details>
 
-      <div class="mono" id="calibInfo" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
+      <div class="mono" id="calibInfo" style="margin-top:12px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
 
       <details style="margin-top:12px;">
         <summary>Device Info</summary>
@@ -265,6 +268,11 @@
 
   const btnRefreshDevices = el("btnRefreshDevices");
   const deviceInfoEl = el("deviceInfo");
+
+  const sanityDetailsEl = el("sanityDetails");
+  const calibPlot = el("calibPlot");
+  const sanityTextEl = el("sanityText");
+  const cctx = calibPlot.getContext("2d");
 
   const profileCanvas = el("profile");
   const heatCanvas = el("heatmap");
@@ -356,6 +364,14 @@
       idx = (idx + 1) % ringSize;
     }
     return out;
+  }
+
+  function computeListenSamples(listenMs, refLength) {
+    const listenMsSafe = Number.isFinite(listenMs) ? Math.max(0, listenMs) : 0;
+    const byMs = Math.floor(sr * (listenMsSafe / 1000));
+    const refLen = Number.isFinite(refLength) ? Math.max(0, refLength | 0) : 0;
+    const refNeed = refLen + Math.floor(sr * 0.030);
+    return Math.max(2048, byMs, refNeed);
   }
 
   // ---------- Device info ----------
@@ -545,7 +561,7 @@
     return { a, b };
   }
 
-  // MLS (kept minimal; calibration uses Golay)
+  // MLS
   function genMLS(order) {
     const m = order|0;
     if (m < 2 || m > 16) throw new Error("MLS order must be 2..16");
@@ -570,7 +586,6 @@
     }
     return seq;
   }
-
   function genMLSChipped(order, chipRate) {
     return chipBinarySequence(genMLS(order), chipRate, 0.6);
   }
@@ -585,15 +600,11 @@
     srcL.buffer = buf;
     srcR.buffer = buf;
 
-    const gL = ac.createGain();
-    const gR = ac.createGain();
-    gL.gain.value = gainL;
-    gR.gain.value = gainR;
+    const gL = ac.createGain(); gL.gain.value = gainL;
+    const gR = ac.createGain(); gR.gain.value = gainR;
 
-    const dL = ac.createDelay(0.12);
-    const dR = ac.createDelay(0.12);
-    dL.delayTime.value = delayL;
-    dR.delayTime.value = delayR;
+    const dL = ac.createDelay(0.12); dL.delayTime.value = delayL;
+    const dR = ac.createDelay(0.12); dR.delayTime.value = delayR;
 
     const merger = ac.createChannelMerger(2);
     srcL.connect(gL).connect(dL).connect(merger, 0, 0);
@@ -613,6 +624,7 @@
   // ---------- Matched filtering ----------
   function correlate(x, s) {
     const Nx = x.length, Ns = s.length;
+    if (Nx <= 0 || Ns <= 0 || Nx < Ns) return new Float32Array(0);
     const L = Nx - Ns + 1;
     const out = new Float32Array(L);
     for (let tau=0;tau<L;tau++){
@@ -650,20 +662,19 @@
   }
 
   function mad(arr, med) {
-    // median absolute deviation
     const d = arr.map(x => Math.abs(x - med));
     return median(d);
   }
 
-  // Direct-path search: early OR locked around predicted (only if calibration quality ok)
+  // Direct-path search
   function findDirectPathTau(corr, predictedTau0SecOrNull, lockStrength) {
-    const earlyEnd = Math.min(corr.length, Math.floor(sr * 0.060)); // 60ms
+    const earlyEnd = Math.min(corr.length, Math.floor(sr * 0.060));
     if (predictedTau0SecOrNull === null || !Number.isFinite(predictedTau0SecOrNull) || lockStrength <= 0) {
       const dp = findPeak(corr, 0, earlyEnd);
       return dp.index / sr;
     }
     const center = Math.floor(predictedTau0SecOrNull * sr);
-    const winSec = 0.006 + 0.010*(1.0 - lockStrength); // tighter if high quality
+    const winSec = 0.006 + 0.010*(1.0 - lockStrength);
     const win = Math.floor(sr * winSec);
     const start = clamp(center - win, 0, corr.length);
     const end = clamp(center + win, 0, corr.length);
@@ -672,7 +683,6 @@
       return dp.index / sr;
     }
     const dp = findPeak(corr, start, end);
-    // If too weak, fallback
     if (Math.abs(dp.value) < 0.06) {
       const fb = findPeak(corr, 0, earlyEnd);
       return fb.index / sr;
@@ -797,49 +807,119 @@
     }
   }
 
+  // ---------- Sanity plot ----------
+  // Draw early correlation curves for L and R with peaks.
+  function drawCalibSanityPlot(curveL, peakIdxL, curveR, peakIdxR, earlyMs) {
+    const w = calibPlot.width, h = calibPlot.height;
+    clearCanvas(cctx, w, h);
+
+    // axes box
+    cctx.strokeStyle = "#333";
+    cctx.lineWidth = 1;
+    cctx.strokeRect(50, 15, w-65, h-45);
+
+    // y scale from min..max across both
+    let minV = 1e9, maxV = -1e9;
+    for (let i=0;i<curveL.length;i++){ const v=curveL[i]; if(v<minV) minV=v; if(v>maxV) maxV=v; }
+    for (let i=0;i<curveR.length;i++){ const v=curveR[i]; if(v<minV) minV=v; if(v>maxV) maxV=v; }
+    // pad
+    const pad = 0.08;
+    const yMin = minV - pad;
+    const yMax = maxV + pad;
+
+    function xy(i, v, N) {
+      const x = 50 + (i/(N-1))*(w-65);
+      const y = (15 + (h-45)) - ((v - yMin)/(yMax - yMin))*(h-45);
+      return {x,y};
+    }
+
+    // L curve (cyan)
+    cctx.strokeStyle = "rgba(140,210,255,0.95)";
+    cctx.lineWidth = 2;
+    cctx.beginPath();
+    for (let i=0;i<curveL.length;i++){
+      const p = xy(i, curveL[i], curveL.length);
+      if (i===0) cctx.moveTo(p.x,p.y);
+      else cctx.lineTo(p.x,p.y);
+    }
+    cctx.stroke();
+
+    // R curve (orange-ish)
+    cctx.strokeStyle = "rgba(255,190,120,0.95)";
+    cctx.lineWidth = 2;
+    cctx.beginPath();
+    for (let i=0;i<curveR.length;i++){
+      const p = xy(i, curveR[i], curveR.length);
+      if (i===0) cctx.moveTo(p.x,p.y);
+      else cctx.lineTo(p.x,p.y);
+    }
+    cctx.stroke();
+
+    // Peak markers
+    const pL = xy(peakIdxL, curveL[peakIdxL], curveL.length);
+    const pR = xy(peakIdxR, curveR[peakIdxR], curveR.length);
+
+    cctx.fillStyle = "rgba(140,210,255,0.95)";
+    cctx.beginPath(); cctx.arc(pL.x, pL.y, 4, 0, Math.PI*2); cctx.fill();
+    cctx.fillStyle = "rgba(255,190,120,0.95)";
+    cctx.beginPath(); cctx.arc(pR.x, pR.y, 4, 0, Math.PI*2); cctx.fill();
+
+    // Labels
+    cctx.fillStyle = "#eaeaea";
+    cctx.font = "12px system-ui";
+    cctx.fillText(`Calibration sanity: early ${earlyMs} ms (Golay-summed correlation)`, 54, 12);
+
+    cctx.fillStyle = "rgba(140,210,255,0.95)";
+    cctx.fillText("L-only", 54, h-18);
+
+    cctx.fillStyle = "rgba(255,190,120,0.95)";
+    cctx.fillText("R-only", 110, h-18);
+
+    cctx.fillStyle = "#bdbdbd";
+    cctx.fillText("time →", w-70, h-18);
+  }
+
   // ---------- Calibration state ----------
   const calib = {
     valid: false,
-    quality: 0,      // 0..1 used as lockStrength
+    quality: 0,
     monoLikely: false,
 
-    d: NaN,
-    c: NaN,
+    d: NaN, c: NaN,
+    tauMeasL: NaN, tauMeasR: NaN,
+    peakL: NaN, peakR: NaN,
+    rL: NaN, rR: NaN,
+    x: NaN, y: NaN, geomErr: NaN,
+    tauSysCommon: NaN, tauSysL: NaN, tauSysR: NaN,
+    tauMadL: NaN, tauMadR: NaN,
 
-    // measured direct path times (seconds) for each channel (median)
-    tauMeasL: NaN,
-    tauMeasR: NaN,
-
-    // peak strengths (median)
-    peakL: NaN,
-    peakR: NaN,
-
-    // estimated acoustic distances (meters) (relative, after tauSysCommon)
-    rL: NaN,
-    rR: NaN,
-
-    // estimated mic position relative to speaker line
-    x: NaN,
-    y: NaN,
-    geomErr: NaN,
-
-    // estimated system delays (seconds) per channel
-    tauSysCommon: NaN,
-    tauSysL: NaN,
-    tauSysR: NaN,
-
-    // variability metrics
-    tauMadL: NaN,
-    tauMadR: NaN
+    // sanity view data (early correlation curves)
+    sanity: {
+      have: false,
+      earlyMs: 60,
+      curveL: null,
+      curveR: null,
+      peakIdxL: 0,
+      peakIdxR: 0,
+      tauL: NaN,
+      tauR: NaN,
+      peakL: NaN,
+      peakR: NaN,
+      dt: NaN,
+      dp: NaN,
+      expectDiff: false,
+      monoByTime: false,
+      monoByPeak: false
+    }
   };
 
   function renderCalibInfo() {
     const lines = [];
     lines.push(`Calibration: ${calib.valid ? "VALID" : "not calibrated"}`);
     if (!calib.valid) {
-      lines.push("Tap: Calibrate (refined)");
-      lines.push("Goal: robust direct-path locking across devices / speaker-mic geometries.");
+      lines.push("Tap: Calibrate (refined + sanity)");
       calibInfoEl.textContent = lines.join("\n");
+      sanityTextEl.textContent = "Run calibration to populate sanity view.";
       return;
     }
 
@@ -854,6 +934,24 @@
     lines.push(`mic(x,y)≈(${calib.x.toFixed(3)}, ${calib.y.toFixed(3)})m, geomErr≈${calib.geomErr.toFixed(4)}`);
     lines.push(`Direct-path lock: ${(useCalibEl.checked && calib.quality>0.2) ? "ON" : "OFF/weak"}`);
     calibInfoEl.textContent = lines.join("\n");
+
+    // sanity text
+    if (calib.sanity.have) {
+      const s = calib.sanity;
+      const t = [];
+      t.push(`Sanity decision breakdown (thresholds):`);
+      t.push(`- |Δtau| = ${(s.dt*1e3).toFixed(3)} ms  (monoByTime if < 0.150 ms) => ${s.monoByTime ? "YES" : "no"}`);
+      t.push(`- |Δpeak| = ${s.dp.toFixed(3)}     (monoByPeak if < 0.070) => ${s.monoByPeak ? "YES" : "no"}`);
+      t.push(`- expectDiff = ${s.expectDiff ? "YES" : "no"}  (based on d/c > 0.300 ms)`);
+      t.push(`=> monoLikely = ${(calib.monoLikely) ? "YES" : "no"}`);
+      t.push(``);
+      t.push(`Picked peaks:`);
+      t.push(`- L-only: tau=${(s.tauL*1e3).toFixed(3)} ms, peak=${s.peakL.toFixed(3)}`);
+      t.push(`- R-only: tau=${(s.tauR*1e3).toFixed(3)} ms, peak=${s.peakR.toFixed(3)}`);
+      sanityTextEl.textContent = t.join("\n");
+    } else {
+      sanityTextEl.textContent = "Sanity curves not captured yet.";
+    }
   }
 
   function estimateMicXY(rL, rR, d) {
@@ -867,11 +965,8 @@
 
   function predictedTau0ForPing(delayL, delayR) {
     if (!calib.valid || !useCalibEl.checked) return null;
-    // Only lock strongly if calibration quality is decent.
     const lockStrength = calib.quality;
     if (lockStrength <= 0.2) return null;
-
-    // per-channel prediction: tauSys + output delay + (r/c)
     const tL = calib.tauSysL + delayL + (calib.rL / calib.c);
     const tR = calib.tauSysR + delayR + (calib.rR / calib.c);
     return Math.min(tL, tR);
@@ -879,7 +974,6 @@
 
   // ---------- Calibration measurement helpers ----------
   function genCalibrationReference() {
-    // Always use Golay for calibration (cleanest direct path)
     const n = parseInt(el("golayOrder").value, 10);
     const chipRate = parseFloat(el("golayChipRate").value);
     const gapMs = Math.max(6, parseFloat(el("golayGapMs").value));
@@ -887,18 +981,15 @@
     return { a, b, gapMs };
   }
 
-  function buildCorrelationSumForGolay(micWin, a, b, gapMsBetweenCapturesIgnored) {
-    // Note: micWin is per capture. For calibration we capture A and B separately.
-    // Here we keep function signatures from earlier patterns; not used directly.
-    return null;
+  function buildStereoPingCustomForOneSide(mono, which, gain, delaySec) {
+    const gL = (which === "L") ? gain : 0.0;
+    const gR = (which === "R") ? gain : 0.0;
+    return buildStereoPingCustom(mono, gL, gR, delaySec, delaySec);
   }
 
   async function pingAndCaptureOneSide(monoRef, which, gain, listenMs) {
     const delay = 0.012;
-    const gL = (which === "L") ? gain : 0.0;
-    const gR = (which === "R") ? gain : 0.0;
-
-    const ping = buildStereoPingCustom(monoRef, gL, gR, delay, delay);
+    const ping = buildStereoPingCustomForOneSide(monoRef, which, gain, delay);
     ping.out.connect(ac.destination);
 
     const tStart = ac.currentTime + 0.03;
@@ -909,55 +1000,49 @@
     await sleep((emitDelay + 0.040) * 1000);
 
     const end = ringWrite;
-    const listenSamples = Math.max(2048, Math.floor(sr * (listenMs/1000)));
+    const listenSamples = computeListenSamples(listenMs, monoRef.length);
     const micWin = readRingWindow(end, listenSamples);
 
     ping.out.disconnect();
     return { micWin, which, delay };
   }
 
-  function earlyPeakTauFromGolaySum(micWinA, micWinB, a, b) {
+  function golaySumCorrelation(micWinA, micWinB, a, b) {
     const corrA = correlate(micWinA, a); absMaxNormalize(corrA);
     const corrB = correlate(micWinB, b); absMaxNormalize(corrB);
     const L = Math.min(corrA.length, corrB.length);
     const sum = new Float32Array(L);
     for (let i=0;i<L;i++) sum[i] = corrA[i] + corrB[i];
     absMaxNormalize(sum);
-
-    const earlyEnd = Math.min(sum.length, Math.floor(sr * 0.060)); // 60ms
-    const pk = findPeak(sum, 0, earlyEnd);
-    return { tau: pk.index/sr, peak: pk.value };
+    return sum;
   }
 
-  // Mono-output detector:
-  // If L-only and R-only produce almost identical tau and peak stats, output routing likely mono.
-  function assessMonoLikelihood(tauL, tauR, peakL, peakR, d, c) {
+  function earlyPeakFromCorrelation(sumCorr, earlyMs) {
+    const earlyEnd = Math.min(sumCorr.length, Math.floor(sr * (earlyMs/1000)));
+    const pk = findPeak(sumCorr, 0, earlyEnd);
+    return { idx: pk.index, tau: pk.index/sr, peak: pk.value };
+  }
+
+  function assessMonoDecision(tauL, tauR, peakL, peakR, d, c) {
     const dt = Math.abs(tauL - tauR);
     const dp = Math.abs(peakL - peakR);
-    // If timing differs by less than ~0.15ms and peaks within 0.07, it's very likely mono.
-    // (0.15ms corresponds to ~5cm acoustic difference at 343m/s)
-    const monoByTime = dt < 0.00015;
+    const monoByTime = dt < 0.00015;  // 0.150 ms
     const monoByPeak = dp < 0.07;
-    // Also: if speaker spacing is large enough that we'd *expect* difference
-    // but we see none, increase confidence.
-    const expectDiff = (d/c) > 0.0003; // 0.3ms scale
-    return (monoByTime && monoByPeak && expectDiff);
+    const expectDiff = (d/c) > 0.0003; // 0.300 ms
+    const monoLikely = (monoByTime && monoByPeak && expectDiff);
+    return { dt, dp, monoByTime, monoByPeak, expectDiff, monoLikely };
   }
 
-  // Compute calibration quality 0..1
   function computeCalibQuality(stats) {
-    // stats: {tauMadL, tauMadR, peakL, peakR, geomErr, monoLikely}
-    // Smaller MAD => better. Larger peaks => better.
-    const madMs = 1000 * Math.max(stats.tauMadL, stats.tauMadR); // ms
-    const madScore = clamp(1.0 - (madMs / 1.2), 0, 1); // <=1.2ms MAD is okay
-    const peakScore = clamp((Math.min(stats.peakL, stats.peakR) - 0.10) / 0.25, 0, 1); // peaks above ~0.35 are great
-    const geomScore = clamp(1.0 - (stats.geomErr / 0.05), 0, 1); // heuristic
+    const madMs = 1000 * Math.max(stats.tauMadL, stats.tauMadR);
+    const madScore = clamp(1.0 - (madMs / 1.2), 0, 1);
+    const peakScore = clamp((Math.min(stats.peakL, stats.peakR) - 0.10) / 0.25, 0, 1);
+    const geomScore = clamp(1.0 - (stats.geomErr / 0.05), 0, 1);
     const monoPenalty = stats.monoLikely ? 0.25 : 1.0;
-    // combine
     return clamp(0.45*madScore + 0.35*peakScore + 0.20*geomScore, 0, 1) * monoPenalty;
   }
 
-  async function calibrateRefined() {
+  async function calibrateRefinedWithSanity() {
     if (!ac) throw new Error("Init audio first");
     await resumeIfSuspended();
     setStatus("calibrating");
@@ -965,53 +1050,46 @@
     const d = parseFloat(el("spacing").value);
     const c = parseFloat(el("c").value);
     const gain = parseFloat(el("gain").value);
-    const listenMs = Math.max(140, parseFloat(el("listenMs").value)); // stable early search
+    const listenMs = Math.max(140, parseFloat(el("listenMs").value));
     const repeats = clamp(parseInt(el("calRepeats").value, 10) || 1, 1, 9);
     const repeatGap = Math.max(30, parseFloat(el("calRepeatGapMs").value));
 
     if (!(d > 0.02)) throw new Error("Speaker spacing d must be set (meters)");
     if (!(c > 200 && c < 400)) throw new Error("Speed of sound c looks wrong");
 
+    const earlyMs = 60;
     const { a, b, gapMs } = genCalibrationReference();
 
-    // Ensure listen window is long enough for the reference signal
-    const maxRefLen = Math.max(a.length, b.length);
-    const refSec = maxRefLen / sr;
-    const calListenMs = Math.max(listenMs, Math.ceil((refSec + 0.05) * 1000));
+    const tauL = [], tauR = [];
+    const pkL = [], pkR = [];
 
-    const tauL = [];
-    const tauR = [];
-    const pkL = [];
-    const pkR = [];
-
-    log(`[cal] refined start: repeats=${repeats}, listen=${calListenMs}ms`);
+    log(`[cal] refined start: repeats=${repeats}, listen=${listenMs}ms`);
     for (let k=0;k<repeats;k++){
       log(`[cal] rep ${k+1}/${repeats}: L-only A…`);
-      const capLA = await pingAndCaptureOneSide(a, "L", gain, calListenMs);
+      const capLA = await pingAndCaptureOneSide(a, "L", gain, listenMs);
       await sleep(Math.max(0, gapMs));
       log(`[cal] rep ${k+1}/${repeats}: L-only B…`);
-      const capLB = await pingAndCaptureOneSide(b, "L", gain, calListenMs);
+      const capLB = await pingAndCaptureOneSide(b, "L", gain, listenMs);
 
-      const mL = earlyPeakTauFromGolaySum(capLA.micWin, capLB.micWin, a, b);
-      tauL.push(mL.tau);
-      pkL.push(mL.peak);
+      const sumL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b);
+      const mL = earlyPeakFromCorrelation(sumL, earlyMs);
+      tauL.push(mL.tau); pkL.push(mL.peak);
 
       await sleep(repeatGap);
 
       log(`[cal] rep ${k+1}/${repeats}: R-only A…`);
-      const capRA = await pingAndCaptureOneSide(a, "R", gain, calListenMs);
+      const capRA = await pingAndCaptureOneSide(a, "R", gain, listenMs);
       await sleep(Math.max(0, gapMs));
       log(`[cal] rep ${k+1}/${repeats}: R-only B…`);
-      const capRB = await pingAndCaptureOneSide(b, "R", gain, calListenMs);
+      const capRB = await pingAndCaptureOneSide(b, "R", gain, listenMs);
 
-      const mR = earlyPeakTauFromGolaySum(capRA.micWin, capRB.micWin, a, b);
-      tauR.push(mR.tau);
-      pkR.push(mR.peak);
+      const sumR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b);
+      const mR = earlyPeakFromCorrelation(sumR, earlyMs);
+      tauR.push(mR.tau); pkR.push(mR.peak);
 
       await sleep(repeatGap);
     }
 
-    // Robust medians and MAD
     const medTauL = median(tauL);
     const medTauR = median(tauR);
     const medPkL = median(pkL);
@@ -1019,9 +1097,7 @@
     const madTauL = mad(tauL, medTauL);
     const madTauR = mad(tauR, medTauR);
 
-    // System delay separation:
-    // We estimate a shared-ish tauSysCommon from min(medTauL, medTauR) - rMin/c.
-    // Then derive relative distances. This keeps geometry stable across devices.
+    // System delay & distances
     const rMin = 0.04;
     const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
 
@@ -1032,26 +1108,24 @@
 
     const geo = estimateMicXY(rL, rR, d);
 
-    // Per-channel tauSys: tauMeas - r/c
     const tauSysL = Math.max(0, medTauL - (rL/c));
     const tauSysR = Math.max(0, medTauR - (rR/c));
 
-    const monoLikely = assessMonoLikelihood(medTauL, medTauR, medPkL, medPkR, d, c);
+    const mono = assessMonoDecision(medTauL, medTauR, medPkL, medPkR, d, c);
 
-    // Quality
     const q = computeCalibQuality({
       tauMadL: madTauL,
       tauMadR: madTauR,
       peakL: medPkL,
       peakR: medPkR,
       geomErr: geo.err,
-      monoLikely
+      monoLikely: mono.monoLikely
     });
 
-    // Commit calibration
+    // Commit calibration summary
     calib.valid = true;
     calib.quality = q;
-    calib.monoLikely = monoLikely;
+    calib.monoLikely = mono.monoLikely;
 
     calib.d = d;
     calib.c = c;
@@ -1076,20 +1150,64 @@
     calib.y = geo.y;
     calib.geomErr = geo.err;
 
+    // -------- Sanity capture: single fresh L-only and R-only curves (A+B summed), plotted
+    log("[cal] sanity capture: L-only (fresh) …");
+    const capLA = await pingAndCaptureOneSide(a, "L", gain, listenMs);
+    await sleep(Math.max(0, gapMs));
+    const capLB = await pingAndCaptureOneSide(b, "L", gain, listenMs);
+    const sumL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b);
+
+    log("[cal] sanity capture: R-only (fresh) …");
+    const capRA = await pingAndCaptureOneSide(a, "R", gain, listenMs);
+    await sleep(Math.max(0, gapMs));
+    const capRB = await pingAndCaptureOneSide(b, "R", gain, listenMs);
+    const sumR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b);
+
+    // Slice to early window for plot
+    const earlyN = Math.min(sumL.length, Math.floor(sr*(earlyMs/1000)));
+    const curveL = sumL.slice(0, earlyN);
+    const curveR = sumR.slice(0, earlyN);
+
+    const pk1 = findPeak(curveL, 0, curveL.length);
+    const pk2 = findPeak(curveR, 0, curveR.length);
+
+    const tau1 = pk1.index/sr;
+    const tau2 = pk2.index/sr;
+    const peak1 = pk1.value;
+    const peak2 = pk2.value;
+
+    const mono2 = assessMonoDecision(tau1, tau2, peak1, peak2, d, c);
+
+    calib.sanity.have = true;
+    calib.sanity.earlyMs = earlyMs;
+    calib.sanity.curveL = curveL;
+    calib.sanity.curveR = curveR;
+    calib.sanity.peakIdxL = pk1.index;
+    calib.sanity.peakIdxR = pk2.index;
+    calib.sanity.tauL = tau1;
+    calib.sanity.tauR = tau2;
+    calib.sanity.peakL = peak1;
+    calib.sanity.peakR = peak2;
+    calib.sanity.dt = mono2.dt;
+    calib.sanity.dp = mono2.dp;
+    calib.sanity.expectDiff = mono2.expectDiff;
+    calib.sanity.monoByTime = mono2.monoByTime;
+    calib.sanity.monoByPeak = mono2.monoByPeak;
+
+    // Plot
+    drawCalibSanityPlot(curveL, pk1.index, curveR, pk2.index, earlyMs);
+
+    // Open details to make it visible
+    sanityDetailsEl.open = true;
+
     renderCalibInfo();
 
     log(`[cal] medTauL=${(medTauL*1e3).toFixed(2)}ms (MAD ${(madTauL*1e3).toFixed(2)}ms), medTauR=${(medTauR*1e3).toFixed(2)}ms (MAD ${(madTauR*1e3).toFixed(2)}ms)`);
-    log(`[cal] peaks: L≈${medPkL.toFixed(3)}, R≈${medPkR.toFixed(3)} | monoLikely=${monoLikely ? "YES" : "no"}`);
-    log(`[cal] tauSysCommon≈${(tauSysCommon*1e3).toFixed(2)}ms, tauSysL≈${(tauSysL*1e3).toFixed(2)}ms, tauSysR≈${(tauSysR*1e3).toFixed(2)}ms`);
-    log(`[cal] rL≈${rL.toFixed(3)}m rR≈${rR.toFixed(3)}m mic(x,y)≈(${geo.x.toFixed(3)},${geo.y.toFixed(3)}) geomErr≈${geo.err.toFixed(4)}`);
+    log(`[cal] peaks: L≈${medPkL.toFixed(3)}, R≈${medPkR.toFixed(3)} | monoLikely=${mono.monoLikely ? "YES" : "no"}`);
     log(`[cal] quality=${q.toFixed(2)} (direct-path lock will be ${ (useCalibEl.checked && q>0.2) ? "stronger" : "weak/off" })`);
 
-    if (monoLikely) {
-      log("[cal][warn] Output appears mono (L-only and R-only too similar). Steering still works partially via speaker directivity, but geometry inference is limited.");
-    }
-    if (q < 0.25) {
-      log("[cal][warn] Calibration quality is low (too much reflection/variance). App will avoid aggressive direct-path locking.");
-    }
+    if (mono.monoLikely) log("[cal][warn] Output appears mono (L-only and R-only too similar).");
+    if (q < 0.25) log("[cal][warn] Calibration quality is low; app avoids aggressive direct-path locking.");
 
     setStatus("ready");
   }
@@ -1126,7 +1244,7 @@
     await sleep((emitDelay + 0.040) * 1000);
 
     const end = ringWrite;
-    const listenSamples = Math.max(2048, Math.floor(sr * (listenMs/1000)));
+    const listenSamples = computeListenSamples(listenMs, monoRef.length);
     const micWin = readRingWindow(end, listenSamples);
 
     ping.out.disconnect();
@@ -1248,6 +1366,15 @@
     drawHeatmap(minR, maxR);
   }
 
+  function predictedTau0ForPing(delayL, delayR) {
+    if (!calib.valid || !useCalibEl.checked) return null;
+    const lockStrength = calib.quality;
+    if (lockStrength <= 0.2) return null;
+    const tL = calib.tauSysL + delayL + (calib.rL / calib.c);
+    const tR = calib.tauSysR + delayR + (calib.rR / calib.c);
+    return Math.min(tL, tR);
+  }
+
   // ---------- Scan ----------
   async function doScan() {
     scanning = true;
@@ -1306,7 +1433,7 @@
   btnStop.addEventListener("click", () => stopAll());
 
   btnCalibrate.addEventListener("click", async () => {
-    try { await calibrateRefined(); }
+    try { await calibrateRefinedWithSanity(); }
     catch (e) { setStatus("error"); log("[err] calibrate failed: " + (e?.message || e)); renderCalibInfo(); }
   });
 
@@ -1327,7 +1454,7 @@
     if (document.visibilityState === "visible") resumeIfSuspended().catch(()=>{});
   });
 
-  // ---------- Initial empty render ----------
+  // ---------- Initial render ----------
   (async () => {
     setStatus("idle");
     pctx.fillStyle = "#070707"; pctx.fillRect(0,0,profileCanvas.width,profileCanvas.height);
@@ -1338,6 +1465,11 @@
     const maxR = parseFloat(el("maxR").value);
     resetHeat([-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60]);
     drawHeatmap(minR, maxR);
+
+    clearCanvas(cctx, calibPlot.width, calibPlot.height);
+    cctx.fillStyle = "#bdbdbd";
+    cctx.font = "12px system-ui";
+    cctx.fillText("Sanity plot will appear after calibration.", 54, 22);
 
     await refreshDeviceInfo();
     renderCalibInfo();
