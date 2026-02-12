@@ -341,6 +341,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   // Two-pass pilot clustering
   let pilotTau: number;
   let pilotAboveFloor = false;
+  let pilotClusterMad = 0;
   const PILOT_CLUSTER_WIN = 0.0008; // 0.8ms window for pilot clustering
 
   function clusterPilot(measurements: typeof pilotMeasurements): { cluster: typeof pilotMeasurements; medianTau: number } | null {
@@ -395,26 +396,36 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       pilotTau = pass1.medianTau;
       pilotAboveFloor = true;
       const taus = pass1.cluster.map(m => m.meanTau);
-      console.debug(`[calib] pilot pass1 (acoustic): cluster=${pass1.cluster.length}/${acoustic.length} above-floor/${pilotMeasurements.length} total, tau=${(pilotTau * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
+      pilotClusterMad = taus.length > 1 ? mad(taus, pilotTau) : 0;
+      console.debug(`[calib] pilot pass1 (acoustic): cluster=${pass1.cluster.length}/${acoustic.length} above-floor/${pilotMeasurements.length} total, tau=${(pilotTau * 1000).toFixed(3)}ms mad=${(pilotClusterMad * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
     } else {
       // Pass 2: fall back to all measurements (coupling may dominate)
       const pass2 = clusterPilot(pilotMeasurements)!;
       pilotTau = pass2.medianTau;
       const taus = pass2.cluster.map(m => m.meanTau);
+      pilotClusterMad = taus.length > 1 ? mad(taus, pilotTau) : 0;
       const nAbove = acoustic.length;
-      console.debug(`[calib] pilot pass2 (fallback, ${nAbove} above floor): cluster=${pass2.cluster.length}/${pilotMeasurements.length}, tau=${(pilotTau * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
+      console.debug(`[calib] pilot pass2 (fallback, ${nAbove} above floor): cluster=${pass2.cluster.length}/${pilotMeasurements.length}, tau=${(pilotTau * 1000).toFixed(3)}ms mad=${(pilotClusterMad * 1000).toFixed(3)}ms (taus: ${taus.map(t => (t * 1000).toFixed(3)).join(', ')}ms)`);
       if (pilotTau < TAU_MIN_ACOUSTIC) {
         console.debug(`[calib] WARNING: pilot tau ${(pilotTau * 1000).toFixed(3)}ms < ${(TAU_MIN_ACOUSTIC * 1000).toFixed(1)}ms floor — likely coupling dominance. Consider disabling OS audio processing (AEC/NS/AGC).`);
       }
     }
   }
 
-  // Pilot window: tighter when pilot is in the acoustic regime (modes are
-  // more spread out at short delays where coupling artifacts cluster)
-  const PILOT_WIN = pilotAboveFloor ? 0.0004 : 0.0007; // 0.4ms acoustic, 0.7ms coupling fallback
+  // Adaptive pilot window: scale with pilot cluster spread.
+  // In stable rooms, MAD is small → tighter window.
+  // In reflective rooms, MAD is larger → looser window.
+  // Clamped to [0.25ms, 0.5ms] for acoustic, [0.5ms, 0.8ms] for coupling fallback.
+  let PILOT_WIN: number;
+  if (pilotAboveFloor) {
+    PILOT_WIN = clamp(2.5 * pilotClusterMad, 0.00025, 0.0005);
+  } else {
+    PILOT_WIN = clamp(2.5 * pilotClusterMad, 0.0005, 0.0008);
+  }
 
   interface RepeatMeasurement {
-    tauL: number; tauR: number; qualL: number; qualR: number; valid: boolean;
+    tauL: number; tauR: number; qualL: number; qualR: number;
+    tdoaRatio: number; valid: boolean;
   }
   const allRepeats: RepeatMeasurement[] = [];
 
@@ -453,14 +464,14 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       // but log the warning for diagnostics.
       const suspicious = tdoaRatio > 0.90;
 
-      allRepeats.push({ tauL: tdoaPair.tauL, tauR: tdoaPair.tauR, qualL: corrQualL, qualR: corrQualR, valid: true });
+      allRepeats.push({ tauL: tdoaPair.tauL, tauR: tdoaPair.tauR, qualL: corrQualL, qualR: corrQualR, tdoaRatio, valid: true });
       const dist = Math.abs((tdoaPair.tauL + tdoaPair.tauR) / 2 - pilotTau) * 1000;
       console.debug(`[calib] repeat ${k + 1}/${repeats} OK: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${(pairDelta * 1000).toFixed(3)}ms(${(tdoaRatio * 100).toFixed(0)}%max) distFromPilot=${dist.toFixed(3)}ms corrQual=${corrQualL.toFixed(3)}/${corrQualR.toFixed(3)} candsL=${candsL.length} candsR=${candsR.length}${suspicious ? ' SUSPICIOUS(near max TDOA)' : ''}`);
     } else {
       // No valid TDOA pair within pilot window — discard this repeat
       const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
       const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
-      allRepeats.push({ tauL: mL.tau, tauR: mR.tau, qualL: 0, qualR: 0, valid: false });
+      allRepeats.push({ tauL: mL.tau, tauR: mR.tau, qualL: 0, qualR: 0, tdoaRatio: Infinity, valid: false });
       console.debug(`[calib] repeat ${k + 1}/${repeats} DISCARDED: no pair within pilotWin (candsL=${candsL.length} candsR=${candsR.length}), onset: L@${(mL.tau * 1000).toFixed(3)}ms R@${(mR.tau * 1000).toFixed(3)}ms delta=${(Math.abs(mL.tau - mR.tau) * 1000).toFixed(3)}ms`);
     }
 
@@ -498,6 +509,21 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
          median(bestCluster.map(r => (r.tauL + r.tauR) / 2)))) {
       bestCluster = verified;
     }
+  }
+
+  // Soft down-weight: remove repeats with tdoaRatio > 0.80 if enough
+  // good ones remain.  Near-max-TDOA repeats on distributed sources are
+  // more likely to be wrong peak pairings than real extreme angles.
+  const TDOA_SOFT_LIMIT = 0.80;
+  const goodRepeats = bestCluster.filter(r => r.tdoaRatio <= TDOA_SOFT_LIMIT);
+  const nDropped = bestCluster.length - goodRepeats.length;
+  if (goodRepeats.length >= 2) {
+    if (nDropped > 0) {
+      console.debug(`[calib] soft-filtered ${nDropped} repeat(s) with tdoaRatio>${(TDOA_SOFT_LIMIT * 100).toFixed(0)}% (${goodRepeats.length} remaining)`);
+    }
+    bestCluster = goodRepeats;
+  } else if (nDropped > 0) {
+    console.debug(`[calib] would soft-filter ${nDropped} repeat(s) but only ${goodRepeats.length} would remain — keeping all ${bestCluster.length}`);
   }
 
   const clusterSize = bestCluster.length;
@@ -627,12 +653,16 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   // Normalize: MAD(delta) / maxTDOA.  A value of 0 = perfect agreement,
   // 1.0 = delta spread equals the physical max TDOA.
   const deltaConsistency = Number.isFinite(madDelta) ? madDelta / maxTDOA : 1.0;
+  // Max deviation: worst single-repeat outlier (diagnostic, not used for gating).
+  // Catches "one repeat picked a different submode" even when MAD stays modest.
+  const maxDeltaDev = perRepeatDeltas.length > 0
+    ? Math.max(...perRepeatDeltas.map(d => Math.abs(d - medDelta))) / maxTDOA : 0;
 
   console.debug(`[calib] TDOA: deltaTau=${(deltaTau * 1000).toFixed(4)}ms deltaR=${(deltaR * 100).toFixed(2)}cm`);
   console.debug(`[calib] TDOA geometry: micX=${micX.toFixed(4)}m micYPrior=${micYPrior.toFixed(4)}m`);
   console.debug(`[calib] distances: rL=${rL.toFixed(4)}m rR=${rR.toFixed(4)}m tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
   console.debug(`[calib] system delays: L=${(tauSysL * 1000).toFixed(4)}ms R=${(tauSysR * 1000).toFixed(4)}ms delta=${((tauSysL - tauSysR) * 1000).toFixed(4)}ms`);
-  console.debug(`[calib] geometry: mic=(${micX.toFixed(4)}, ${(geo.y > 0 ? geo.y : micYPrior).toFixed(4)}) rangeBasedErr=${geo.err.toFixed(4)} deltaConsistency=${deltaConsistency.toFixed(4)} spacing=${d.toFixed(3)}m`);
+  console.debug(`[calib] geometry: mic=(${micX.toFixed(4)}, ${(geo.y > 0 ? geo.y : micYPrior).toFixed(4)}) deltaConsistency=${deltaConsistency.toFixed(4)} maxDeltaDev=${maxDeltaDev.toFixed(4)} spacing=${d.toFixed(3)}m`);
 
   const mono = assessMonoDecision(medTauL, medTauR, medPkL, medPkR, d, c);
   console.debug(`[calib] mono assessment: monoLikely=${mono.monoLikely} dt=${(mono.dt * 1000).toFixed(4)}ms dp=${mono.dp.toFixed(4)} monoByTime=${mono.monoByTime} monoByPeak=${mono.monoByPeak}`);
@@ -731,7 +761,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const maxMadMs = Number.isFinite(madTauL) && Number.isFinite(madTauR)
     ? 1000 * Math.max(madTauL, madTauR) : Infinity;
   const measurementsStable = maxMadMs < 2.0; // worst-channel MAD < 2ms
-  const deltaConsistent = deltaConsistency < 0.5; // per-repeat deltas agree within 50% of maxTDOA
+  const deltaConsistent = deltaConsistency < 0.3; // per-repeat deltas agree within 30% of maxTDOA
   const micPlausible = Math.abs(micX) < d * 3; // mic X within 3× speaker spacing
   const enoughRepeats = clusterSize >= 2; // need ≥2 consistent repeats
   const corrQualOk = medPkL > 0.15 && medPkR > 0.15; // correlation quality above noise floor
@@ -741,11 +771,18 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const valid = enoughRepeats && measurementsStable && corrQualOk
     && deltaConsistent && micPlausible && quality > 0.15;
 
-  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.5=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
+  // Confidence tier: angle information is reliable when per-repeat TDOA
+  // deltas are well-agreed.  maxDeltaDev < 0.6 means worst repeat's delta
+  // deviates by less than 60% of maxTDOA from the median — good enough
+  // for steering.  When false, calibration is still usable for range/timing.
+  const angleReliable = valid && maxDeltaDev < 0.6;
+
+  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.3=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15} angleReliable=${angleReliable}(maxDeltaDev=${maxDeltaDev.toFixed(3)}<0.6)`);
 
   const result: CalibrationResult = {
     valid,
     quality,
+    angleReliable,
     monoLikely: mono.monoLikely,
     tauMeasured: { L: medTauL, R: medTauR },
     tauMAD: { L: madTauL, R: madTauR },

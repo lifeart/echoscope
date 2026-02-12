@@ -79,6 +79,9 @@ export interface DOAEstimate {
 export interface CalibrationResult {
   valid: boolean;
   quality: number;
+  /** True when per-repeat TDOA deltas are consistent (maxDeltaDev < 0.6).
+   *  When false, calibration is still usable for range but angle is less reliable. */
+  angleReliable: boolean;
   monoLikely: boolean;
   tauMeasured: { L: number; R: number };
   tauMAD: { L: number; R: number };
