@@ -180,6 +180,7 @@
         <div>
           <label>Quality algorithm</label>
           <select id="qualityAlgo">
+            <option value="auto">Auto</option>
             <option value="fast">Fast</option>
             <option value="balanced" selected>Balanced</option>
             <option value="max">Max quality</option>
@@ -347,8 +348,44 @@
 
   function getQualityAlgo() {
     const mode = el("qualityAlgo")?.value || "balanced";
-    if (mode === "fast" || mode === "balanced" || mode === "max") return mode;
+    if (mode === "auto" || mode === "fast" || mode === "balanced" || mode === "max") return mode;
     return "balanced";
+  }
+
+  const qualityPerf = {
+    ewmaMs: 7,
+    lastResolved: "balanced",
+    lastSwitchAt: 0
+  };
+
+  function getEffectiveQualityAlgo() {
+    const selected = getQualityAlgo();
+    if (selected !== "auto") return selected;
+
+    const dwell = Math.max(30, parseFloat(el("scanDwell")?.value) || 140);
+    const budgetMs = scanning ? clamp(dwell * 0.16, 8, 30) : 18;
+    const p = qualityPerf.ewmaMs;
+    let target = "max";
+    if (p > budgetMs * 1.20) target = "fast";
+    else if (p > budgetMs * 0.72) target = "balanced";
+
+    // Hysteresis: avoid noisy switching around thresholds.
+    const now = performance.now();
+    if (target !== qualityPerf.lastResolved && (now - qualityPerf.lastSwitchAt) < 1200) {
+      target = qualityPerf.lastResolved;
+    }
+    if (target !== qualityPerf.lastResolved) {
+      qualityPerf.lastResolved = target;
+      qualityPerf.lastSwitchAt = now;
+      log(`[quality] auto -> ${target} (algo ${qualityPerf.ewmaMs.toFixed(1)}ms, budget ${budgetMs.toFixed(1)}ms)`);
+    }
+    return target;
+  }
+
+  function qualityAlgoLabel() {
+    const selected = getQualityAlgo();
+    if (selected !== "auto") return selected;
+    return `auto:${qualityPerf.lastResolved}`;
   }
 
   function shouldUseEnvBaseline() {
@@ -429,8 +466,13 @@
   }
 
   function applyQualityProfileAlgorithms(profile) {
-    const algo = getQualityAlgo();
-    if (algo === "fast") return profile;
+    const t0 = performance.now();
+    const algo = getEffectiveQualityAlgo();
+    if (algo === "fast") {
+      const dt = performance.now() - t0;
+      qualityPerf.ewmaMs = 0.82 * qualityPerf.ewmaMs + 0.18 * dt;
+      return profile;
+    }
     let out = median3Profile(profile);
     out = triSmoothProfile(out);
     if (algo === "max") {
@@ -438,6 +480,8 @@
       out = triSmoothProfile(out);
     }
     absMaxNormalize(out);
+    const dt = performance.now() - t0;
+    qualityPerf.ewmaMs = 0.82 * qualityPerf.ewmaMs + 0.18 * dt;
     return out;
   }
 
@@ -461,7 +505,7 @@
     el("listenMs").value = "180";
     el("strengthGate").value = "0.05";
     el("scanClutterStrength").value = "0.70";
-    el("qualityAlgo").value = "max";
+    el("qualityAlgo").value = "auto";
     el("extraCalPings").value = "6";
     el("envBaselineStrength").value = "0.60";
 
@@ -475,7 +519,7 @@
     const maxR = parseFloat(el("maxR").value);
     drawHeatmap(minR, maxR);
 
-    log("[preset] laptop mode applied: golay, step=3°, dwell=220ms, listen=180ms, gate=0.05, static suppression=0.70, quality=max, env pings=6");
+    log("[preset] laptop mode applied: golay, step=3°, dwell=220ms, listen=180ms, gate=0.05, static suppression=0.70, quality=auto, env pings=6");
   }
 
   function suppressStaticReflectionsInProfile(profile) {
@@ -1751,7 +1795,7 @@
 
     const modeTag = (ref.type === "single") ? mode : "golay";
     const bestText = Number.isFinite(bestRFinal) ? `${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)})` : "—";
-    log(`[ping] θ=${angleDeg}° mode=${modeTag} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best=${bestText} lock=${lockStrength.toFixed(2)} algo=${getQualityAlgo()}`);
+    log(`[ping] θ=${angleDeg}° mode=${modeTag} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best=${bestText} lock=${lockStrength.toFixed(2)} algo=${qualityAlgoLabel()}`);
 
     lastProfileCorr = corrFinal;
     lastProfileTau0 = tau0Final;
