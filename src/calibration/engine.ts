@@ -22,6 +22,41 @@ interface GolaySumResult {
   rawPeak: number;
 }
 
+export interface RepeatMeasurement {
+  tauL: number; tauR: number; qualL: number; qualR: number;
+  tdoaRatio: number; valid: boolean;
+}
+
+/**
+ * Soft down-weight: remove repeats that are BOTH near the physical TDOA
+ * limit AND inconsistent with the cluster's median delta.  This avoids
+ * removing legitimate high-angle repeats (which would be near max TDOA
+ * but consistent with each other).
+ *
+ * Only applies when cluster has ≥3 members.
+ * Only removes if ≥2 good repeats remain.
+ */
+export function softFilterRepeats(
+  cluster: RepeatMeasurement[],
+  maxTDOA: number,
+  tdoaSoftLimit = 0.80,
+  deltaDevLimit = 0.40,
+): RepeatMeasurement[] {
+  if (cluster.length < 3 || maxTDOA <= 0) return cluster;
+
+  const clusterDeltas = cluster.map(r => r.tauR - r.tauL);
+  const clusterMedDelta = median(clusterDeltas);
+  const goodRepeats = cluster.filter(r => {
+    if (r.tdoaRatio <= tdoaSoftLimit) return true;
+    const deltaDev = Math.abs((r.tauR - r.tauL) - clusterMedDelta) / maxTDOA;
+    return deltaDev <= deltaDevLimit;
+  });
+  if (goodRepeats.length >= 2 && goodRepeats.length < cluster.length) {
+    return goodRepeats;
+  }
+  return cluster;
+}
+
 function golaySumCorrelation(
   micWinA: Float32Array,
   micWinB: Float32Array,
@@ -423,10 +458,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     PILOT_WIN = clamp(2.5 * pilotClusterMad, 0.0005, 0.0008);
   }
 
-  interface RepeatMeasurement {
-    tauL: number; tauR: number; qualL: number; qualR: number;
-    tdoaRatio: number; valid: boolean;
-  }
+  // RepeatMeasurement is now exported at module scope
   const allRepeats: RepeatMeasurement[] = [];
 
   console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin) pilotAnchor=${(pilotTau * 1000).toFixed(3)}ms pilotWin=${(PILOT_WIN * 1000).toFixed(3)}ms`);
@@ -511,20 +543,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     }
   }
 
-  // Soft down-weight: remove repeats with tdoaRatio > 0.80 if enough
-  // good ones remain.  Near-max-TDOA repeats on distributed sources are
-  // more likely to be wrong peak pairings than real extreme angles.
-  const TDOA_SOFT_LIMIT = 0.80;
-  const goodRepeats = bestCluster.filter(r => r.tdoaRatio <= TDOA_SOFT_LIMIT);
-  const nDropped = bestCluster.length - goodRepeats.length;
-  if (goodRepeats.length >= 2) {
-    if (nDropped > 0) {
-      console.debug(`[calib] soft-filtered ${nDropped} repeat(s) with tdoaRatio>${(TDOA_SOFT_LIMIT * 100).toFixed(0)}% (${goodRepeats.length} remaining)`);
-    }
-    bestCluster = goodRepeats;
-  } else if (nDropped > 0) {
-    console.debug(`[calib] would soft-filter ${nDropped} repeat(s) but only ${goodRepeats.length} would remain — keeping all ${bestCluster.length}`);
-  }
+  bestCluster = softFilterRepeats(bestCluster, maxTDOA);
 
   const clusterSize = bestCluster.length;
   const tauL = bestCluster.map(r => r.tauL);
