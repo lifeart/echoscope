@@ -186,6 +186,13 @@
             <option value="max">Max quality</option>
           </select>
         </div>
+        <div>
+          <label>Direction axis</label>
+          <select id="dirAxis">
+            <option value="horizontal" selected>Horizontal (L/R)</option>
+            <option value="vertical">Vertical (T/B)</option>
+          </select>
+        </div>
       </div>
 
       <div class="row" style="margin-top:8px">
@@ -195,11 +202,14 @@
 
       <div class="row" style="margin-top:10px">
         <div class="pill"><span id="bestReadout">Best: —</span></div>
+        <div class="pill"><span id="dirReadout">Direction: —</span></div>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="showTrace" type="checkbox" checked>
           Show best-target trace
         </label>
       </div>
+
+      <p class="hint">Use <b>Horizontal (L/R)</b> for left/right and <b>Vertical (T/B)</b> when your speaker axis is rotated 90°.</p>
 
       <hr/>
 
@@ -289,6 +299,7 @@
   const logEl = el("log");
   const statusEl = el("status");
   const bestReadoutEl = el("bestReadout");
+  const dirReadoutEl = el("dirReadout");
   const calibInfoEl = el("calibInfo");
 
   const btnInit = el("btnInit");
@@ -305,6 +316,7 @@
 
   const angleEl = el("angle");
   const angleValEl = el("angleVal");
+  const dirAxisEl = el("dirAxis");
 
   const showTraceEl = el("showTrace");
   const useCalibEl = el("useCalib");
@@ -333,6 +345,34 @@
     const raw = parseFloat(el("strengthGate").value);
     if (!Number.isFinite(raw)) return 0;
     return clamp(raw, 0, 1);
+  }
+
+  function getDirectionAxis() {
+    const v = dirAxisEl?.value || "horizontal";
+    return (v === "vertical") ? "vertical" : "horizontal";
+  }
+
+  function classifyDirection(angleDeg, axis) {
+    if (!Number.isFinite(angleDeg)) return "—";
+    const deadZone = 7;
+    if (Math.abs(angleDeg) <= deadZone) return "Center";
+    if (axis === "vertical") return (angleDeg >= 0) ? "Top" : "Bottom";
+    return (angleDeg >= 0) ? "Right" : "Left";
+  }
+
+  let lastDirectionAngle = NaN;
+  let lastDirectionStrength = 0;
+
+  function updateDirectionReadout(angleDeg, strength, gate) {
+    if (!Number.isFinite(angleDeg) || !Number.isFinite(strength) || strength <= gate) {
+      dirReadoutEl.textContent = "Direction: —";
+      return;
+    }
+    const axis = getDirectionAxis();
+    const direction = classifyDirection(angleDeg, axis);
+    const confidence = clamp((strength - gate) / Math.max(1e-6, 1 - gate), 0, 1);
+    const axisTag = (axis === "vertical") ? "T/B" : "L/R";
+    dirReadoutEl.textContent = `Direction: ${direction} (${axisTag}, ${(confidence*100).toFixed(0)}%)`;
   }
 
   function shouldSuppressStaticReflections() {
@@ -1793,6 +1833,14 @@
       bestReadoutEl.textContent = "Best: —";
     }
 
+    if (updateHeatRowIndex === null) {
+      if (!isWeak && Number.isFinite(bestRFinal)) {
+        lastDirectionAngle = angleDeg;
+        lastDirectionStrength = bestValFinal;
+      }
+      updateDirectionReadout(lastDirectionAngle, lastDirectionStrength, strengthGate);
+    }
+
     const modeTag = (ref.type === "single") ? mode : "golay";
     const bestText = Number.isFinite(bestRFinal) ? `${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)})` : "—";
     log(`[ping] θ=${angleDeg}° mode=${modeTag} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best=${bestText} lock=${lockStrength.toFixed(2)} algo=${qualityAlgoLabel()}`);
@@ -1839,6 +1887,24 @@
 
       await doPing(a, i);
       await sleep(dwell);
+    }
+
+    const gate = getStrengthGate();
+    let bestRow = -1;
+    let bestScore = -Infinity;
+    for (let r=0;r<angles.length;r++) {
+      if (bestBin[r] < 0) continue;
+      if (bestVal[r] > bestScore) {
+        bestScore = bestVal[r];
+        bestRow = r;
+      }
+    }
+    if (bestRow >= 0 && bestScore > gate) {
+      lastDirectionAngle = angles[bestRow];
+      lastDirectionStrength = bestScore;
+      updateDirectionReadout(lastDirectionAngle, lastDirectionStrength, gate);
+    } else {
+      updateDirectionReadout(NaN, 0, gate);
     }
 
     scanning = false;
@@ -1926,6 +1992,10 @@
     const minR = parseFloat(el("minR").value);
     const maxR = parseFloat(el("maxR").value);
     drawHeatmap(minR, maxR);
+  });
+
+  dirAxisEl.addEventListener("change", () => {
+    updateDirectionReadout(lastDirectionAngle, lastDirectionStrength, getStrengthGate());
   });
 
   useCalibEl.addEventListener("change", () => renderCalibInfo());
