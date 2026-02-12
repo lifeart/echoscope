@@ -510,30 +510,107 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
   console.debug(`[calib] correlation quality: medCorrQualL=${medPkL.toFixed(4)} medCorrQualR=${medPkR.toFixed(4)}`);
 
-  // Compute ranges from median taus.
-  // Use TDOA (Δτ = τR − τL) as the primary geometric observable — it's
-  // independent of the common system delay and avoids range-clamping artifacts
-  // that poison the point-source geometry solver on distributed sources.
+  // --- TDOA-based geometry ---
+  // deltaTau = τR − τL is the primary geometric observable.  The common
+  // system delay cancels in the difference, so deltaTau is pure acoustic
+  // TDOA independent of OS/DAC/ADC pipeline latency.
   const deltaTau = medTauR - medTauL; // signed TDOA
+  const deltaR = deltaTau * c;        // path difference rR − rL (meters)
 
-  // Common delay estimate: minimum of the two channels minus a small floor
-  const rMin = 0.04;
-  const tauSysCommon = Math.max(0, Math.min(medTauL, medTauR) - (rMin / c));
+  // Mic x from TDOA: for speakers at (−d/2, 0) and (+d/2, 0), with mic
+  // at (x, y), the path difference rR − rL depends on x.  For y ≪ d or
+  // near-field with known y, we solve exactly via the TDOA hyperboloid.
+  //
+  // Use preset mic y if available (typical: 0.01m for MacBooks), else
+  // use a small default.  This breaks the circular dependency between
+  // tauSysCommon and range estimation.
+  const presetMicY = state.presetMicPosition?.y;
+  const micYPrior = (presetMicY !== null && presetMicY !== undefined && Number.isFinite(presetMicY))
+    ? presetMicY : 0.01; // fallback: 1cm above speaker line
 
-  // Unclamped ranges for geometry solver (avoids bias from floor)
-  const rLRaw = c * Math.max(0, medTauL - tauSysCommon);
-  const rRRaw = c * Math.max(0, medTauR - tauSysCommon);
-  const geo = estimateMicXY(rLRaw, rRRaw, d);
+  // Closed-form TDOA geometry with y prior.
+  //
+  // Speakers at S_L = (−d/2, 0) and S_R = (+d/2, 0), mic at (x, y).
+  //   rL = sqrt((x + d/2)² + y²)
+  //   rR = sqrt((x − d/2)² + y²)
+  //   deltaR = rR − rL
+  //
+  // From rR² − rL² = −2dx and deltaR = rR − rL:
+  //   sumR = rL + rR = −2dx / deltaR      [when deltaR ≠ 0]
+  //   rL = (sumR − deltaR) / 2
+  //
+  // Then from rL² = (x + d/2)² + y²:
+  //   ((−2dx/deltaR − deltaR) / 2)² = (x + d/2)² + y²
+  //
+  // This reduces to a quadratic in x (see derivation below).
+  // When |deltaR| is very small (broadside), use x ≈ 0.
+  let micX: number;
+  let rL: number;
+  let rR: number;
 
-  // Clamped ranges for presentation / downstream use
-  let rL = Math.max(rMin, rLRaw);
-  let rR = Math.max(rMin, rRRaw);
+  if (Math.abs(deltaR) < 1e-6) {
+    // Near-broadside: TDOA ≈ 0, mic is centered
+    micX = 0;
+    rL = Math.sqrt((d / 2) * (d / 2) + micYPrior * micYPrior);
+    rR = rL;
+  } else {
+    // From the constraint equations, substituting sumR = -2dx/deltaR:
+    //   rL = (-2dx/deltaR - deltaR) / 2 = -(dx/deltaR + deltaR/2)
+    //   rL² = (x + d/2)² + y²
+    //
+    // Let A = d/deltaR. Then rL = -(Ax + deltaR/2).
+    // Squaring: A²x² + A·deltaR·x + deltaR²/4 = x² + dx + d²/4 + y²
+    //   (A² − 1)x² + (A·deltaR − d)x + (deltaR²/4 − d²/4 − y²) = 0
+    const A = d / deltaR;
+    const qa = A * A - 1;
+    const qb = A * deltaR - d;
+    const qc = (deltaR * deltaR - d * d) / 4 - micYPrior * micYPrior;
+
+    if (Math.abs(qa) < 1e-12) {
+      // Linear case (deltaR ≈ ±d): x = -qc/qb
+      micX = qb !== 0 ? -qc / qb : 0;
+    } else {
+      const disc = qb * qb - 4 * qa * qc;
+      if (disc < 0) {
+        // No real solution (y prior too large for this TDOA) — use linear approx
+        micX = -deltaR / 2;
+      } else {
+        const sqrtDisc = Math.sqrt(disc);
+        const x1 = (-qb + sqrtDisc) / (2 * qa);
+        const x2 = (-qb - sqrtDisc) / (2 * qa);
+        // Pick solution where rL > 0: rL = -(A*x + deltaR/2)
+        const rL1 = -(A * x1 + deltaR / 2);
+        const rL2 = -(A * x2 + deltaR / 2);
+        if (rL1 > 0 && rL2 > 0) {
+          // Both valid — prefer the one closer to center (more likely for a mic)
+          micX = Math.abs(x1) <= Math.abs(x2) ? x1 : x2;
+        } else if (rL1 > 0) {
+          micX = x1;
+        } else if (rL2 > 0) {
+          micX = x2;
+        } else {
+          micX = -deltaR / 2; // fallback
+        }
+      }
+    }
+    rL = Math.sqrt((micX + d / 2) * (micX + d / 2) + micYPrior * micYPrior);
+    rR = Math.sqrt((micX - d / 2) * (micX - d / 2) + micYPrior * micYPrior);
+  }
+
+  // System delay: meanTau minus mean range / c
+  const meanTau = (medTauL + medTauR) / 2;
+  const meanRange = (rL + rR) / 2;
+  const tauSysCommon = Math.max(0, meanTau - meanRange / c);
+
+  // Also run legacy range-based geometry for error metric
+  const geo = estimateMicXY(rL, rR, d);
 
   const tauSysL = Math.max(0, medTauL - (rL / c));
   const tauSysR = Math.max(0, medTauR - (rR / c));
 
-  console.debug(`[calib] TDOA: deltaTau=${(deltaTau * 1000).toFixed(4)}ms (${(deltaTau * c * 100).toFixed(2)}cm path diff)`);
-  console.debug(`[calib] distances: rL=${rL.toFixed(4)}m(raw=${rLRaw.toFixed(4)}) rR=${rR.toFixed(4)}m(raw=${rRRaw.toFixed(4)}) tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
+  console.debug(`[calib] TDOA: deltaTau=${(deltaTau * 1000).toFixed(4)}ms deltaR=${(deltaR * 100).toFixed(2)}cm`);
+  console.debug(`[calib] TDOA geometry: micX=${micX.toFixed(4)}m micYPrior=${micYPrior.toFixed(4)}m`);
+  console.debug(`[calib] distances: rL=${rL.toFixed(4)}m rR=${rR.toFixed(4)}m tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
   console.debug(`[calib] system delays: L=${(tauSysL * 1000).toFixed(4)}ms R=${(tauSysR * 1000).toFixed(4)}ms delta=${((tauSysL - tauSysR) * 1000).toFixed(4)}ms`);
   console.debug(`[calib] geometry: mic=(${geo.x.toFixed(4)}, ${geo.y.toFixed(4)}) err=${geo.err.toFixed(4)} spacing=${d.toFixed(3)}m`);
 
@@ -655,7 +732,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     tauMAD: { L: madTauL, R: madTauR },
     peaks: { L: medPkL, R: medPkR },
     distances: { L: rL, R: rR },
-    micPosition: { x: geo.x, y: geo.y },
+    micPosition: { x: micX, y: geo.y > 0 ? geo.y : micYPrior },
     systemDelay: { common: tauSysCommon, L: tauSysL, R: tauSysR },
     geometryError: geo.err,
     envBaseline,
