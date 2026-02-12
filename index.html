@@ -163,6 +163,10 @@
           <label>Scan dwell (ms)</label>
           <input id="scanDwell" type="number" step="10" value="140">
         </div>
+        <div>
+          <label>Min strength gate</label>
+          <input id="strengthGate" type="number" step="0.01" min="0" max="1" value="0.08">
+        </div>
       </div>
 
       <div class="row" style="margin-top:10px">
@@ -286,6 +290,11 @@
   function setStatus(msg) { statusEl.textContent = "Status: " + msg; }
   function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
   function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+  function getStrengthGate() {
+    const raw = parseFloat(el("strengthGate").value);
+    if (!Number.isFinite(raw)) return 0;
+    return clamp(raw, 0, 1);
+  }
 
   angleEl.addEventListener("input", () => angleValEl.textContent = angleEl.value);
 
@@ -1350,6 +1359,7 @@
 
     const mode = modeEl.value;
     const ref = buildRefForMode(mode);
+    const strengthGate = getStrengthGate();
 
     const lockStrength = (calib.valid && useCalibEl.checked) ? calib.quality : 0;
 
@@ -1407,6 +1417,14 @@
       log(`[ping] θ=${angleDeg}° mode=golay dt=${(dt*1e6).toFixed(1)}µs tau0≈${(tau0Final*1e3).toFixed(2)}ms best≈${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)}) lock=${lockStrength.toFixed(2)}`);
     }
 
+    const isWeak = bestValFinal < strengthGate;
+    if (isWeak) {
+      bestBinFinal = -1;
+      bestValFinal = 0;
+      bestRFinal = NaN;
+      if (updateHeatRowIndex !== null) profFinal.fill(0);
+    }
+
     if (updateHeatRowIndex !== null && heat) {
       const row = updateHeatRowIndex;
       for (let b=0;b<heatBins;b++){
@@ -1419,6 +1437,8 @@
 
     if (Number.isFinite(bestRFinal)) {
       bestReadoutEl.textContent = `Best: θ=${angleDeg}°  R≈${bestRFinal.toFixed(2)} m  strength=${bestValFinal.toFixed(3)}`;
+    } else if (isWeak) {
+      bestReadoutEl.textContent = `Best: — (below gate ${strengthGate.toFixed(2)})`;
     } else {
       bestReadoutEl.textContent = "Best: —";
     }
