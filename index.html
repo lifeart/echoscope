@@ -288,6 +288,16 @@
         <canvas id="geometry" width="1000" height="280"></canvas>
       </div>
 
+      <div class="row" style="margin-top:8px">
+        <label style="display:flex; align-items:center; gap:8px; margin:0;">
+          <input id="geomWizardOn" type="checkbox">
+          Geometry wizard
+        </label>
+        <button id="btnGeomReset" type="button">Reset handles</button>
+        <button id="btnGeomApply" type="button">Apply geometry</button>
+        <span class="small" id="geomWizardStatus">Enable wizard to drag speakers/mic on geometry view.</span>
+      </div>
+
       <p class="hint">
         Geometry view shows speaker baseline, calibrated mic position, steering ray, and current detected target.
       </p>
@@ -325,6 +335,10 @@
   const angleEl = el("angle");
   const angleValEl = el("angleVal");
   const dirAxisEl = el("dirAxis");
+  const geomWizardOnEl = el("geomWizardOn");
+  const btnGeomReset = el("btnGeomReset");
+  const btnGeomApply = el("btnGeomApply");
+  const geomWizardStatusEl = el("geomWizardStatus");
 
   const showTraceEl = el("showTrace");
   const useCalibEl = el("useCalib");
@@ -343,6 +357,7 @@
   const pctx = profileCanvas.getContext("2d");
   const hctx = heatCanvas.getContext("2d");
   const gctx = geometryCanvas.getContext("2d");
+  geometryCanvas.style.touchAction = "none";
 
   function log(msg) {
     logEl.textContent += msg + "\n";
@@ -649,6 +664,18 @@
   let lastTargetAngle = NaN;
   let lastTargetRange = NaN;
   let lastTargetStrength = 0;
+
+  // Geometry wizard state
+  const geomWizard = {
+    active: false,
+    touched: false,
+    dragging: null,
+    handles: {
+      spL: { u: -0.1, f: 0 },
+      spR: { u: 0.1, f: 0 },
+      mic: { u: 0, f: 0.12 }
+    }
+  };
 
   // Best-target trace storage
   let bestBin = null;
@@ -1243,34 +1270,96 @@
     }
   }
 
-  function drawGeometry(minR, maxR) {
-    const w = geometryCanvas.width, h = geometryCanvas.height;
-    const s = canvasPixelScale(geometryCanvas);
-    clearCanvas(gctx, w, h);
+  function setGeomWizardStatus(msg) {
+    if (geomWizardStatusEl) geomWizardStatusEl.textContent = msg;
+  }
 
+  function syncGeometryWizardControls() {
+    const en = !!geomWizard.active;
+    if (btnGeomReset) btnGeomReset.disabled = !en;
+    if (btnGeomApply) btnGeomApply.disabled = !en;
+  }
+
+  function getGeometryModelFromCurrent() {
+    const d = parseFloat(el("spacing").value);
+    const halfD = (Number.isFinite(d) && d > 0.02) ? (d / 2) : 0.1;
+    const micU = (calib.valid && Number.isFinite(calib.x)) ? calib.x : 0;
+    const micF = (calib.valid && Number.isFinite(calib.y) && calib.y >= 0) ? calib.y : 0.12;
+    return {
+      spL: { u: -halfD, f: 0 },
+      spR: { u: halfD, f: 0 },
+      mic: { u: micU, f: Math.max(0, micF) }
+    };
+  }
+
+  function ensureGeometryWizardHandlesInitialized(force=false) {
+    if (!force && geomWizard.touched) return;
+    const model = getGeometryModelFromCurrent();
+    geomWizard.handles.spL = { u: model.spL.u, f: 0 };
+    geomWizard.handles.spR = { u: model.spR.u, f: 0 };
+    geomWizard.handles.mic = { u: model.mic.u, f: Math.max(0, model.mic.f) };
+    if (force) geomWizard.touched = false;
+  }
+
+  function resetGeometryWizardHandles() {
+    ensureGeometryWizardHandlesInitialized(true);
+    setGeomWizardStatus("Geometry handles reset from current spacing/calibration.");
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawGeometry(minR, maxR);
+  }
+
+  function applyGeometryWizard() {
+    ensureGeometryWizardHandlesInitialized(false);
+    const h = geomWizard.handles;
+    const dNew = Math.abs(h.spR.u - h.spL.u);
+    if (!(dNew > 0.02)) {
+      setGeomWizardStatus("Apply failed: speaker spacing too small.");
+      return;
+    }
+
+    const centerU = 0.5 * (h.spL.u + h.spR.u);
+    const micX = h.mic.u - centerU;
+    const micY = Math.max(0, h.mic.f);
+    el("spacing").value = dNew.toFixed(3);
+
+    if (calib.valid) {
+      const rL = Math.hypot(h.mic.u - h.spL.u, micY - h.spL.f);
+      const rR = Math.hypot(h.mic.u - h.spR.u, micY - h.spR.f);
+      calib.d = dNew;
+      calib.x = micX;
+      calib.y = micY;
+      calib.rL = rL;
+      calib.rR = rR;
+      calib.geomErr = estimateMicXY(rL, rR, dNew).err;
+      renderCalibInfo();
+      log(`[wizard] geometry applied: d=${dNew.toFixed(3)}m, mic≈(${micX.toFixed(3)}, ${micY.toFixed(3)})m`);
+      setGeomWizardStatus("Applied to spacing and calibrated geometry.");
+    } else {
+      log(`[wizard] spacing updated to ${dNew.toFixed(3)}m (run calibration to apply mic geometry).`);
+      setGeomWizardStatus("Applied spacing. Run calibration to lock mic geometry.");
+    }
+
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawGeometry(minR, maxR);
+  }
+
+  function getGeometryFrame(model, minR, maxR) {
+    const w = geometryCanvas.width;
+    const h = geometryCanvas.height;
+    const s = canvasPixelScale(geometryCanvas);
     const left = 34 * s;
     const right = w - 24 * s;
     const top = 20 * s;
     const bottom = h - 26 * s;
     const originY = bottom - 30 * s;
     const centerX = 0.5 * (left + right);
-
-    const d = parseFloat(el("spacing").value);
-    const halfD = (Number.isFinite(d) && d > 0.02) ? (d / 2) : 0.1;
-    const axis = getDirectionAxis();
-    const axisLabel = (axis === "vertical") ? "Z" : "X";
-    const axisDirs = (axis === "vertical") ? ["Bottom", "Top"] : ["Left", "Right"];
-
     const maxRange = (Number.isFinite(maxR) && maxR > 0.2) ? maxR : 4.0;
     const minRange = (Number.isFinite(minR) && minR >= 0) ? minR : 0.3;
     const yMax = Math.max(maxRange * 1.10, minRange + 0.4);
 
-    const micU = (calib.valid && Number.isFinite(calib.x)) ? calib.x : 0;
-    const micY = (calib.valid && Number.isFinite(calib.y) && calib.y >= 0) ? calib.y : 0.12;
-
-    let uLimit = Math.max(Math.abs(halfD) * 1.9, 0.22);
-    uLimit = Math.max(uLimit, Math.abs(micU) * 1.3);
-
+    let uLimit = Math.max(Math.abs(model.spL.u), Math.abs(model.spR.u), Math.abs(model.mic.u), 0.22) * 1.35;
     if (Number.isFinite(lastTargetAngle) && Number.isFinite(lastTargetRange)) {
       const tu = lastTargetRange * Math.sin(lastTargetAngle * Math.PI / 180);
       uLimit = Math.max(uLimit, Math.abs(tu) * 1.25);
@@ -1281,6 +1370,28 @@
       const y = originY - (fwd / Math.max(1e-6, yMax)) * (originY - top);
       return { x, y };
     }
+
+    function fromPx(x, y) {
+      const u = ((x - centerX) / Math.max(1e-6, (right - left) * 0.48)) * uLimit;
+      const f = ((originY - y) / Math.max(1e-6, originY - top)) * yMax;
+      return { u, f: Math.max(0, f) };
+    }
+
+    return { w, h, s, left, right, top, bottom, originY, centerX, yMax, uLimit, toPx, fromPx };
+  }
+
+  function drawGeometry(minR, maxR) {
+    if (geomWizard.active) ensureGeometryWizardHandlesInitialized(false);
+
+    const model = geomWizard.active ? geomWizard.handles : getGeometryModelFromCurrent();
+    const frame = getGeometryFrame(model, minR, maxR);
+    const { w, h, s, left, right, top, originY, centerX, yMax, toPx } = frame;
+
+    clearCanvas(gctx, w, h);
+
+    const axis = getDirectionAxis();
+    const axisLabel = (axis === "vertical") ? "Z" : "X";
+    const axisDirs = (axis === "vertical") ? ["Bottom", "Top"] : ["Left", "Right"];
 
     gctx.strokeStyle = "#2f2f2f";
     gctx.lineWidth = 1 * s;
@@ -1295,48 +1406,67 @@
     gctx.lineTo(right, originY);
     gctx.stroke();
 
-    const spL = toPx(-halfD, 0);
-    const spR = toPx(halfD, 0);
+    const spLP = toPx(model.spL.u, 0);
+    const spRP = toPx(model.spR.u, 0);
+    const micP = toPx(model.mic.u, Math.max(0, model.mic.f));
+
     gctx.strokeStyle = "#6f6f6f";
     gctx.lineWidth = 2 * s;
     gctx.beginPath();
-    gctx.moveTo(spL.x, spL.y);
-    gctx.lineTo(spR.x, spR.y);
+    gctx.moveTo(spLP.x, spLP.y);
+    gctx.lineTo(spRP.x, spRP.y);
     gctx.stroke();
 
-    function drawNode(p, color, rPx, label) {
+    function drawNode(p, color, rPx, label, selected=false) {
       gctx.fillStyle = color;
       gctx.beginPath();
       gctx.arc(p.x, p.y, rPx, 0, Math.PI * 2);
       gctx.fill();
+      if (selected) {
+        gctx.strokeStyle = "#f5f5f5";
+        gctx.lineWidth = 1.2 * s;
+        gctx.beginPath();
+        gctx.arc(p.x, p.y, rPx + 3 * s, 0, Math.PI * 2);
+        gctx.stroke();
+      }
       gctx.fillStyle = "#d8d8d8";
       gctx.font = `${11 * s}px system-ui`;
       gctx.fillText(label, p.x + 7 * s, p.y - 7 * s);
     }
 
-    drawNode(spL, "#8dd0ff", 5 * s, "Speaker L");
-    drawNode(spR, "#8dd0ff", 5 * s, "Speaker R");
+    drawNode(spLP, "#8dd0ff", 5 * s, "Speaker L", geomWizard.dragging === "spL");
+    drawNode(spRP, "#8dd0ff", 5 * s, "Speaker R", geomWizard.dragging === "spR");
+    drawNode(micP, calib.valid ? "#ffbf80" : "#8a8a8a", 5 * s, calib.valid ? "Mic" : "Mic", geomWizard.dragging === "mic");
 
-    const micP = toPx(micU, Math.max(0, micY));
-    drawNode(micP, calib.valid ? "#ffbf80" : "#8a8a8a", 5 * s, calib.valid ? "Mic (calibrated)" : "Mic (uncalibrated)");
+    if (geomWizard.active) {
+      gctx.strokeStyle = "rgba(255,255,255,0.22)";
+      gctx.setLineDash([4 * s, 4 * s]);
+      gctx.beginPath();
+      gctx.moveTo(micP.x, originY);
+      gctx.lineTo(micP.x, micP.y);
+      gctx.stroke();
+      gctx.setLineDash([]);
+    }
 
+    const baselineCenterU = 0.5 * (model.spL.u + model.spR.u);
     const steerDeg = parseFloat(angleEl.value) || 0;
-    const steerU = yMax * Math.sin(steerDeg * Math.PI / 180);
+    const steerU = baselineCenterU + yMax * Math.sin(steerDeg * Math.PI / 180);
     const steerF = yMax * Math.cos(steerDeg * Math.PI / 180);
+    const steerOrigin = toPx(baselineCenterU, 0);
     const steerEnd = toPx(steerU, Math.max(0, steerF));
 
     gctx.strokeStyle = "rgba(160,210,255,0.85)";
     gctx.lineWidth = 1.5 * s;
     gctx.setLineDash([5 * s, 5 * s]);
     gctx.beginPath();
-    gctx.moveTo(centerX, originY);
+    gctx.moveTo(steerOrigin.x, steerOrigin.y);
     gctx.lineTo(steerEnd.x, steerEnd.y);
     gctx.stroke();
     gctx.setLineDash([]);
 
     const gate = getStrengthGate();
     if (Number.isFinite(lastTargetAngle) && Number.isFinite(lastTargetRange) && lastTargetStrength > gate) {
-      const targetU = lastTargetRange * Math.sin(lastTargetAngle * Math.PI / 180);
+      const targetU = baselineCenterU + lastTargetRange * Math.sin(lastTargetAngle * Math.PI / 180);
       const targetF = Math.max(0, lastTargetRange * Math.cos(lastTargetAngle * Math.PI / 180));
       const tp = toPx(targetU, targetF);
       gctx.fillStyle = traceColorFromConfidence(clamp((lastTargetStrength - gate) / Math.max(1e-6, 1 - gate), 0, 1));
@@ -1348,10 +1478,96 @@
       gctx.fillText(`Target ${lastTargetRange.toFixed(2)}m @ ${lastTargetAngle.toFixed(0)}°`, tp.x + 8 * s, tp.y - 10 * s);
     }
 
+    const spacingNow = Math.abs(model.spR.u - model.spL.u);
     gctx.fillStyle = "#bdbdbd";
     gctx.font = `${12 * s}px system-ui`;
     gctx.fillText(`Geometry view (${axisLabel}-axis steering: ${axisDirs[0]} ↔ ${axisDirs[1]})`, 12 * s, 16 * s);
-    gctx.fillText(`Spacing d=${Number.isFinite(d) ? d.toFixed(2) : "?"}m | Calib=${calib.valid ? "on" : "off"}`, 12 * s, h - 8 * s);
+    gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${calib.valid ? "on" : "off"}${geomWizard.active ? " | wizard=edit" : ""}`, 12 * s, h - 8 * s);
+  }
+
+  function pointerToCanvasPx(ev, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / Math.max(1, rect.width);
+    const sy = canvas.height / Math.max(1, rect.height);
+    return {
+      x: (ev.clientX - rect.left) * sx,
+      y: (ev.clientY - rect.top) * sy
+    };
+  }
+
+  function geometryPointerDown(ev) {
+    if (!geomWizard.active) return;
+    ensureGeometryWizardHandlesInitialized(false);
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    const frame = getGeometryFrame(geomWizard.handles, minR, maxR);
+    const p = pointerToCanvasPx(ev, geometryCanvas);
+
+    const hp = {
+      spL: frame.toPx(geomWizard.handles.spL.u, geomWizard.handles.spL.f),
+      spR: frame.toPx(geomWizard.handles.spR.u, geomWizard.handles.spR.f),
+      mic: frame.toPx(geomWizard.handles.mic.u, geomWizard.handles.mic.f)
+    };
+
+    let bestName = null;
+    let bestDist2 = Infinity;
+    for (const name of ["spL", "spR", "mic"]) {
+      const dx = p.x - hp[name].x;
+      const dy = p.y - hp[name].y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < bestDist2) { bestDist2 = d2; bestName = name; }
+    }
+
+    const pickR = 14 * frame.s;
+    if (bestName && bestDist2 <= pickR * pickR) {
+      geomWizard.dragging = bestName;
+      geometryCanvas.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+      drawGeometry(minR, maxR);
+    }
+  }
+
+  function geometryPointerMove(ev) {
+    if (!geomWizard.active || !geomWizard.dragging) return;
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    const frame = getGeometryFrame(geomWizard.handles, minR, maxR);
+    const p = pointerToCanvasPx(ev, geometryCanvas);
+    const model = frame.fromPx(p.x, p.y);
+
+    if (geomWizard.dragging === "spL") {
+      geomWizard.handles.spL.u = model.u;
+      geomWizard.handles.spL.f = 0;
+    } else if (geomWizard.dragging === "spR") {
+      geomWizard.handles.spR.u = model.u;
+      geomWizard.handles.spR.f = 0;
+    } else {
+      geomWizard.handles.mic.u = model.u;
+      geomWizard.handles.mic.f = Math.max(0, model.f);
+    }
+
+    if (geomWizard.handles.spL.u > geomWizard.handles.spR.u) {
+      const t = geomWizard.handles.spL.u;
+      geomWizard.handles.spL.u = geomWizard.handles.spR.u;
+      geomWizard.handles.spR.u = t;
+      if (geomWizard.dragging === "spL") geomWizard.dragging = "spR";
+      else if (geomWizard.dragging === "spR") geomWizard.dragging = "spL";
+    }
+
+    geomWizard.touched = true;
+    setGeomWizardStatus("Drag handles, then Apply geometry.");
+    drawGeometry(minR, maxR);
+    ev.preventDefault();
+  }
+
+  function geometryPointerUp(ev) {
+    if (geomWizard.dragging) {
+      geomWizard.dragging = null;
+      if (geometryCanvas.hasPointerCapture(ev.pointerId)) geometryCanvas.releasePointerCapture(ev.pointerId);
+      const minR = parseFloat(el("minR").value);
+      const maxR = parseFloat(el("maxR").value);
+      drawGeometry(minR, maxR);
+    }
   }
 
   // ---------- Sanity plot ----------
@@ -2137,6 +2353,36 @@
     catch (e) { log("[err] laptop preset failed: " + (e?.message || e)); }
   });
 
+  geomWizardOnEl.addEventListener("change", () => {
+    geomWizard.active = !!geomWizardOnEl.checked;
+    geomWizard.dragging = null;
+    if (geomWizard.active) {
+      ensureGeometryWizardHandlesInitialized(true);
+      setGeomWizardStatus("Drag handles on geometry view, then Apply geometry.");
+    } else {
+      setGeomWizardStatus("Enable wizard to drag speakers/mic on geometry view.");
+    }
+    syncGeometryWizardControls();
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawGeometry(minR, maxR);
+  });
+
+  btnGeomReset.addEventListener("click", () => {
+    if (!geomWizard.active) return;
+    resetGeometryWizardHandles();
+  });
+
+  btnGeomApply.addEventListener("click", () => {
+    if (!geomWizard.active) return;
+    applyGeometryWizard();
+  });
+
+  geometryCanvas.addEventListener("pointerdown", geometryPointerDown);
+  geometryCanvas.addEventListener("pointermove", geometryPointerMove);
+  geometryCanvas.addEventListener("pointerup", geometryPointerUp);
+  geometryCanvas.addEventListener("pointercancel", geometryPointerUp);
+
   btnStop.addEventListener("click", () => stopAll());
 
   btnCalibrate.addEventListener("click", async () => {
@@ -2175,6 +2421,7 @@
   // ---------- Initial render ----------
   (async () => {
     setStatus("idle");
+    syncGeometryWizardControls();
     applyRetinaCanvases();
     drawProfilePlaceholder();
 
