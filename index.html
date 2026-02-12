@@ -645,12 +645,28 @@
   }
 
   function findPeak(a, start=0, end=a.length) {
-    let bestI=start, bestV=-Infinity;
-    for (let i=start;i<end;i++){
+    const s = clamp(start|0, 0, a.length);
+    const e = clamp(end|0, s, a.length);
+    if (e <= s) return { index: s, value: 0 };
+    let bestI=s, bestV=-Infinity;
+    for (let i=s;i<e;i++){
       const v=a[i];
       if (v>bestV){ bestV=v; bestI=i; }
     }
     return { index: bestI, value: bestV };
+  }
+
+  function findPeakAbs(a, start=0, end=a.length) {
+    const s = clamp(start|0, 0, a.length);
+    const e = clamp(end|0, s, a.length);
+    if (e <= s) return { index: s, value: 0, absValue: 0 };
+    let bestI=s, bestV=-Infinity, bestRaw=0;
+    for (let i=s;i<e;i++){
+      const raw = a[i];
+      const v = Math.abs(raw);
+      if (v > bestV) { bestV = v; bestI = i; bestRaw = raw; }
+    }
+    return { index: bestI, value: bestRaw, absValue: bestV };
   }
 
   function median(arr) {
@@ -670,7 +686,7 @@
   function findDirectPathTau(corr, predictedTau0SecOrNull, lockStrength) {
     const earlyEnd = Math.min(corr.length, Math.floor(sr * 0.060));
     if (predictedTau0SecOrNull === null || !Number.isFinite(predictedTau0SecOrNull) || lockStrength <= 0) {
-      const dp = findPeak(corr, 0, earlyEnd);
+      const dp = findPeakAbs(corr, 0, earlyEnd);
       return dp.index / sr;
     }
     const center = Math.floor(predictedTau0SecOrNull * sr);
@@ -679,12 +695,12 @@
     const start = clamp(center - win, 0, corr.length);
     const end = clamp(center + win, 0, corr.length);
     if (end - start < 64) {
-      const dp = findPeak(corr, 0, earlyEnd);
+      const dp = findPeakAbs(corr, 0, earlyEnd);
       return dp.index / sr;
     }
-    const dp = findPeak(corr, start, end);
-    if (Math.abs(dp.value) < 0.06) {
-      const fb = findPeak(corr, 0, earlyEnd);
+    const dp = findPeakAbs(corr, start, end);
+    if (dp.absValue < 0.06) {
+      const fb = findPeakAbs(corr, 0, earlyEnd);
       return fb.index / sr;
     }
     return dp.index / sr;
@@ -697,6 +713,52 @@
       if (v > bv) { bv = v; bi = i; }
     }
     return { bin: bi, val: (bv < 0 ? 0 : bv) };
+  }
+
+  function estimateBestFromProfile(prof, minR, maxR) {
+    const best = pickBestFromProfile(prof);
+    if (best.val <= 1e-6) return { bin: -1, val: 0, range: NaN };
+    if (!(Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) || prof.length < 2) {
+      return { bin: best.bin, val: best.val, range: NaN };
+    }
+
+    let peakPos = best.bin;
+    if (best.bin > 0 && best.bin < prof.length - 1) {
+      const y0 = prof[best.bin - 1];
+      const y1 = prof[best.bin];
+      const y2 = prof[best.bin + 1];
+      const denom = y0 - 2*y1 + y2;
+      if (Math.abs(denom) > 1e-9) {
+        const delta = 0.5 * (y0 - y2) / denom;
+        if (Number.isFinite(delta) && Math.abs(delta) <= 1) peakPos = best.bin + delta;
+      }
+    }
+
+    const range = minR + (peakPos / (prof.length - 1)) * (maxR - minR);
+    return { bin: best.bin, val: best.val, range };
+  }
+
+  function buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR) {
+    const prof = new Float32Array(heatBins);
+    prof.fill(0);
+
+    if (!corr || corr.length === 0) return prof;
+    if (!(Number.isFinite(c) && c > 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR)) return prof;
+
+    const minTau = (2*minR)/c;
+    const maxTau = (2*maxR)/c;
+
+    for (let i=0;i<corr.length;i++){
+      const tau = (i/sr) - tau0;
+      if (tau < minTau || tau > maxTau) continue;
+      const R = (c*tau)/2;
+      const binPos = ((R - minR)/(maxR-minR)) * (heatBins-1);
+      const bin = clamp(Math.floor(binPos), 0, heatBins-1);
+      const v = Math.abs(corr[i]);
+      if (v > prof[bin]) prof[bin] = v;
+    }
+
+    return prof;
   }
 
   // ---------- Visualization ----------
@@ -813,6 +875,13 @@
     const w = calibPlot.width, h = calibPlot.height;
     clearCanvas(cctx, w, h);
 
+    if (!curveL.length || !curveR.length) {
+      cctx.fillStyle = "#bdbdbd";
+      cctx.font = "12px system-ui";
+      cctx.fillText("Sanity plot unavailable: empty correlation window.", 54, 22);
+      return;
+    }
+
     // axes box
     cctx.strokeStyle = "#333";
     cctx.lineWidth = 1;
@@ -826,10 +895,12 @@
     const pad = 0.08;
     const yMin = minV - pad;
     const yMax = maxV + pad;
+    const ySpan = Math.max(1e-6, yMax - yMin);
 
     function xy(i, v, N) {
-      const x = 50 + (i/(N-1))*(w-65);
-      const y = (15 + (h-45)) - ((v - yMin)/(yMax - yMin))*(h-45);
+      const den = Math.max(1, N-1);
+      const x = 50 + (i/den)*(w-65);
+      const y = (15 + (h-45)) - ((v - yMin)/ySpan)*(h-45);
       return {x,y};
     }
 
@@ -1019,8 +1090,8 @@
 
   function earlyPeakFromCorrelation(sumCorr, earlyMs) {
     const earlyEnd = Math.min(sumCorr.length, Math.floor(sr * (earlyMs/1000)));
-    const pk = findPeak(sumCorr, 0, earlyEnd);
-    return { idx: pk.index, tau: pk.index/sr, peak: pk.value };
+    const pk = findPeakAbs(sumCorr, 0, earlyEnd);
+    return { idx: pk.index, tau: pk.index/sr, peak: pk.absValue };
   }
 
   function assessMonoDecision(tauL, tauR, peakL, peakR, d, c) {
@@ -1168,13 +1239,13 @@
     const curveL = sumL.slice(0, earlyN);
     const curveR = sumR.slice(0, earlyN);
 
-    const pk1 = findPeak(curveL, 0, curveL.length);
-    const pk2 = findPeak(curveR, 0, curveR.length);
+    const pk1 = findPeakAbs(curveL, 0, curveL.length);
+    const pk2 = findPeakAbs(curveR, 0, curveR.length);
 
     const tau1 = pk1.index/sr;
     const tau2 = pk2.index/sr;
-    const peak1 = pk1.value;
-    const peak2 = pk2.value;
+    const peak1 = pk1.absValue;
+    const peak2 = pk2.absValue;
 
     const mono2 = assessMonoDecision(tau1, tau2, peak1, peak2, d, c);
 
@@ -1257,25 +1328,10 @@
 
     const tau0 = findDirectPathTau(corr, predictedTau0OrNull, lockStrength);
 
-    const minTau = (2*minR)/c;
-    const maxTau = (2*maxR)/c;
+    const prof = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR);
+    const best = estimateBestFromProfile(prof, minR, maxR);
 
-    const prof = new Float32Array(heatBins);
-    prof.fill(0);
-
-    for (let i=0;i<corr.length;i++){
-      const tau = (i/sr) - tau0;
-      if (tau < minTau || tau > maxTau) continue;
-      const R = (c*tau)/2;
-      const bin = Math.floor((R - minR)/(maxR-minR) * (heatBins-1));
-      const v = Math.abs(corr[i]);
-      if (v > prof[bin]) prof[bin] = v;
-    }
-
-    const best = pickBestFromProfile(prof);
-    const bestR = minR + (best.bin/(heatBins-1)) * (maxR-minR);
-
-    return { corr, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR };
+    return { corr, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR: best.range };
   }
 
   // ---------- Main ping cycle ----------
@@ -1333,13 +1389,18 @@
       for (let i=0;i<L;i++) corrSum[i] = resA.corr[i] + resB.corr[i];
       absMaxNormalize(corrSum);
 
-      tau0Final = 0.5*(resA.tau0 + resB.tau0);
-      for (let i=0;i<heatBins;i++) profFinal[i] = Math.max(resA.prof[i], resB.prof[i]);
+      let predTau0 = null;
+      if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5*(predTau0A + predTau0B);
+      else if (Number.isFinite(predTau0A)) predTau0 = predTau0A;
+      else if (Number.isFinite(predTau0B)) predTau0 = predTau0B;
 
-      const best = pickBestFromProfile(profFinal);
+      tau0Final = findDirectPathTau(corrSum, predTau0, lockStrength);
+      profFinal = buildRangeProfileFromCorrelation(corrSum, tau0Final, c, minR, maxR);
+
+      const best = estimateBestFromProfile(profFinal, minR, maxR);
       bestBinFinal = best.bin;
       bestValFinal = best.val;
-      bestRFinal = minR + (bestBinFinal/(heatBins-1))*(maxR-minR);
+      bestRFinal = best.range;
 
       corrFinal = corrSum;
 
