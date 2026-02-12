@@ -1,0 +1,256 @@
+// --- Audio ---
+export interface AudioConfig {
+  sampleRate: number;
+  channelCount: number;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  latencyHint: AudioContextLatencyCategory;
+  bufferSeconds: number;
+}
+
+export interface AudioState {
+  context: AudioContext | null;
+  actualSampleRate: number;
+  channelCount: number;
+  baseLatency: number;
+  outputLatency: number;
+  captureMethod: 'worklet' | 'script-processor';
+  isRunning: boolean;
+}
+
+// --- Probes ---
+export type ProbeType = 'chirp' | 'mls' | 'golay';
+
+export interface ChirpConfig { f1: number; f2: number; durationMs: number; }
+export interface MLSConfig { order: number; chipRate: number; }
+export interface GolayConfig { order: number; chipRate: number; gapMs: number; }
+export type ProbeConfig =
+  | { type: 'chirp'; params: ChirpConfig }
+  | { type: 'mls'; params: MLSConfig }
+  | { type: 'golay'; params: GolayConfig };
+
+export interface ProbeSignal {
+  type: ProbeType;
+  ref?: Float32Array;
+  a?: Float32Array;
+  b?: Float32Array;
+  gapMs?: number;
+}
+
+// --- DSP ---
+export interface CorrelationResult {
+  correlation: Float32Array;
+  tau0: number;
+  method: 'time-domain' | 'fft' | 'gcc-phat';
+}
+
+export interface RangeProfile {
+  bins: Float32Array;
+  minRange: number;
+  maxRange: number;
+  binCount: number;
+  bestBin: number;
+  bestRange: number;
+  bestStrength: number;
+}
+
+// --- Spatial ---
+export interface ArrayGeometry {
+  speakers: Array<{ x: number; y: number; z: number }>;
+  microphones: Array<{ x: number; y: number; z: number }>;
+  spacing: number;
+  speedOfSound: number;
+}
+
+export interface SteeringVector {
+  angleDeg: number;
+  delaysSeconds: Float32Array;
+}
+
+export interface DOAEstimate {
+  azimuthDeg: number;
+  elevationDeg: number;
+  confidence: number;
+  method: 'scan-peak' | 'music' | 'srp-phat';
+}
+
+// --- Calibration ---
+export interface CalibrationResult {
+  valid: boolean;
+  quality: number;
+  monoLikely: boolean;
+  tauMeasured: { L: number; R: number };
+  tauMAD: { L: number; R: number };
+  peaks: { L: number; R: number };
+  distances: { L: number; R: number };
+  micPosition: { x: number; y: number };
+  systemDelay: { common: number; L: number; R: number };
+  geometryError: number;
+  envBaseline: Float32Array | null;
+  envBaselinePings: number;
+  sanity: CalibrationSanity;
+}
+
+export interface CalibrationSanity {
+  have: boolean;
+  curveL: Float32Array | null;
+  curveR: Float32Array | null;
+  peakIndexL: number;
+  peakIndexR: number;
+  earlyMs: number;
+  tauL: number;
+  tauR: number;
+  peakL: number;
+  peakR: number;
+  monoAssessment: MonoAssessment;
+}
+
+export interface MonoAssessment {
+  dt: number;
+  dp: number;
+  monoByTime: boolean;
+  monoByPeak: boolean;
+  expectDiff: boolean;
+  monoLikely: boolean;
+}
+
+// --- Tracking ---
+export interface TargetState {
+  id: number;
+  position: { range: number; angleDeg: number };
+  velocity: { rangeRate: number; angleRate: number };
+  covariance: Float64Array;
+  age: number;
+  missCount: number;
+  confidence: number;
+}
+
+export interface Measurement {
+  range: number;
+  angleDeg: number;
+  strength: number;
+  timestamp: number;
+}
+
+// --- Network ---
+export interface PeerNode {
+  id: string;
+  connection: RTCPeerConnection;
+  dataChannel: RTCDataChannel;
+  clockOffset: number;
+  geometry: ArrayGeometry;
+  lastHeartbeat: number;
+}
+
+export interface SyncedAudioChunk {
+  peerId: string;
+  timestamp: number;
+  sampleRate: number;
+  channels: Float32Array[];
+  probeConfig: ProbeConfig;
+}
+
+// --- Heatmap ---
+export interface HeatmapData {
+  angles: number[];
+  bins: number;
+  data: Float32Array;
+  display: Float32Array;
+  bestBin: Int16Array;
+  bestVal: Float32Array;
+}
+
+// --- Quality ---
+export type QualityAlgo = 'auto' | 'fast' | 'balanced' | 'max';
+
+export interface QualityPerf {
+  ewmaMs: number;
+  lastResolved: string;
+  lastSwitchAt: number;
+}
+
+// --- Geometry Wizard ---
+export interface GeomHandle {
+  u: number;
+  f: number;
+}
+
+export interface GeomWizardState {
+  active: boolean;
+  touched: boolean;
+  dragging: string | null;
+  handles: {
+    spL: GeomHandle;
+    spR: GeomHandle;
+    mic: GeomHandle;
+  };
+}
+
+// --- Store ---
+export interface AppState {
+  audio: AudioState;
+  calibration: CalibrationResult | null;
+  geometry: ArrayGeometry;
+  heatmap: HeatmapData | null;
+  lastProfile: {
+    corr: Float32Array | null;
+    tau0: number;
+    c: number;
+    minR: number;
+    maxR: number;
+  };
+  lastTarget: {
+    angle: number;
+    range: number;
+    strength: number;
+  };
+  lastDirection: {
+    angle: number;
+    strength: number;
+  };
+  presetMicPosition: { x: number | null; y: number | null };
+  qualityPerf: QualityPerf;
+  geomWizard: GeomWizardState;
+  scanning: boolean;
+  status: 'idle' | 'initializing' | 'ready' | 'pinging' | 'scanning' | 'calibrating' | 'error';
+  targets: TargetState[];
+  peers: Map<string, PeerNode>;
+  config: AppConfig;
+}
+
+export interface AppConfig {
+  probe: ProbeConfig;
+  steeringAngleDeg: number;
+  gain: number;
+  listenMs: number;
+  minRange: number;
+  maxRange: number;
+  scanStep: number;
+  scanDwell: number;
+  strengthGate: number;
+  qualityAlgo: QualityAlgo;
+  directionAxis: 'horizontal' | 'vertical';
+  clutterSuppression: { enabled: boolean; strength: number };
+  envBaseline: { enabled: boolean; strength: number; pings: number };
+  calibration: { repeats: number; gapMs: number; useCalib: boolean };
+  devicePreset: string;
+  heatBins: number;
+  speedOfSound: number;
+  spacing: number;
+}
+
+// --- Events ---
+export interface AppEvents {
+  'ping:start': { angleDeg: number };
+  'ping:complete': { angleDeg: number; profile: RangeProfile };
+  'scan:step': { angleDeg: number; index: number; total: number };
+  'scan:complete': void;
+  'calibration:done': CalibrationResult;
+  'target:updated': TargetState[];
+  'peer:connected': { peerId: string };
+  'peer:data': SyncedAudioChunk;
+  'state:changed': { path: string; value: unknown };
+  'audio:initialized': AudioState;
+  'audio:samples': Float32Array;
+}

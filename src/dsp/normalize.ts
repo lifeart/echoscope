@@ -1,0 +1,22 @@
+export function absMaxNormalize(a: Float32Array): Float32Array {
+  let mx = 0;
+  for (let i = 0; i < a.length; i++) { const v = Math.abs(a[i]); if (v > mx) mx = v; }
+  if (mx <= 1e-12) return a;
+  const inv = 1 / mx;
+  for (let i = 0; i < a.length; i++) a[i] *= inv;
+  return a;
+}
+
+export function peakNormalize(a: Float32Array): Float32Array {
+  let mx = -Infinity;
+  for (let i = 0; i < a.length; i++) if (a[i] > mx) mx = a[i];
+  if (mx <= 1e-12) return a;
+  const inv = 1 / mx;
+  for (let i = 0; i < a.length; i++) a[i] *= inv;
+  return a;
+}
+
+export function toDecibels(value: number, reference = 1.0): number {
+  if (value <= 0) return -Infinity;
+  return 20 * Math.log10(value / reference);
+}
