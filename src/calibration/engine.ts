@@ -92,6 +92,66 @@ function correlationQuality(
   return clamp(1 - 2.5 * rms, 0, 1);
 }
 
+interface CandidatePeak {
+  idx: number;
+  tau: number;
+  absVal: number;
+}
+
+/** Find the top N local maxima above 20% of the global max in the early window. */
+function findCandidatePeaks(
+  corr: Float32Array,
+  earlyMs: number,
+  sampleRate: number,
+  maxPeaks = 5,
+): CandidatePeak[] {
+  const earlyEnd = Math.min(corr.length, Math.floor(sampleRate * (earlyMs / 1000)));
+  let globalMax = 0;
+  for (let i = 0; i < earlyEnd; i++) {
+    const v = Math.abs(corr[i]);
+    if (v > globalMax) globalMax = v;
+  }
+  if (globalMax < 1e-9) return [];
+
+  const threshold = 0.20 * globalMax;
+  const peaks: CandidatePeak[] = [];
+  for (let i = 1; i < earlyEnd - 1; i++) {
+    const v = Math.abs(corr[i]);
+    if (v >= threshold && v >= Math.abs(corr[i - 1]) && v >= Math.abs(corr[i + 1])) {
+      peaks.push({ idx: i, tau: i / sampleRate, absVal: v });
+    }
+  }
+  peaks.sort((a, b) => b.absVal - a.absVal);
+  return peaks.slice(0, maxPeaks);
+}
+
+/**
+ * Select the best (τL, τR) pair that satisfies the same-wavefront TDOA
+ * constraint: |τL − τR| ≤ d/c + margin.  Among valid pairs, pick the one
+ * with the highest combined peak strength.
+ */
+function selectTDOAPair(
+  peaksL: CandidatePeak[],
+  peaksR: CandidatePeak[],
+  maxTDOA: number,
+): { tauL: number; tauR: number; peakL: number; peakR: number; idxL: number; idxR: number } | null {
+  if (peaksL.length === 0 || peaksR.length === 0) return null;
+  let bestScore = -1;
+  let best: { tauL: number; tauR: number; peakL: number; peakR: number; idxL: number; idxR: number } | null = null;
+
+  for (const pL of peaksL) {
+    for (const pR of peaksR) {
+      if (Math.abs(pL.tau - pR.tau) > maxTDOA) continue;
+      const score = pL.absVal + pR.absVal;
+      if (score > bestScore) {
+        bestScore = score;
+        best = { tauL: pL.tau, tauR: pR.tau, peakL: pL.absVal, peakR: pR.absVal, idxL: pL.idx, idxR: pR.idx };
+      }
+    }
+  }
+  return best;
+}
+
 export function predictedTau0ForPing(
   delayL: number,
   delayR: number,
@@ -148,37 +208,59 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
   console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} (${golayDurMs.toFixed(1)}ms) gapMs=${gapMs}`);
 
-  // Compute reference energy for peak normalization.
-  // Ideal Golay sum peak = 2 * refEnergy; normalize rawPeak to 0-1.
-  let refEnergy = 0;
-  for (let i = 0; i < a.length; i++) refEnergy += a[i] * a[i];
-  const idealPeak = 2 * refEnergy;
+  // Max TDOA for same wavefront: d/c + 0.3ms margin
+  const maxTDOA = d / c + 0.0003;
 
   const tauL: number[] = [], tauR: number[] = [];
   const pkL: number[] = [], pkR: number[] = [];
 
   for (let k = 0; k < repeats; k++) {
+    // --- Capture L channel ---
     const capLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
     await sleep(Math.max(0, gapMs));
     const capLB = await pingAndCaptureOneSide(b, 'L', gain, listenMs);
-
     const resL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
-    const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
-    const normPkL = clamp(resL.rawPeak / idealPeak, 0, 1);
-    tauL.push(mL.tau); pkL.push(normPkL);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms normPeak=${normPkL.toFixed(4)} rawPeak=${resL.rawPeak.toFixed(1)} idealPeak=${idealPeak.toFixed(0)} idx=${mL.idx} corrLen=${resL.corr.length} micWin=${capLA.micWin.length}`);
 
     await sleep(repeatGap);
 
+    // --- Capture R channel ---
     const capRA = await pingAndCaptureOneSide(a, 'R', gain, listenMs);
     await sleep(Math.max(0, gapMs));
     const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
-
     const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
-    const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
-    const normPkR = clamp(resR.rawPeak / idealPeak, 0, 1);
-    tauR.push(mR.tau); pkR.push(normPkR);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms normPeak=${normPkR.toFixed(4)} rawPeak=${resR.rawPeak.toFixed(1)} idealPeak=${idealPeak.toFixed(0)} idx=${mR.idx} corrLen=${resR.corr.length} micWin=${capRA.micWin.length}`);
+
+    // --- Joint peak selection with TDOA gate ---
+    const candsL = findCandidatePeaks(resL.corr, earlyMs, sr);
+    const candsR = findCandidatePeaks(resR.corr, earlyMs, sr);
+    const tdoaPair = selectTDOAPair(candsL, candsR, maxTDOA);
+
+    let chosenTauL: number, chosenTauR: number;
+    let chosenIdxL: number, chosenIdxR: number;
+
+    if (tdoaPair) {
+      chosenTauL = tdoaPair.tauL;
+      chosenTauR = tdoaPair.tauR;
+      chosenIdxL = tdoaPair.idxL;
+      chosenIdxR = tdoaPair.idxR;
+      const delta = Math.abs(tdoaPair.tauL - tdoaPair.tauR) * 1000;
+      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms candsL=${candsL.length} candsR=${candsR.length}`);
+    } else {
+      // Fallback: onset detection per channel (no valid TDOA pair found)
+      const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
+      const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
+      chosenTauL = mL.tau;
+      chosenTauR = mR.tau;
+      chosenIdxL = mL.idx;
+      chosenIdxR = mR.idx;
+      console.debug(`[calib] repeat ${k + 1}/${repeats} TDOA gate: NO valid pair (candsL=${candsL.length} candsR=${candsR.length}), onset fallback: L@${(mL.tau * 1000).toFixed(3)}ms R@${(mR.tau * 1000).toFixed(3)}ms`);
+    }
+
+    // Compute correlation quality (sidelobe RMS metric)
+    const corrQualL = correlationQuality(resL.corr, chosenIdxL, sr);
+    const corrQualR = correlationQuality(resR.corr, chosenIdxR, sr);
+    tauL.push(chosenTauL); pkL.push(corrQualL);
+    tauR.push(chosenTauR); pkR.push(corrQualR);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} quality: corrQualL=${corrQualL.toFixed(4)} corrQualR=${corrQualR.toFixed(4)} rawPeakL=${resL.rawPeak.toFixed(1)} rawPeakR=${resR.rawPeak.toFixed(1)} corrLenL=${resL.corr.length} corrLenR=${resR.corr.length}`);
 
     await sleep(repeatGap);
   }
@@ -191,7 +273,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const madTauR = mad(tauR, medTauR);
 
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
-  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)} (normalized by idealPeak=${idealPeak.toFixed(0)})`);
+  console.debug(`[calib] correlation quality: medCorrQualL=${medPkL.toFixed(4)} medCorrQualR=${medPkR.toFixed(4)}`);
   console.debug(`[calib] raw tauL=[${tauL.map(t => (t * 1000).toFixed(3)).join(', ')}]ms tauR=[${tauR.map(t => (t * 1000).toFixed(3)).join(', ')}]ms`);
 
   const rMin = 0.04;
@@ -231,26 +313,46 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
   const resRSanity = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
 
-  const earlyN = Math.min(resLSanity.corr.length, Math.floor(sr * (earlyMs / 1000)));
-  const curveL = resLSanity.corr.slice(0, earlyN);
-  const curveR = resRSanity.corr.slice(0, earlyN);
+  const earlyNL = Math.min(resLSanity.corr.length, Math.floor(sr * (earlyMs / 1000)));
+  const earlyNR = Math.min(resRSanity.corr.length, Math.floor(sr * (earlyMs / 1000)));
+  const curveL = resLSanity.corr.slice(0, earlyNL);
+  const curveR = resRSanity.corr.slice(0, earlyNR);
 
-  const pk1 = findPeakAbs(curveL, 0, curveL.length);
-  const pk2 = findPeakAbs(curveR, 0, curveR.length);
+  // Use TDOA-gated peak selection for sanity check too
+  const sanityCandL = findCandidatePeaks(resLSanity.corr, earlyMs, sr);
+  const sanityCandR = findCandidatePeaks(resRSanity.corr, earlyMs, sr);
+  const sanityPair = selectTDOAPair(sanityCandL, sanityCandR, maxTDOA);
+
+  let sanityTauL: number, sanityTauR: number;
+  let sanityPkL: number, sanityPkR: number;
+  let sanityIdxL: number, sanityIdxR: number;
+
+  if (sanityPair) {
+    sanityTauL = sanityPair.tauL; sanityTauR = sanityPair.tauR;
+    sanityPkL = sanityPair.peakL; sanityPkR = sanityPair.peakR;
+    sanityIdxL = sanityPair.idxL; sanityIdxR = sanityPair.idxR;
+  } else {
+    const sL = earlyPeakFromCorrelation(resLSanity.corr, earlyMs, sr);
+    const sR = earlyPeakFromCorrelation(resRSanity.corr, earlyMs, sr);
+    sanityTauL = sL.tau; sanityTauR = sR.tau;
+    sanityPkL = sL.peak; sanityPkR = sR.peak;
+    sanityIdxL = sL.idx; sanityIdxR = sR.idx;
+  }
+
   const mono2 = assessMonoDecision(
-    pk1.index / sr, pk2.index / sr,
-    pk1.absValue, pk2.absValue, d, c,
+    sanityTauL, sanityTauR,
+    sanityPkL, sanityPkR, d, c,
   );
 
-  console.debug(`[calib] sanity check: tauL=${(pk1.index / sr * 1000).toFixed(4)}ms tauR=${(pk2.index / sr * 1000).toFixed(4)}ms peakL=${pk1.absValue.toFixed(4)} peakR=${pk2.absValue.toFixed(4)} rawL=${resLSanity.rawPeak.toFixed(1)} rawR=${resRSanity.rawPeak.toFixed(1)} mono=${mono2.monoLikely}`);
+  console.debug(`[calib] sanity check: tauL=${(sanityTauL * 1000).toFixed(4)}ms tauR=${(sanityTauR * 1000).toFixed(4)}ms peakL=${sanityPkL.toFixed(4)} peakR=${sanityPkR.toFixed(4)} tdoaGated=${!!sanityPair} mono=${mono2.monoLikely}`);
 
   const sanity: CalibrationSanity = {
     have: true,
     curveL, curveR,
-    peakIndexL: pk1.index, peakIndexR: pk2.index,
+    peakIndexL: sanityIdxL, peakIndexR: sanityIdxR,
     earlyMs,
-    tauL: pk1.index / sr, tauR: pk2.index / sr,
-    peakL: pk1.absValue, peakR: pk2.absValue,
+    tauL: sanityTauL, tauR: sanityTauR,
+    peakL: sanityPkL, peakR: sanityPkR,
     monoAssessment: mono2,
   };
 
