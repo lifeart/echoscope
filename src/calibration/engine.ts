@@ -17,20 +17,35 @@ import { computeEnvBaseline } from './env-baseline.js';
 import { estimateMicXY } from '../spatial/geometry.js';
 import type { CalibrationResult, CalibrationSanity, GolayConfig } from '../types.js';
 
+interface GolaySumResult {
+  corr: Float32Array;
+  rawPeak: number;
+}
+
 function golaySumCorrelation(
   micWinA: Float32Array,
   micWinB: Float32Array,
   a: Float32Array,
   b: Float32Array,
   sampleRate: number,
-): Float32Array {
-  const corrA = fftCorrelate(micWinA, a, sampleRate).correlation; absMaxNormalize(corrA);
-  const corrB = fftCorrelate(micWinB, b, sampleRate).correlation; absMaxNormalize(corrB);
+): GolaySumResult {
+  // Sum raw correlations WITHOUT per-half normalization.
+  // Golay complementary sidelobe cancellation requires summing at the same scale.
+  const corrA = fftCorrelate(micWinA, a, sampleRate).correlation;
+  const corrB = fftCorrelate(micWinB, b, sampleRate).correlation;
   const L = Math.min(corrA.length, corrB.length);
   const sum = new Float32Array(L);
   for (let i = 0; i < L; i++) sum[i] = corrA[i] + corrB[i];
+
+  // Capture raw peak before normalization (SNR proxy)
+  let rawPeak = 0;
+  for (let i = 0; i < L; i++) {
+    const v = Math.abs(sum[i]);
+    if (v > rawPeak) rawPeak = v;
+  }
+
   absMaxNormalize(sum);
-  return sum;
+  return { corr: sum, rawPeak };
 }
 
 function earlyPeakFromCorrelation(
@@ -69,7 +84,6 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const d = config.spacing;
   const c = config.speedOfSound;
   const gain = config.gain;
-  const listenMs = Math.max(140, config.listenMs);
   const repeats = clamp(config.calibration.repeats, 1, 9);
   const repeatGap = Math.max(30, config.calibration.gapMs);
   const extraCalPings = clamp(config.envBaseline.pings, 0, 12);
@@ -83,9 +97,6 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const { baseLatency, outputLatency } = state.audio;
   const rtLatencyMs = measureRoundTripLatency(baseLatency, outputLatency);
 
-  console.debug(`[calib] starting: sr=${sr} d=${d.toFixed(3)}m c=${c.toFixed(1)} gain=${gain.toFixed(2)} repeats=${repeats} listenMs=${listenMs} envPings=${extraCalPings}`);
-  console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
-
   const earlyMs = 60;
   const golayConfig: GolayConfig = {
     order: (config.probe.type === 'golay') ? config.probe.params.order : 10,
@@ -95,22 +106,27 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const { a, b } = genGolayChipped(golayConfig, sr);
   const gapMs = golayConfig.gapMs;
 
-  console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} gapMs=${gapMs}`);
+  // Ensure enough capture for earlyMs of correlation beyond the Golay reference length
+  const golayDurMs = a.length / sr * 1000;
+  const listenMs = Math.max(golayDurMs + earlyMs + 20, config.listenMs);
+
+  console.debug(`[calib] starting: sr=${sr} d=${d.toFixed(3)}m c=${c.toFixed(1)} gain=${gain.toFixed(2)} repeats=${repeats} listenMs=${listenMs.toFixed(0)} envPings=${extraCalPings}`);
+  console.debug(`[calib] audio latency: base=${(baseLatency * 1000).toFixed(2)}ms output=${(outputLatency * 1000).toFixed(2)}ms roundTrip=${rtLatencyMs.toFixed(2)}ms`);
+  console.debug(`[calib] golay: order=${golayConfig.order} chipRate=${golayConfig.chipRate} refLen=${a.length} (${golayDurMs.toFixed(1)}ms) gapMs=${gapMs}`);
 
   const tauL: number[] = [], tauR: number[] = [];
   const pkL: number[] = [], pkR: number[] = [];
+  const rawPkL: number[] = [], rawPkR: number[] = [];
 
   for (let k = 0; k < repeats; k++) {
     const capLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
     await sleep(Math.max(0, gapMs));
     const capLB = await pingAndCaptureOneSide(b, 'L', gain, listenMs);
 
-    console.debug(`[calib] repeat ${k + 1}/${repeats} L capture: micWin=${capLA.micWin.length} samples (${(capLA.micWin.length / sr * 1000).toFixed(1)}ms) ref=${a.length}`);
-
-    const sumL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
-    const mL = earlyPeakFromCorrelation(sumL, earlyMs, sr);
-    tauL.push(mL.tau); pkL.push(mL.peak);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms peak=${mL.peak.toFixed(4)} idx=${mL.idx} corrLen=${sumL.length}`);
+    const resL = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
+    const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
+    tauL.push(mL.tau); pkL.push(mL.peak); rawPkL.push(resL.rawPeak);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} L: tau=${(mL.tau * 1000).toFixed(4)}ms peak=${mL.peak.toFixed(4)} rawPeak=${resL.rawPeak.toFixed(1)} idx=${mL.idx} corrLen=${resL.corr.length} micWin=${capLA.micWin.length}`);
 
     await sleep(repeatGap);
 
@@ -118,10 +134,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
 
-    const sumR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
-    const mR = earlyPeakFromCorrelation(sumR, earlyMs, sr);
-    tauR.push(mR.tau); pkR.push(mR.peak);
-    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms peak=${mR.peak.toFixed(4)} idx=${mR.idx} corrLen=${sumR.length}`);
+    const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
+    const mR = earlyPeakFromCorrelation(resR.corr, earlyMs, sr);
+    tauR.push(mR.tau); pkR.push(mR.peak); rawPkR.push(resR.rawPeak);
+    console.debug(`[calib] repeat ${k + 1}/${repeats} R: tau=${(mR.tau * 1000).toFixed(4)}ms peak=${mR.peak.toFixed(4)} rawPeak=${resR.rawPeak.toFixed(1)} idx=${mR.idx} corrLen=${resR.corr.length} micWin=${capRA.micWin.length}`);
 
     await sleep(repeatGap);
   }
@@ -134,7 +150,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const madTauR = mad(tauR, medTauR);
 
   console.debug(`[calib] statistics: medTauL=${(medTauL * 1000).toFixed(4)}ms medTauR=${(medTauR * 1000).toFixed(4)}ms madL=${(madTauL * 1000).toFixed(4)}ms madR=${(madTauR * 1000).toFixed(4)}ms`);
-  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)}`);
+  console.debug(`[calib] peak strengths: medPkL=${medPkL.toFixed(4)} medPkR=${medPkR.toFixed(4)} rawPeaks L=[${rawPkL.map(p => p.toFixed(1)).join(', ')}] R=[${rawPkR.map(p => p.toFixed(1)).join(', ')}]`);
   console.debug(`[calib] raw tauL=[${tauL.map(t => (t * 1000).toFixed(3)).join(', ')}]ms tauR=[${tauR.map(t => (t * 1000).toFixed(3)).join(', ')}]ms`);
 
   const rMin = 0.04;
@@ -167,16 +183,16 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const capLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
   await sleep(Math.max(0, gapMs));
   const capLB = await pingAndCaptureOneSide(b, 'L', gain, listenMs);
-  const sumLSanity = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
+  const resLSanity = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
 
   const capRA = await pingAndCaptureOneSide(a, 'R', gain, listenMs);
   await sleep(Math.max(0, gapMs));
   const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
-  const sumRSanity = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
+  const resRSanity = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
 
-  const earlyN = Math.min(sumLSanity.length, Math.floor(sr * (earlyMs / 1000)));
-  const curveL = sumLSanity.slice(0, earlyN);
-  const curveR = sumRSanity.slice(0, earlyN);
+  const earlyN = Math.min(resLSanity.corr.length, Math.floor(sr * (earlyMs / 1000)));
+  const curveL = resLSanity.corr.slice(0, earlyN);
+  const curveR = resRSanity.corr.slice(0, earlyN);
 
   const pk1 = findPeakAbs(curveL, 0, curveL.length);
   const pk2 = findPeakAbs(curveR, 0, curveR.length);
@@ -185,7 +201,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     pk1.absValue, pk2.absValue, d, c,
   );
 
-  console.debug(`[calib] sanity check: tauL=${(pk1.index / sr * 1000).toFixed(4)}ms tauR=${(pk2.index / sr * 1000).toFixed(4)}ms peakL=${pk1.absValue.toFixed(4)} peakR=${pk2.absValue.toFixed(4)} mono=${mono2.monoLikely}`);
+  console.debug(`[calib] sanity check: tauL=${(pk1.index / sr * 1000).toFixed(4)}ms tauR=${(pk2.index / sr * 1000).toFixed(4)}ms peakL=${pk1.absValue.toFixed(4)} peakR=${pk2.absValue.toFixed(4)} rawL=${resLSanity.rawPeak.toFixed(1)} rawR=${resRSanity.rawPeak.toFixed(1)} mono=${mono2.monoLikely}`);
 
   const sanity: CalibrationSanity = {
     have: true,
@@ -207,9 +223,9 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       const cA = await pingAndCaptureSteered(a, 0, gain, listenMs);
       await sleep(Math.max(0, gapMs));
       const cB = await pingAndCaptureSteered(b, 0, gain, listenMs);
-      const corrSum = golaySumCorrelation(cA.micWin, cB.micWin, a, b, sr);
+      const envRes = golaySumCorrelation(cA.micWin, cB.micWin, a, b, sr);
       const envTau0 = 0.5 * (medTauL + medTauR);
-      let prof = buildRangeProfileFromCorrelation(corrSum, envTau0, c, minR, maxR, sr, heatBins);
+      let prof = buildRangeProfileFromCorrelation(envRes.corr, envTau0, c, minR, maxR, sr, heatBins);
       prof = applyQualityAlgorithms(prof, 'balanced');
       profiles.push(prof);
       await sleep(Math.max(20, repeatGap * 0.4));

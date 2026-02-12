@@ -58,17 +58,18 @@ async function captureGolaySteered(
 ) {
   const capA = await pingAndCaptureSteered(a, dt, gain, listenMs);
   const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
-  const resA = corrAndBuildProfile(capA.micWin, a, c, minR, maxR, predTau0A, lockStrength, sampleRate, heatBins);
 
   await sleep(Math.max(0, gapMs));
 
   const capB = await pingAndCaptureSteered(b, dt, gain, listenMs);
   const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
-  const resB = corrAndBuildProfile(capB.micWin, b, c, minR, maxR, predTau0B, lockStrength, sampleRate, heatBins);
 
-  const L = Math.min(resA.corr.length, resB.corr.length);
+  // Sum raw correlations WITHOUT per-half normalization to preserve Golay sidelobe cancellation
+  const corrA = fftCorrelate(capA.micWin, a, sampleRate).correlation;
+  const corrB = fftCorrelate(capB.micWin, b, sampleRate).correlation;
+  const L = Math.min(corrA.length, corrB.length);
   const corrSum = new Float32Array(L);
-  for (let i = 0; i < L; i++) corrSum[i] = resA.corr[i] + resB.corr[i];
+  for (let i = 0; i < L; i++) corrSum[i] = corrA[i] + corrB[i];
   absMaxNormalize(corrSum);
 
   let predTau0: number | null = null;
