@@ -15,7 +15,7 @@ import { drawGeometry } from '../viz/geometry-plot.js';
 import { drawCalibSanityPlot, drawSanityPlaceholder } from '../viz/sanity-plot.js';
 import { resizeCanvasForDPR } from '../viz/renderer.js';
 import { createHeatmap } from '../scan/heatmap-data.js';
-import { DEFAULT_HEAT_BINS } from '../constants.js';
+import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -227,9 +227,10 @@ export function initApp(): void {
   applyRetinaCanvases();
   drawProfilePlaceholder();
 
-  const detected = detectDevice();
-  applyDevicePreset(detected, true);
-  log(`[init] device: ${detected}`);
+  const savedPreset = localStorage.getItem('echoscope:devicePreset');
+  const deviceKey = (savedPreset && DEVICE_PRESETS[savedPreset]) ? savedPreset : detectDevice();
+  applyDevicePreset(deviceKey, true);
+  log(`[init] device: ${deviceKey}${savedPreset === deviceKey ? ' (saved)' : ''}`);
 
   const defaultAngles = [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60];
   store.set('heatmap', createHeatmap(defaultAngles, DEFAULT_HEAT_BINS));

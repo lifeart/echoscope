@@ -1,7 +1,7 @@
 import { store } from '../core/store.js';
 import { log } from './readouts.js';
 import { renderCalibInfo } from './readouts.js';
-import { drawGeometry, getGeometryModelFromCurrent } from '../viz/geometry-plot.js';
+import { drawGeometry, getGeometryModelFromCurrent, getGeometryFrame } from '../viz/geometry-plot.js';
 import { canvasPixelScale } from '../viz/renderer.js';
 
 export function setGeomWizardStatus(msg: string): void {
@@ -91,7 +91,6 @@ export function setupGeometryPointerHandlers(): void {
     if (!state.geomWizard.active) return;
     ensureGeometryWizardHandlesInitialized(false);
 
-    // Use simplified hit test
     const rect = canvas.getBoundingClientRect();
     const sx = canvas.width / Math.max(1, rect.width);
     const sy = canvas.height / Math.max(1, rect.height);
@@ -100,27 +99,16 @@ export function setupGeometryPointerHandlers(): void {
 
     const s = canvasPixelScale(canvas);
     const handles = state.geomWizard.handles;
-    // Simple pick test - find nearest handle within radius
+    const config = state.config;
+    const frame = getGeometryFrame(handles, config.minRange, config.maxRange, canvas);
     const pickR = 14 * s;
 
-    // We need to approximate handle positions - just check all 3
     let bestName: string | null = null;
     let bestDist2 = Infinity;
-    // For now, use approximate positions
-    const w = canvas.width;
-    const h = canvas.height;
-    const centerX = w / 2;
-    const originY = h - 56 * s;
-
-    function approxPx(u: number, f: number) {
-      // Rough approximation
-      const scale = (w * 0.4);
-      return { x: centerX + u * scale * 4, y: originY - f * scale * 2 };
-    }
 
     for (const name of ['spL', 'spR', 'mic'] as const) {
       const handle = handles[name];
-      const hp = approxPx(handle.u, handle.f);
+      const hp = frame.toPx(handle.u, handle.f);
       const dx = px - hp.x;
       const dy = py - hp.y;
       const d2 = dx * dx + dy * dy;
@@ -131,19 +119,35 @@ export function setupGeometryPointerHandlers(): void {
       store.set('geomWizard.dragging', bestName);
       canvas.setPointerCapture(ev.pointerId);
       ev.preventDefault();
-      const config = store.get().config;
       drawGeometry(config.minRange, config.maxRange);
     }
   });
 
   canvas.addEventListener('pointermove', (ev) => {
     const state = store.get();
-    if (!state.geomWizard.active || !state.geomWizard.dragging) return;
-    // Simplified move - update handle based on pointer position
+    const dragging = state.geomWizard.dragging;
+    if (!state.geomWizard.active || !dragging) return;
     ev.preventDefault();
-    store.set('geomWizard.touched', true);
+
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / Math.max(1, rect.width);
+    const sy = canvas.height / Math.max(1, rect.height);
+    const px = (ev.clientX - rect.left) * sx;
+    const py = (ev.clientY - rect.top) * sy;
+
+    const config = state.config;
+    const frame = getGeometryFrame(state.geomWizard.handles, config.minRange, config.maxRange, canvas);
+    const pos = frame.fromPx(px, py);
+
+    store.update(s => {
+      const h = s.geomWizard.handles[dragging as 'spL' | 'spR' | 'mic'];
+      h.u = pos.u;
+      // Speakers stay on baseline (f=0)
+      h.f = (dragging === 'spL' || dragging === 'spR') ? 0 : pos.f;
+      s.geomWizard.touched = true;
+    });
+
     setGeomWizardStatus('Drag handles, then Apply geometry.');
-    const config = store.get().config;
     drawGeometry(config.minRange, config.maxRange);
   });
 

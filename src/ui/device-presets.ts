@@ -30,6 +30,8 @@ export function applyDevicePreset(key: string, silent = false): void {
   const devicePresetEl = document.getElementById('devicePreset') as HTMLSelectElement | null;
   if (devicePresetEl) devicePresetEl.value = key;
 
+  localStorage.setItem('echoscope:devicePreset', key);
+
   store.update(s => {
     s.config.devicePreset = key;
     if (preset.d !== null) {

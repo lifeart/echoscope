@@ -67,19 +67,20 @@
           </label>
         </div>
       </div>
+      <p class="hint">Presets set speaker spacing and mic position for known devices. Your selection is remembered across sessions.</p>
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label>Speaker spacing d (m)</label>
-          <input id="spacing" type="number" step="0.01" value="0.20">
+          <label title="Distance between L/R speakers. Steering delay &amp; TDOA gating depend on this. Must be > 0.02 m.">Speaker spacing d (m)</label>
+          <input id="spacing" type="number" step="0.01" min="0.02" value="0.20">
         </div>
         <div>
-          <label>Speed of sound c (m/s)</label>
-          <input id="c" type="number" step="1" value="343">
+          <label title="Speed of sound in air (~343 m/s at 20°C). Range 200–400. Affects all range calculations.">Speed of sound c (m/s)</label>
+          <input id="c" type="number" step="1" min="200" max="400" value="343">
         </div>
         <div>
-          <label>Output gain</label>
-          <input id="gain" type="number" step="0.01" value="0.22">
+          <label title="Volume for transmitted pings. Keep low to avoid feedback.">Output gain</label>
+          <input id="gain" type="number" step="0.01" min="0" max="1" value="0.22">
         </div>
       </div>
 
@@ -136,30 +137,32 @@
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label>Listen window (ms)</label>
+          <label title="Capture duration per ping. Longer catches farther echoes. Extended internally by probe duration.">Listen window (ms)</label>
           <input id="listenMs" type="number" step="5" value="140">
         </div>
         <div>
-          <label>Min range (m)</label>
+          <label title="Profile display minimum boundary. Should be >= speaker-mic distance.">Min range (m)</label>
           <input id="minR" type="number" step="0.1" value="0.3">
         </div>
         <div>
-          <label>Max range (m)</label>
+          <label title="Profile display maximum boundary.">Max range (m)</label>
           <input id="maxR" type="number" step="0.1" value="4.0">
         </div>
       </div>
 
+      <p class="hint">Scan controls: angular resolution, dwell time, and post-processing quality.</p>
+
       <div class="row" style="margin-top:10px">
         <div>
-          <label>Scan step (deg)</label>
+          <label title="Angular resolution of sweep. Smaller = finer but slower.">Scan step (deg)</label>
           <input id="scanStep" type="number" step="1" value="10">
         </div>
         <div>
-          <label>Scan dwell (ms)</label>
+          <label title="Pause per angle. Longer = better SNR.">Scan dwell (ms)</label>
           <input id="scanDwell" type="number" step="10" value="140">
         </div>
         <div>
-          <label>Min strength gate</label>
+          <label title="Min correlation strength to report target. 0–1. Lower = more sensitive but noisier.">Min strength gate</label>
           <input id="strengthGate" type="number" step="0.01" min="0" max="1" value="0.08">
         </div>
         <div>
@@ -169,11 +172,11 @@
           </label>
         </div>
         <div>
-          <label>Static suppression</label>
+          <label title="Subtracts repeating clutter across scans. Strength 0–1.2.">Static suppression</label>
           <input id="scanClutterStrength" type="number" step="0.05" min="0" max="1.2" value="0.65">
         </div>
         <div>
-          <label>Quality algorithm</label>
+          <label title="Fast: raw. Balanced: median+smooth. Max: +floor suppress. Auto: adapts.">Quality algorithm</label>
           <select id="qualityAlgo">
             <option value="auto">Auto</option>
             <option value="fast">Fast</option>
@@ -182,7 +185,7 @@
           </select>
         </div>
         <div>
-          <label>Direction axis</label>
+          <label title="Whether angle is horizontal (L/R) or vertical (T/B).">Direction axis</label>
           <select id="dirAxis">
             <option value="horizontal" selected>Horizontal (L/R)</option>
             <option value="vertical">Vertical (T/B)</option>
@@ -204,6 +207,7 @@
       <hr/>
 
       <!-- Calibration -->
+      <p class="hint">Calibration measures speaker-to-mic distances to lock direct-path timing and improve range accuracy.</p>
       <div class="row" style="justify-content:space-between">
         <button id="btnCalibrate" disabled>Calibrate (refined + sanity)</button>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
@@ -214,19 +218,19 @@
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label>Calibration repeats (N)</label>
-          <input id="calRepeats" type="number" step="1" value="3">
+          <label title="Independent L/R measurement pairs. 1–9. More = more robust.">Calibration repeats (N)</label>
+          <input id="calRepeats" type="number" step="1" min="1" max="9" value="3">
         </div>
         <div>
-          <label>Inter-repeat gap (ms)</label>
-          <input id="calRepeatGapMs" type="number" step="10" value="120">
+          <label title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>
+          <input id="calRepeatGapMs" type="number" step="10" min="30" value="120">
         </div>
         <div>
-          <label>Extra env pings</label>
+          <label title="Additional pings for environmental baseline. 0–12.">Extra env pings</label>
           <input id="extraCalPings" type="number" step="1" min="0" max="12" value="4">
         </div>
         <div>
-          <label>Env baseline subtract</label>
+          <label title="Subtraction strength for ambient clutter. 0–1.2.">Env baseline subtract</label>
           <input id="envBaselineStrength" type="number" step="0.05" min="0" max="1.2" value="0.55">
         </div>
         <div>
