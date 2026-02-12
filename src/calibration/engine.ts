@@ -136,20 +136,33 @@ function selectTDOAPair(
   maxTDOA: number,
 ): { tauL: number; tauR: number; peakL: number; peakR: number; idxL: number; idxR: number } | null {
   if (peaksL.length === 0 || peaksR.length === 0) return null;
-  let bestScore = -1;
-  let best: { tauL: number; tauR: number; peakL: number; peakR: number; idxL: number; idxR: number } | null = null;
+
+  const validPairs: Array<{
+    tauL: number; tauR: number; peakL: number; peakR: number;
+    idxL: number; idxR: number; score: number;
+  }> = [];
 
   for (const pL of peaksL) {
     for (const pR of peaksR) {
       if (Math.abs(pL.tau - pR.tau) > maxTDOA) continue;
-      const score = pL.absVal + pR.absVal;
-      if (score > bestScore) {
-        bestScore = score;
-        best = { tauL: pL.tau, tauR: pR.tau, peakL: pL.absVal, peakR: pR.absVal, idxL: pL.idx, idxR: pR.idx };
-      }
+      validPairs.push({
+        tauL: pL.tau, tauR: pR.tau,
+        peakL: pL.absVal, peakR: pR.absVal,
+        idxL: pL.idx, idxR: pR.idx,
+        score: pL.absVal + pR.absVal,
+      });
     }
   }
-  return best;
+  if (validPairs.length === 0) return null;
+
+  // Among valid pairs with sufficient strength (≥30% of strongest),
+  // prefer the earliest arrival.  Direct path always arrives before reflections.
+  const maxScore = Math.max(...validPairs.map(p => p.score));
+  const strong = validPairs.filter(p => p.score >= 0.30 * maxScore);
+  strong.sort((a, b) => (a.tauL + a.tauR) - (b.tauL + b.tauR));
+
+  const c = strong[0];
+  return { tauL: c.tauL, tauR: c.tauR, peakL: c.peakL, peakR: c.peakR, idxL: c.idxL, idxR: c.idxR };
 }
 
 export function predictedTau0ForPing(
@@ -307,6 +320,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   await sleep(Math.max(0, gapMs));
   const capLB = await pingAndCaptureOneSide(b, 'L', gain, listenMs);
   const resLSanity = golaySumCorrelation(capLA.micWin, capLB.micWin, a, b, sr);
+
+  await sleep(repeatGap); // gap between L/R to avoid residual reverberation contamination
 
   const capRA = await pingAndCaptureOneSide(a, 'R', gain, listenMs);
   await sleep(Math.max(0, gapMs));
