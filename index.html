@@ -177,6 +177,14 @@
           <label>Static suppression</label>
           <input id="scanClutterStrength" type="number" step="0.05" min="0" max="1.2" value="0.65">
         </div>
+        <div>
+          <label>Quality algorithm</label>
+          <select id="qualityAlgo">
+            <option value="fast">Fast</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="max">Max quality</option>
+          </select>
+        </div>
       </div>
 
       <div class="row" style="margin-top:8px">
@@ -211,6 +219,20 @@
         <div>
           <label>Inter-repeat gap (ms)</label>
           <input id="calRepeatGapMs" type="number" step="10" value="120">
+        </div>
+        <div>
+          <label>Extra env pings</label>
+          <input id="extraCalPings" type="number" step="1" min="0" max="12" value="4">
+        </div>
+        <div>
+          <label>Env baseline subtract</label>
+          <input id="envBaselineStrength" type="number" step="0.05" min="0" max="1.2" value="0.55">
+        </div>
+        <div>
+          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
+            <input id="useEnvBaseline" type="checkbox" checked>
+            Use env baseline
+          </label>
         </div>
       </div>
 
@@ -323,6 +345,113 @@
     return clamp(raw, 0, 1.2);
   }
 
+  function getQualityAlgo() {
+    const mode = el("qualityAlgo")?.value || "balanced";
+    if (mode === "fast" || mode === "balanced" || mode === "max") return mode;
+    return "balanced";
+  }
+
+  function shouldUseEnvBaseline() {
+    const t = el("useEnvBaseline");
+    return !t || !!t.checked;
+  }
+
+  function getEnvBaselineStrength() {
+    const raw = parseFloat(el("envBaselineStrength").value);
+    if (!Number.isFinite(raw)) return 0.55;
+    return clamp(raw, 0, 1.2);
+  }
+
+  function canvasPixelScale(canvas) {
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0)) return 1;
+    return Math.max(1, canvas.width / rect.width);
+  }
+
+  function resizeCanvasForDPR(canvas) {
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const targetW = Math.max(1, Math.round(rect.width * dpr));
+    const targetH = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width === targetW && canvas.height === targetH) return false;
+    canvas.width = targetW;
+    canvas.height = targetH;
+    return true;
+  }
+
+  function applyRetinaCanvases() {
+    const a = resizeCanvasForDPR(profileCanvas);
+    const b = resizeCanvasForDPR(heatCanvas);
+    const c = resizeCanvasForDPR(calibPlot);
+    return a || b || c;
+  }
+
+  function median3Profile(src) {
+    const n = src.length;
+    const out = new Float32Array(n);
+    if (!n) return out;
+    out[0] = src[0];
+    for (let i=1;i<n-1;i++) {
+      const a = src[i-1], b = src[i], c = src[i+1];
+      out[i] = Math.max(Math.min(a,b), Math.min(Math.max(a,b), c));
+    }
+    if (n > 1) out[n-1] = src[n-1];
+    return out;
+  }
+
+  function triSmoothProfile(src) {
+    const n = src.length;
+    const out = new Float32Array(n);
+    if (!n) return out;
+    out[0] = src[0];
+    for (let i=1;i<n-1;i++) out[i] = 0.25*src[i-1] + 0.5*src[i] + 0.25*src[i+1];
+    if (n > 1) out[n-1] = src[n-1];
+    return out;
+  }
+
+  function adaptiveFloorSuppressProfile(src) {
+    const n = src.length;
+    const out = new Float32Array(n);
+    const radius = 4;
+    const floorScale = 0.9;
+    for (let i=0;i<n;i++) {
+      let sum = 0;
+      let cnt = 0;
+      const lo = Math.max(0, i - radius);
+      const hi = Math.min(n-1, i + radius);
+      for (let j=lo;j<=hi;j++) { sum += src[j]; cnt++; }
+      const floor = (cnt > 0) ? (sum / cnt) : 0;
+      const v = src[i] - floorScale * floor;
+      out[i] = (v > 0) ? v : 0;
+    }
+    return out;
+  }
+
+  function applyQualityProfileAlgorithms(profile) {
+    const algo = getQualityAlgo();
+    if (algo === "fast") return profile;
+    let out = median3Profile(profile);
+    out = triSmoothProfile(out);
+    if (algo === "max") {
+      out = adaptiveFloorSuppressProfile(out);
+      out = triSmoothProfile(out);
+    }
+    absMaxNormalize(out);
+    return out;
+  }
+
+  function applyEnvBaselineToProfile(profile) {
+    if (!shouldUseEnvBaseline()) return;
+    const base = calib.envBaseline;
+    if (!base || base.length !== profile.length) return;
+    const k = getEnvBaselineStrength();
+    for (let i=0;i<profile.length;i++) {
+      const v = profile[i] - k * base[i];
+      profile[i] = (v > 0) ? v : 0;
+    }
+  }
+
   function applyLaptopModePreset() {
     modeEl.value = "golay";
     syncModeUI();
@@ -332,16 +461,21 @@
     el("listenMs").value = "180";
     el("strengthGate").value = "0.05";
     el("scanClutterStrength").value = "0.70";
+    el("qualityAlgo").value = "max";
+    el("extraCalPings").value = "6";
+    el("envBaselineStrength").value = "0.60";
 
     const clutterOn = el("scanClutterOn");
     if (clutterOn) clutterOn.checked = true;
+    const envBaselineOn = el("useEnvBaseline");
+    if (envBaselineOn) envBaselineOn.checked = true;
     showTraceEl.checked = true;
 
     const minR = parseFloat(el("minR").value);
     const maxR = parseFloat(el("maxR").value);
     drawHeatmap(minR, maxR);
 
-    log("[preset] laptop mode applied: golay, step=3°, dwell=220ms, listen=180ms, gate=0.05, static suppression=0.70");
+    log("[preset] laptop mode applied: golay, step=3°, dwell=220ms, listen=180ms, gate=0.05, static suppression=0.70, quality=max, env pings=6");
   }
 
   function suppressStaticReflectionsInProfile(profile) {
@@ -403,6 +537,13 @@
   let scanClutter = null;
   let heatAngles = [];
   const heatBins = 240;
+
+  // Last profile draw state (for resize redraw)
+  let lastProfileCorr = null;
+  let lastProfileTau0 = 0;
+  let lastProfileC = 343;
+  let lastProfileMinR = 0.3;
+  let lastProfileMaxR = 4.0;
 
   // Best-target trace storage
   let bestBin = null;
@@ -854,21 +995,28 @@
 
   function drawProfile(corr, tau0, c, minR, maxR) {
     const w = profileCanvas.width, h = profileCanvas.height;
+    const s = canvasPixelScale(profileCanvas);
+    const xPad = 50 * s;
+    const yTop = 10 * s;
+    const yBottom = h - 30 * s;
+    const xRight = w - 10 * s;
+    const xSpan = w - 70 * s;
+    const ySpan = h - 50 * s;
     clearCanvas(pctx, w, h);
 
     pctx.strokeStyle = "#333";
-    pctx.lineWidth = 1;
+    pctx.lineWidth = 1 * s;
     pctx.beginPath();
-    pctx.moveTo(50, 10);
-    pctx.lineTo(50, h-30);
-    pctx.lineTo(w-10, h-30);
+    pctx.moveTo(xPad, yTop);
+    pctx.lineTo(xPad, yBottom);
+    pctx.lineTo(xRight, yBottom);
     pctx.stroke();
 
     const minTau = (2*minR)/c;
     const maxTau = (2*maxR)/c;
 
     pctx.strokeStyle = "#8dd0ff";
-    pctx.lineWidth = 2;
+    pctx.lineWidth = 2 * s;
     pctx.beginPath();
     let started=false;
 
@@ -877,8 +1025,8 @@
       if (tau < minTau || tau > maxTau) continue;
       const R = (c*tau)/2;
 
-      const x = 50 + (R - minR) / (maxR - minR) * (w - 70);
-      const y = (h-30) - ((corr[i] * 0.5 + 0.5) * (h-50));
+      const x = xPad + (R - minR) / (maxR - minR) * xSpan;
+      const y = yBottom - ((corr[i] * 0.5 + 0.5) * ySpan);
 
       if (!started) { pctx.moveTo(x,y); started=true; }
       else pctx.lineTo(x,y);
@@ -886,12 +1034,13 @@
     pctx.stroke();
 
     pctx.fillStyle = "#bdbdbd";
-    pctx.font = "12px system-ui";
-    pctx.fillText(`Range profile (calibrated). minR=${minR}m maxR=${maxR}m`, 54, 22);
+    pctx.font = `${12 * s}px system-ui`;
+    pctx.fillText(`Range profile (calibrated). minR=${minR}m maxR=${maxR}m`, 54 * s, 22 * s);
   }
 
   function drawHeatmap(minR, maxR) {
     const w = heatCanvas.width, h = heatCanvas.height;
+    const s = canvasPixelScale(heatCanvas);
     clearCanvas(hctx, w, h);
 
     if (!heat || heatAngles.length === 0) return;
@@ -945,16 +1094,16 @@
     hctx.putImageData(img, 0, 0);
 
     hctx.fillStyle = "#eaeaea";
-    hctx.font = "12px system-ui";
-    hctx.fillText("Angle × Range heatmap (brighter = stronger echo energy)", 12, 18);
+    hctx.font = `${12 * s}px system-ui`;
+    hctx.fillText("Angle × Range heatmap (brighter = stronger echo energy)", 12 * s, 18 * s);
 
     hctx.fillStyle = "#bdbdbd";
-    hctx.fillText(`angles: ${heatAngles[0]}..${heatAngles[heatAngles.length-1]} deg`, 12, 36);
-    hctx.fillText(`range: ${minR}..${maxR} m`, 12, 52);
+    hctx.fillText(`angles: ${heatAngles[0]}..${heatAngles[heatAngles.length-1]} deg`, 12 * s, 36 * s);
+    hctx.fillText(`range: ${minR}..${maxR} m`, 12 * s, 52 * s);
 
     if (showTraceEl.checked && bestBin && bestBin.length === rows) {
       const gate = getStrengthGate();
-      hctx.lineWidth = 2;
+      hctx.lineWidth = 2 * s;
       let prev = null;
       for (let r=0;r<rows;r++){
         const b = bestBin[r];
@@ -980,12 +1129,12 @@
         const y = (r/rowDen) * (h-1);
         const conf = clamp((bestVal[r] - gate) / Math.max(1e-6, 1 - gate), 0, 1);
         hctx.fillStyle = traceColorFromConfidence(conf);
-        hctx.beginPath(); hctx.arc(x, y, 3, 0, Math.PI*2); hctx.fill();
+        hctx.beginPath(); hctx.arc(x, y, 3 * s, 0, Math.PI*2); hctx.fill();
       }
       hctx.fillStyle = traceColorFromConfidence(0.15);
-      hctx.fillText("Best-target trace", 12, 70);
+      hctx.fillText("Best-target trace", 12 * s, 70 * s);
       hctx.fillStyle = traceColorFromConfidence(0.85);
-      hctx.fillText("low→high confidence", 128, 70);
+      hctx.fillText("low→high confidence", 128 * s, 70 * s);
     }
   }
 
@@ -993,19 +1142,24 @@
   // Draw early correlation curves for L and R with peaks.
   function drawCalibSanityPlot(curveL, peakIdxL, curveR, peakIdxR, earlyMs) {
     const w = calibPlot.width, h = calibPlot.height;
+    const s = canvasPixelScale(calibPlot);
+    const xPad = 50 * s;
+    const yTop = 15 * s;
+    const boxW = w - 65 * s;
+    const boxH = h - 45 * s;
     clearCanvas(cctx, w, h);
 
     if (!curveL.length || !curveR.length) {
       cctx.fillStyle = "#bdbdbd";
-      cctx.font = "12px system-ui";
-      cctx.fillText("Sanity plot unavailable: empty correlation window.", 54, 22);
+      cctx.font = `${12 * s}px system-ui`;
+      cctx.fillText("Sanity plot unavailable: empty correlation window.", 54 * s, 22 * s);
       return;
     }
 
     // axes box
     cctx.strokeStyle = "#333";
-    cctx.lineWidth = 1;
-    cctx.strokeRect(50, 15, w-65, h-45);
+    cctx.lineWidth = 1 * s;
+    cctx.strokeRect(xPad, yTop, boxW, boxH);
 
     // y scale from min..max across both
     let minV = 1e9, maxV = -1e9;
@@ -1019,14 +1173,14 @@
 
     function xy(i, v, N) {
       const den = Math.max(1, N-1);
-      const x = 50 + (i/den)*(w-65);
-      const y = (15 + (h-45)) - ((v - yMin)/ySpan)*(h-45);
+      const x = xPad + (i/den)*boxW;
+      const y = (yTop + boxH) - ((v - yMin)/ySpan)*boxH;
       return {x,y};
     }
 
     // L curve (cyan)
     cctx.strokeStyle = "rgba(140,210,255,0.95)";
-    cctx.lineWidth = 2;
+    cctx.lineWidth = 2 * s;
     cctx.beginPath();
     for (let i=0;i<curveL.length;i++){
       const p = xy(i, curveL[i], curveL.length);
@@ -1037,7 +1191,7 @@
 
     // R curve (orange-ish)
     cctx.strokeStyle = "rgba(255,190,120,0.95)";
-    cctx.lineWidth = 2;
+    cctx.lineWidth = 2 * s;
     cctx.beginPath();
     for (let i=0;i<curveR.length;i++){
       const p = xy(i, curveR[i], curveR.length);
@@ -1051,23 +1205,23 @@
     const pR = xy(peakIdxR, curveR[peakIdxR], curveR.length);
 
     cctx.fillStyle = "rgba(140,210,255,0.95)";
-    cctx.beginPath(); cctx.arc(pL.x, pL.y, 4, 0, Math.PI*2); cctx.fill();
+    cctx.beginPath(); cctx.arc(pL.x, pL.y, 4 * s, 0, Math.PI*2); cctx.fill();
     cctx.fillStyle = "rgba(255,190,120,0.95)";
-    cctx.beginPath(); cctx.arc(pR.x, pR.y, 4, 0, Math.PI*2); cctx.fill();
+    cctx.beginPath(); cctx.arc(pR.x, pR.y, 4 * s, 0, Math.PI*2); cctx.fill();
 
     // Labels
     cctx.fillStyle = "#eaeaea";
-    cctx.font = "12px system-ui";
-    cctx.fillText(`Calibration sanity: early ${earlyMs} ms (Golay-summed correlation)`, 54, 12);
+    cctx.font = `${12 * s}px system-ui`;
+    cctx.fillText(`Calibration sanity: early ${earlyMs} ms (Golay-summed correlation)`, 54 * s, 12 * s);
 
     cctx.fillStyle = "rgba(140,210,255,0.95)";
-    cctx.fillText("L-only", 54, h-18);
+    cctx.fillText("L-only", 54 * s, h - 18 * s);
 
     cctx.fillStyle = "rgba(255,190,120,0.95)";
-    cctx.fillText("R-only", 110, h-18);
+    cctx.fillText("R-only", 110 * s, h - 18 * s);
 
     cctx.fillStyle = "#bdbdbd";
-    cctx.fillText("time →", w-70, h-18);
+    cctx.fillText("time →", w - 70 * s, h - 18 * s);
   }
 
   // ---------- Calibration state ----------
@@ -1083,6 +1237,8 @@
     x: NaN, y: NaN, geomErr: NaN,
     tauSysCommon: NaN, tauSysL: NaN, tauSysR: NaN,
     tauMadL: NaN, tauMadR: NaN,
+    envBaseline: null,
+    envBaselinePings: 0,
 
     // sanity view data (early correlation curves)
     sanity: {
@@ -1123,6 +1279,7 @@
     lines.push(`tauSysL≈${(calib.tauSysL*1e3).toFixed(2)}ms, tauSysR≈${(calib.tauSysR*1e3).toFixed(2)}ms`);
     lines.push(`rL≈${calib.rL.toFixed(3)}m, rR≈${calib.rR.toFixed(3)}m`);
     lines.push(`mic(x,y)≈(${calib.x.toFixed(3)}, ${calib.y.toFixed(3)})m, geomErr≈${calib.geomErr.toFixed(4)}`);
+    lines.push(`env baseline = ${(calib.envBaseline && calib.envBaselinePings>0) ? `YES (${calib.envBaselinePings} pings)` : "no"}`);
     lines.push(`Direct-path lock: ${(useCalibEl.checked && calib.quality>0.2) ? "ON" : "OFF/weak"}`);
     calibInfoEl.textContent = lines.join("\n");
 
@@ -1244,6 +1401,9 @@
     const listenMs = Math.max(140, parseFloat(el("listenMs").value));
     const repeats = clamp(parseInt(el("calRepeats").value, 10) || 1, 1, 9);
     const repeatGap = Math.max(30, parseFloat(el("calRepeatGapMs").value));
+    const extraCalPings = clamp(parseInt(el("extraCalPings").value, 10) || 0, 0, 12);
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
 
     if (!(d > 0.02)) throw new Error("Speaker spacing d must be set (meters)");
     if (!(c > 200 && c < 400)) throw new Error("Speed of sound c looks wrong");
@@ -1385,6 +1545,31 @@
     calib.sanity.monoByTime = mono2.monoByTime;
     calib.sanity.monoByPeak = mono2.monoByPeak;
 
+    // -------- Additional calibration: environmental baseline profile (for static reflections)
+    calib.envBaseline = null;
+    calib.envBaselinePings = 0;
+    if (extraCalPings > 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
+      log(`[cal] env baseline capture: ${extraCalPings} pings at θ=0° …`);
+      const acc = new Float32Array(heatBins);
+      let used = 0;
+      for (let i=0;i<extraCalPings;i++) {
+        const env = await captureGolaySteeredProfile(a, b, gapMs, 0, gain, listenMs, c, minR, maxR, q);
+        let envProf = env.prof;
+        envProf = applyQualityProfileAlgorithms(envProf);
+        for (let k=0;k<heatBins;k++) acc[k] += envProf[k];
+        used++;
+        await sleep(Math.max(20, repeatGap * 0.4));
+      }
+      if (used > 0) {
+        const inv = 1 / used;
+        for (let k=0;k<heatBins;k++) acc[k] *= inv;
+        absMaxNormalize(acc);
+        calib.envBaseline = acc;
+        calib.envBaselinePings = used;
+        log(`[cal] env baseline ready (${used} pings)`);
+      }
+    }
+
     // Plot
     drawCalibSanityPlot(curveL, pk1.index, curveR, pk2.index, earlyMs);
 
@@ -1454,6 +1639,33 @@
     return { corr, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR: best.range };
   }
 
+  async function captureGolaySteeredProfile(a, b, gapMs, dt, gain, listenMs, c, minR, maxR, lockStrength) {
+    const capA = await pingAndCaptureSteered(a, dt, gain, listenMs);
+    const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
+    const resA = corrAndBuildProfile(capA.micWin, a, c, minR, maxR, predTau0A, lockStrength);
+
+    await sleep(Math.max(0, gapMs));
+
+    const capB = await pingAndCaptureSteered(b, dt, gain, listenMs);
+    const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
+    const resB = corrAndBuildProfile(capB.micWin, b, c, minR, maxR, predTau0B, lockStrength);
+
+    const L = Math.min(resA.corr.length, resB.corr.length);
+    const corrSum = new Float32Array(L);
+    for (let i=0;i<L;i++) corrSum[i] = resA.corr[i] + resB.corr[i];
+    absMaxNormalize(corrSum);
+
+    let predTau0 = null;
+    if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5*(predTau0A + predTau0B);
+    else if (Number.isFinite(predTau0A)) predTau0 = predTau0A;
+    else if (Number.isFinite(predTau0B)) predTau0 = predTau0B;
+
+    const tau0 = findDirectPathTau(corrSum, predTau0, lockStrength);
+    const prof = buildRangeProfileFromCorrelation(corrSum, tau0, c, minR, maxR);
+
+    return { corr: corrSum, tau0, prof };
+  }
+
   // ---------- Main ping cycle ----------
   async function doPing(angleDeg, updateHeatRowIndex=null) {
     await resumeIfSuspended();
@@ -1492,49 +1704,24 @@
       bestBinFinal = res.bestBin;
       bestValFinal = res.bestVal;
       bestRFinal = res.bestR;
-
-      log(`[ping] θ=${angleDeg}° mode=${mode} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best≈${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)}) lock=${lockStrength.toFixed(2)}`);
     } else {
-      const capA = await pingAndCaptureSteered(ref.a, dt, gain, listenMs);
-      const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
-      const resA = corrAndBuildProfile(capA.micWin, ref.a, c, minR, maxR, predTau0A, lockStrength);
-
-      await sleep(Math.max(0, ref.gapMs));
-
-      const capB = await pingAndCaptureSteered(ref.b, dt, gain, listenMs);
-      const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
-      const resB = corrAndBuildProfile(capB.micWin, ref.b, c, minR, maxR, predTau0B, lockStrength);
-
-      const L = Math.min(resA.corr.length, resB.corr.length);
-      const corrSum = new Float32Array(L);
-      for (let i=0;i<L;i++) corrSum[i] = resA.corr[i] + resB.corr[i];
-      absMaxNormalize(corrSum);
-
-      let predTau0 = null;
-      if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5*(predTau0A + predTau0B);
-      else if (Number.isFinite(predTau0A)) predTau0 = predTau0A;
-      else if (Number.isFinite(predTau0B)) predTau0 = predTau0B;
-
-      tau0Final = findDirectPathTau(corrSum, predTau0, lockStrength);
-      profFinal = buildRangeProfileFromCorrelation(corrSum, tau0Final, c, minR, maxR);
-
-      const best = estimateBestFromProfile(profFinal, minR, maxR);
-      bestBinFinal = best.bin;
-      bestValFinal = best.val;
-      bestRFinal = best.range;
-
-      corrFinal = corrSum;
-
-      log(`[ping] θ=${angleDeg}° mode=golay dt=${(dt*1e6).toFixed(1)}µs tau0≈${(tau0Final*1e3).toFixed(2)}ms best≈${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)}) lock=${lockStrength.toFixed(2)}`);
+      const golay = await captureGolaySteeredProfile(ref.a, ref.b, ref.gapMs, dt, gain, listenMs, c, minR, maxR, lockStrength);
+      corrFinal = golay.corr;
+      tau0Final = golay.tau0;
+      profFinal = golay.prof;
     }
+
+    applyEnvBaselineToProfile(profFinal);
 
     if (updateHeatRowIndex !== null && shouldSuppressStaticReflections()) {
       suppressStaticReflectionsInProfile(profFinal);
-      const best = estimateBestFromProfile(profFinal, minR, maxR);
-      bestBinFinal = best.bin;
-      bestValFinal = best.val;
-      bestRFinal = best.range;
     }
+
+    profFinal = applyQualityProfileAlgorithms(profFinal);
+    const bestPost = estimateBestFromProfile(profFinal, minR, maxR);
+    bestBinFinal = bestPost.bin;
+    bestValFinal = bestPost.val;
+    bestRFinal = bestPost.range;
 
     const isWeak = bestValFinal < strengthGate;
     if (isWeak) {
@@ -1561,6 +1748,16 @@
     } else {
       bestReadoutEl.textContent = "Best: —";
     }
+
+    const modeTag = (ref.type === "single") ? mode : "golay";
+    const bestText = Number.isFinite(bestRFinal) ? `${bestRFinal.toFixed(2)}m (v=${bestValFinal.toFixed(3)})` : "—";
+    log(`[ping] θ=${angleDeg}° mode=${modeTag} dt=${(dt*1e6).toFixed(1)}µs tau0=${(tau0Final*1e3).toFixed(2)}ms best=${bestText} lock=${lockStrength.toFixed(2)} algo=${getQualityAlgo()}`);
+
+    lastProfileCorr = corrFinal;
+    lastProfileTau0 = tau0Final;
+    lastProfileC = c;
+    lastProfileMinR = minR;
+    lastProfileMaxR = maxR;
 
     drawProfile(corrFinal, tau0Final, c, minR, maxR);
     drawHeatmap(minR, maxR);
@@ -1614,6 +1811,40 @@
     log("[stop] stopped");
   }
 
+  function drawProfilePlaceholder() {
+    clearCanvas(pctx, profileCanvas.width, profileCanvas.height);
+    const s = canvasPixelScale(profileCanvas);
+    pctx.fillStyle = "#bdbdbd";
+    pctx.font = `${12 * s}px system-ui`;
+    pctx.fillText("Range profile will appear here after Ping.", 54 * s, 22 * s);
+  }
+
+  function drawSanityPlaceholder() {
+    clearCanvas(cctx, calibPlot.width, calibPlot.height);
+    const s = canvasPixelScale(calibPlot);
+    cctx.fillStyle = "#bdbdbd";
+    cctx.font = `${12 * s}px system-ui`;
+    cctx.fillText("Sanity plot will appear after calibration.", 54 * s, 22 * s);
+  }
+
+  function redrawAllCanvases() {
+    if (lastProfileCorr && lastProfileCorr.length) {
+      drawProfile(lastProfileCorr, lastProfileTau0, lastProfileC, lastProfileMinR, lastProfileMaxR);
+    } else {
+      drawProfilePlaceholder();
+    }
+
+    const minR = parseFloat(el("minR").value);
+    const maxR = parseFloat(el("maxR").value);
+    drawHeatmap(minR, maxR);
+
+    if (calib.sanity.have && calib.sanity.curveL && calib.sanity.curveR) {
+      drawCalibSanityPlot(calib.sanity.curveL, calib.sanity.peakIdxL, calib.sanity.curveR, calib.sanity.peakIdxR, calib.sanity.earlyMs);
+    } else {
+      drawSanityPlaceholder();
+    }
+  }
+
   // ---------- UI wiring ----------
   btnInit.addEventListener("click", async () => {
     try { setStatus("initializing"); await initAudio(); }
@@ -1655,6 +1886,10 @@
 
   useCalibEl.addEventListener("change", () => renderCalibInfo());
 
+  window.addEventListener("resize", () => {
+    if (applyRetinaCanvases()) redrawAllCanvases();
+  });
+
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") resumeIfSuspended().catch(()=>{});
   });
@@ -1662,19 +1897,15 @@
   // ---------- Initial render ----------
   (async () => {
     setStatus("idle");
-    pctx.fillStyle = "#070707"; pctx.fillRect(0,0,profileCanvas.width,profileCanvas.height);
-    pctx.fillStyle = "#bdbdbd"; pctx.font = "12px system-ui";
-    pctx.fillText("Range profile will appear here after Ping.", 54, 22);
+    applyRetinaCanvases();
+    drawProfilePlaceholder();
 
     const minR = parseFloat(el("minR").value);
     const maxR = parseFloat(el("maxR").value);
     resetHeat([-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60]);
     drawHeatmap(minR, maxR);
 
-    clearCanvas(cctx, calibPlot.width, calibPlot.height);
-    cctx.fillStyle = "#bdbdbd";
-    cctx.font = "12px system-ui";
-    cctx.fillText("Sanity plot will appear after calibration.", 54, 22);
+    drawSanityPlaceholder();
 
     await refreshDeviceInfo();
     renderCalibInfo();
