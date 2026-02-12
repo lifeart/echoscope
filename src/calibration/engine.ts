@@ -444,10 +444,18 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     if (tdoaPair) {
       const corrQualL = correlationQuality(resL.corr, tdoaPair.idxL, sr);
       const corrQualR = correlationQuality(resR.corr, tdoaPair.idxR, sr);
+      const pairDelta = Math.abs(tdoaPair.tauL - tdoaPair.tauR);
+      const tdoaRatio = pairDelta / maxTDOA;
+
+      // Guardrail: if per-repeat |δτ| > 90% of physical max, mark suspicious.
+      // This can happen when one side picked a slightly different submode on a
+      // distributed source.  Still keep it (pilot anchoring is the primary gate),
+      // but log the warning for diagnostics.
+      const suspicious = tdoaRatio > 0.90;
+
       allRepeats.push({ tauL: tdoaPair.tauL, tauR: tdoaPair.tauR, qualL: corrQualL, qualR: corrQualR, valid: true });
-      const delta = Math.abs(tdoaPair.tauL - tdoaPair.tauR) * 1000;
       const dist = Math.abs((tdoaPair.tauL + tdoaPair.tauR) / 2 - pilotTau) * 1000;
-      console.debug(`[calib] repeat ${k + 1}/${repeats} OK: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${delta.toFixed(3)}ms distFromPilot=${dist.toFixed(3)}ms corrQual=${corrQualL.toFixed(3)}/${corrQualR.toFixed(3)} candsL=${candsL.length} candsR=${candsR.length}`);
+      console.debug(`[calib] repeat ${k + 1}/${repeats} OK: L@${(tdoaPair.tauL * 1000).toFixed(3)}ms(pk=${tdoaPair.peakL.toFixed(3)}) R@${(tdoaPair.tauR * 1000).toFixed(3)}ms(pk=${tdoaPair.peakR.toFixed(3)}) delta=${(pairDelta * 1000).toFixed(3)}ms(${(tdoaRatio * 100).toFixed(0)}%max) distFromPilot=${dist.toFixed(3)}ms corrQual=${corrQualL.toFixed(3)}/${corrQualR.toFixed(3)} candsL=${candsL.length} candsR=${candsR.length}${suspicious ? ' SUSPICIOUS(near max TDOA)' : ''}`);
     } else {
       // No valid TDOA pair within pilot window — discard this repeat
       const mL = earlyPeakFromCorrelation(resL.corr, earlyMs, sr);
@@ -602,17 +610,29 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const meanRange = (rL + rR) / 2;
   const tauSysCommon = Math.max(0, meanTau - meanRange / c);
 
-  // Also run legacy range-based geometry for error metric
+  // Legacy range-based geometry (for y estimation and backwards compat)
   const geo = estimateMicXY(rL, rR, d);
 
   const tauSysL = Math.max(0, medTauL - (rL / c));
   const tauSysR = Math.max(0, medTauR - (rR / c));
 
+  // --- Honest geometry quality metric ---
+  // The TDOA solver produces err≈0 by construction (it fits the exact
+  // constraint it was solved from).  Instead, measure per-repeat delta
+  // consistency: how well individual repeat deltas agree with the median.
+  // This captures submode instability across repeats.
+  const perRepeatDeltas = bestCluster.map(r => r.tauR - r.tauL);
+  const medDelta = perRepeatDeltas.length > 0 ? median(perRepeatDeltas) : 0;
+  const madDelta = perRepeatDeltas.length > 1 ? mad(perRepeatDeltas, medDelta) : Infinity;
+  // Normalize: MAD(delta) / maxTDOA.  A value of 0 = perfect agreement,
+  // 1.0 = delta spread equals the physical max TDOA.
+  const deltaConsistency = Number.isFinite(madDelta) ? madDelta / maxTDOA : 1.0;
+
   console.debug(`[calib] TDOA: deltaTau=${(deltaTau * 1000).toFixed(4)}ms deltaR=${(deltaR * 100).toFixed(2)}cm`);
   console.debug(`[calib] TDOA geometry: micX=${micX.toFixed(4)}m micYPrior=${micYPrior.toFixed(4)}m`);
   console.debug(`[calib] distances: rL=${rL.toFixed(4)}m rR=${rR.toFixed(4)}m tauSysCommon=${(tauSysCommon * 1000).toFixed(4)}ms`);
   console.debug(`[calib] system delays: L=${(tauSysL * 1000).toFixed(4)}ms R=${(tauSysR * 1000).toFixed(4)}ms delta=${((tauSysL - tauSysR) * 1000).toFixed(4)}ms`);
-  console.debug(`[calib] geometry: mic=(${geo.x.toFixed(4)}, ${geo.y.toFixed(4)}) err=${geo.err.toFixed(4)} spacing=${d.toFixed(3)}m`);
+  console.debug(`[calib] geometry: mic=(${micX.toFixed(4)}, ${(geo.y > 0 ? geo.y : micYPrior).toFixed(4)}) rangeBasedErr=${geo.err.toFixed(4)} deltaConsistency=${deltaConsistency.toFixed(4)} spacing=${d.toFixed(3)}m`);
 
   const mono = assessMonoDecision(medTauL, medTauR, medPkL, medPkR, d, c);
   console.debug(`[calib] mono assessment: monoLikely=${mono.monoLikely} dt=${(mono.dt * 1000).toFixed(4)}ms dp=${mono.dp.toFixed(4)} monoByTime=${mono.monoByTime} monoByPeak=${mono.monoByPeak}`);
@@ -620,7 +640,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const quality = computeCalibQuality({
     tauMadL: madTauL, tauMadR: madTauR,
     peakL: medPkL, peakR: medPkR,
-    geomErr: geo.err, monoLikely: mono.monoLikely,
+    geomErr: deltaConsistency, monoLikely: mono.monoLikely,
   });
   console.debug(`[calib] quality score: ${quality.toFixed(4)}`);
 
@@ -705,24 +725,23 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   }
 
   // Mark calibration invalid when measurements are clearly unreliable.
-  // Validity uses signal-quality checks (stability, cluster size, corrQual)
-  // as primary gates.  Geometry fit is advisory — on distributed sources
-  // (laptop speakers) the point-source model is inherently violated, so
-  // geomValid alone should not reject an otherwise stable calibration.
+  // Primary gates: signal-quality checks (stability, cluster size, corrQual,
+  // delta consistency).  Geometry fit is advisory — on distributed sources
+  // (laptop speakers) the point-source model is inherently violated.
   const maxMadMs = Number.isFinite(madTauL) && Number.isFinite(madTauR)
     ? 1000 * Math.max(madTauL, madTauR) : Infinity;
-  const geometryValid = geo.err < 1.0; // y² was non-negative (triangle inequality holds)
   const measurementsStable = maxMadMs < 2.0; // worst-channel MAD < 2ms
-  const micPlausible = Math.abs(geo.x) < d * 3; // mic X within 3× speaker spacing
+  const deltaConsistent = deltaConsistency < 0.5; // per-repeat deltas agree within 50% of maxTDOA
+  const micPlausible = Math.abs(micX) < d * 3; // mic X within 3× speaker spacing
   const enoughRepeats = clusterSize >= 2; // need ≥2 consistent repeats
   const corrQualOk = medPkL > 0.15 && medPkR > 0.15; // correlation quality above noise floor
 
-  // Accept if: enough consistent repeats + stable + decent corrQual + quality above floor
-  // Geometry acts as a secondary gate only (OR with micPlausible)
+  // Accept if: enough consistent repeats + stable + consistent deltas +
+  // decent corrQual + plausible mic position + quality above floor
   const valid = enoughRepeats && measurementsStable && corrQualOk
-    && (geometryValid || micPlausible) && quality > 0.15;
+    && deltaConsistent && micPlausible && quality > 0.15;
 
-  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} geomValid=${geometryValid} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
+  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.5=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15}`);
 
   const result: CalibrationResult = {
     valid,
@@ -734,7 +753,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     distances: { L: rL, R: rR },
     micPosition: { x: micX, y: geo.y > 0 ? geo.y : micYPrior },
     systemDelay: { common: tauSysCommon, L: tauSysL, R: tauSysR },
-    geometryError: geo.err,
+    geometryError: deltaConsistency,
     envBaseline,
     envBaselinePings,
     sanity,
