@@ -13,6 +13,12 @@
   <h1>Echolocation Lab — Stereo TX steering + matched filter (MBP + iPhone)</h1>
 </header>
 
+<!-- QR pairing display — top-level so it's immediately visible on phone -->
+<div id="peerQrBox" class="hidden" style="padding:20px;text-align:center;">
+  <canvas id="peerQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
+  <p id="peerQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
+</div>
+
 <main>
   <div class="grid">
 
@@ -591,6 +597,18 @@
           <button id="btnPeerDisconnect" disabled title="Close the current peer connection and reset signaling state.">Disconnect</button>
         </div>
 
+        <div class="row" style="margin-top:8px; align-items:flex-end;">
+          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Use connected peer microphones as additional channels during ping/scan.">
+            <input id="distributedEnabled" type="checkbox">
+            Use remote captures in ping/scan
+          </label>
+          <div>
+            <label title="How long to wait for peer capture responses before continuing.">Remote capture timeout (ms)</label>
+            <input id="distributedCaptureTimeoutMs" type="number" step="50" min="50" max="4000" value="300" title="Timeout for peer responses. Increase on high-latency networks.">
+          </div>
+        </div>
+        <p class="hint" style="margin-top:6px">Calibration is local-only per device. Run calibration on each device if needed.</p>
+
         <div id="peerSignalBox" style="display:none; margin-top:10px;">
           <label id="peerSignalLabel">Signal:</label>
           <textarea id="peerSignalText" class="mono" rows="3" title="Paste incoming signaling payload here, or copy the generated payload to send to another device." style="width:100%; font-size:11px; background:#111; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; resize:vertical;"></textarea>
@@ -600,11 +618,6 @@
           </div>
         </div>
 
-        <!-- QR display -->
-        <div id="peerQrBox" class="hidden" style="margin-top:10px;">
-          <canvas id="peerQrCanvas" width="256" height="256" style="display:block;max-width:256px;margin:0.5em 0;image-rendering:pixelated;"></canvas>
-          <p id="peerQrLabel" class="hint"></p>
-        </div>
         <!-- QR scanner (webcam) -->
         <div id="peerScanBox" class="hidden" style="margin-top:10px;">
           <video id="peerScanVideo" autoplay playsinline muted

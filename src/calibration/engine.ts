@@ -19,6 +19,7 @@ import { runBandCalibration, type RawPingCapture } from './band-runner.js';
 import { fuseBandResults, getSelectedBandResult } from './band-fusion.js';
 import { qualifyMultiplexCarriers } from './multiplex-carrier-selection.js';
 import { DEFAULT_MULTIPLEX, MULTIBAND_BANDS } from '../constants.js';
+import { peerManager } from '../network/peer-manager.js';
 import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo, MultiplexConfig } from '../types.js';
 
 interface GolaySumResult {
@@ -303,6 +304,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const minR = config.minRange;
   const maxR = config.maxRange;
   const heatBins = config.heatBins;
+
+  if (config.distributed.enabled && peerManager.getPeerCount() > 0) {
+    console.debug('[calib] peers connected: calibration runs local-only on this device (remote captures are ignored).');
+  }
 
   if (!(d > 0.02)) throw new Error('Speaker spacing d must be set (meters)');
   if (!(c > 200 && c < 400)) throw new Error('Speed of sound c looks wrong');

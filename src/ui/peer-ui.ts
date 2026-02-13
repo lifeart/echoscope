@@ -34,6 +34,7 @@ export function setupPeerUI(): void {
     if (flowState === 'answer-created' || flowState === 'offer-created' || flowState === 'waiting-answer') {
       flowState = 'connected';
       hideSignalBox();
+      hideQrBoxes();
       startStatusPolling();
       syncPeerButtons();
       log('[peer] Connected!');
@@ -58,8 +59,26 @@ export function syncPeerButtons(): void {
   if (disconnectBtn) disconnectBtn.disabled = flowState === 'idle';
 }
 
+function showQrLabel(text: string): void {
+  const qrLabel = el('peerQrLabel');
+  const qrBox = el('peerQrBox');
+  if (qrLabel) qrLabel.textContent = text;
+  if (qrBox) qrBox.classList.remove('hidden');
+}
+
+function hideQrLabel(): void {
+  const qrBox = el('peerQrBox');
+  if (qrBox) qrBox.classList.add('hidden');
+}
+
 async function handleCreateOffer(): Promise<void> {
+  const createBtn = el('btnPeerCreateOffer') as HTMLButtonElement | null;
   try {
+    // Show loading indicator
+    if (createBtn) createBtn.textContent = 'Creating offer\u2026';
+    showQrLabel('Generating offer\u2026');
+    syncPeerButtons();
+
     const { peerId, offerText } = await peerManager.createOffer();
     currentPeerId = peerId;
     flowState = 'offer-created';
@@ -70,25 +89,27 @@ async function handleCreateOffer(): Promise<void> {
 
     // Generate QR code with compressed offer URL
     try {
+      showQrLabel('Generating QR\u2026');
       const compressed = await compressSignal(offerText);
       const url = buildOfferUrl(compressed);
       const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
-      const qrBox = el('peerQrBox');
-      const qrLabel = el('peerQrLabel');
-      if (qrCanvas && qrBox) {
+      if (qrCanvas) {
         const { renderQrCode } = await import('./qr-code.js');
         await renderQrCode(qrCanvas, url);
-        qrBox.classList.remove('hidden');
-        if (qrLabel) qrLabel.textContent = 'Scan this QR from your phone';
+        showQrLabel('Scan this QR from your phone');
       }
       // Show scan button for scanning answer back
       const scanBox = el('peerScanBox');
       if (scanBox) scanBox.classList.remove('hidden');
     } catch (qrErr: any) {
+      hideQrLabel();
       log('[peer] QR generation failed (manual copy still works): ' + (qrErr?.message || qrErr));
     }
   } catch (e: any) {
     log('[peer:err] Create offer failed: ' + (e?.message || e));
+    hideQrLabel();
+  } finally {
+    if (createBtn) createBtn.textContent = 'Create Offer';
   }
 }
 
@@ -265,6 +286,9 @@ function hideQrBoxes(): void {
 /** Called from app.ts when URL has ?offer= param (phone scanned desktop QR) */
 export async function handleUrlOffer(offerParam: string): Promise<void> {
   try {
+    // Show immediate feedback while processing
+    showQrLabel('Connecting\u2026');
+
     const offerText = await decompressSignal(offerParam);
     const { peerId, answerText } = await peerManager.acceptOffer(offerText);
     currentPeerId = peerId;
@@ -274,26 +298,24 @@ export async function handleUrlOffer(offerParam: string): Promise<void> {
     const compressed = await compressSignal(answerText);
     const answerUrl = buildAnswerUrl(compressed);
     const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
-    const qrBox = el('peerQrBox');
-    const qrLabel = el('peerQrLabel');
-    if (qrCanvas && qrBox) {
+    if (qrCanvas) {
       const { renderQrCode } = await import('./qr-code.js');
       await renderQrCode(qrCanvas, answerUrl);
-      qrBox.classList.remove('hidden');
-      if (qrLabel) qrLabel.textContent = 'Show this QR to the other device';
+      showQrLabel('Show this QR to the other device');
     }
 
-    // Also show text fallback
+    // Also show text fallback in the details section
     showSignalBox('Answer (copy and send back):', answerText, false);
     log('[peer] Offer accepted via URL. Show the answer QR to the other device.');
     syncPeerButtons();
 
-    // Open diagnostics + peer section so QR is visible
+    // Open diagnostics + peer section so text fallback is accessible
     const peerSection = el('peerSection') as HTMLDetailsElement | null;
     const diagnostics = el('diagnostics') as HTMLDetailsElement | null;
-    if (peerSection) peerSection.open = true;
     if (diagnostics) diagnostics.open = true;
+    if (peerSection) peerSection.open = true;
   } catch (e: any) {
+    hideQrLabel();
     log('[peer:err] URL offer failed: ' + (e?.message || e));
   }
 }

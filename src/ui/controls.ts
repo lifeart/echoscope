@@ -104,6 +104,8 @@ export function syncDOMFromConfig(): void {
   setVal('scanStep', `${config.scanStep}`);
   setVal('scanPasses', `${config.scanPasses}`);
   setVal('dirAxis', `${config.directionAxis}`);
+  setChecked('distributedEnabled', config.distributed.enabled);
+  setVal('distributedCaptureTimeoutMs', `${config.distributed.captureTimeoutMs}`);
 
   setVal('strengthGate', `${config.strengthGate}`);
   setVal('confidenceGate', `${config.confidenceGate}`);
@@ -244,6 +246,10 @@ export function readConfigFromDOM(): void {
     s.config.scanStep = inputVal('scanStep');
     s.config.scanDwell = derived.scanDwell;
     s.config.scanPasses = clamp(inputVal('scanPasses', 1), 1, 8);
+    s.config.distributed.enabled = checkVal('distributedEnabled');
+    s.config.distributed.captureTimeoutMs = Math.floor(
+      clamp(inputVal('distributedCaptureTimeoutMs', current.distributed.captureTimeoutMs), 50, 4000),
+    );
     s.config.strengthGate = clamp(inputVal('strengthGate'), 0, 1);
     s.config.confidenceGate = clamp(inputVal('confidenceGate', current.confidenceGate), 0, 1);
     s.config.scanAggregateMode = aggregateMode;

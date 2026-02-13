@@ -26,9 +26,10 @@ async function handleCaptureRequest(peerId: string, request: CaptureRequest): Pr
   // Wait for orchestrator's probe + echo window to elapse
   await sleep(request.listenMs + CAPTURE_MARGIN_MS);
 
-  // Read local mic audio from ring buffer — wider window to capture early echoes
-  // that arrived during the CAPTURE_MARGIN_MS wait period
-  const totalMs = request.listenMs + CAPTURE_MARGIN_MS;
+  // Read local mic audio from ring buffer with pre-roll and post-roll margin:
+  // [request-arrival - CAPTURE_MARGIN_MS, request-arrival + listenMs + CAPTURE_MARGIN_MS].
+  // This keeps early direct-path energy even when signaling latency is non-zero.
+  const totalMs = request.listenMs + 2 * CAPTURE_MARGIN_MS;
   const listenSamples = computeListenSamples(totalMs, 0, sampleRate);
   const end = ring.position;
   const channels = ring.readMulti(end, listenSamples);

@@ -287,6 +287,7 @@ export function initApp(): void {
   const liveConfigControlIds = [
     'micArraySpacing', 'gain',
     'scanStep', 'scanPasses',
+    'distributedEnabled', 'distributedCaptureTimeoutMs',
     'strengthGate', 'confidenceGate',
     'scanClutterOn', 'scanClutterStrength',
     'qualityAlgo', 'scanAggregateMode', 'scanTrimFraction',

@@ -31,16 +31,30 @@ export async function initAudio(): Promise<void> {
   }
 
   const ac = new AudioContext({ latencyHint: 'interactive' });
+  // Resume immediately within the user-gesture call stack (required on iOS Safari)
+  if (ac.state !== 'running') await ac.resume();
   const sampleRate = ac.sampleRate;
 
-  const micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      channelCount: 2,
-    },
-  });
+  let micStream: MediaStream;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 2,
+      },
+    });
+  } catch {
+    // Fallback: some iOS devices reject channelCount or other constraints
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+  }
 
   const micSource = ac.createMediaStreamSource(micStream);
   const actualChannels = micSource.channelCount;

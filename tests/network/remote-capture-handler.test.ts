@@ -106,8 +106,8 @@ describe('remote-capture-handler', () => {
 
     await new Promise(r => setTimeout(r, 0));
 
-    // computeListenSamples should be called with totalMs = listenMs + CAPTURE_MARGIN_MS
-    expect(computeListenSamples).toHaveBeenCalledWith(listenMs + 100, 0, 48000);
+    // computeListenSamples should be called with totalMs = listenMs + 2*CAPTURE_MARGIN_MS
+    expect(computeListenSamples).toHaveBeenCalledWith(listenMs + 200, 0, 48000);
     // readMulti should be called with position and computed sample count
     expect(mockRingBuffer.readMulti).toHaveBeenCalledWith(
       96000,

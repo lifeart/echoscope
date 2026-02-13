@@ -1,6 +1,7 @@
 /**
  * Compress/decompress SDP signal text for QR transport.
- * Uses CompressionStream('deflate-raw') + base64url encoding.
+ * Uses CompressionStream (prefers deflate-raw, falls back to deflate)
+ * + base64url encoding.
  */
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -26,18 +27,43 @@ function fromBase64Url(str: string): Uint8Array {
   return bytes;
 }
 
-const hasCompressionStream = typeof CompressionStream !== 'undefined';
+const hasCompressionApi = typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
+let resolvedCompressionFormat: string | null | undefined;
+
+function resolveCompressionFormat(): string | null {
+  if (resolvedCompressionFormat !== undefined) return resolvedCompressionFormat;
+  if (!hasCompressionApi) {
+    resolvedCompressionFormat = null;
+    return null;
+  }
+
+  const candidates = ['deflate-raw', 'deflate'];
+  for (const format of candidates) {
+    try {
+      new CompressionStream(format as CompressionFormat);
+      new DecompressionStream(format as CompressionFormat);
+      resolvedCompressionFormat = format;
+      return format;
+    } catch {
+      // Try next format
+    }
+  }
+
+  resolvedCompressionFormat = null;
+  return null;
+}
 
 export async function compressSignal(signalText: string): Promise<string> {
   const encoded = new TextEncoder().encode(signalText);
-  if (!hasCompressionStream) {
+  const format = resolveCompressionFormat();
+  if (!format) {
     return toBase64Url(encoded);
   }
 
-  const cs = new CompressionStream('deflate-raw');
+  const cs = new CompressionStream(format as CompressionFormat);
   const writer = cs.writable.getWriter();
-  writer.write(encoded);
-  writer.close();
+  await writer.write(encoded);
+  await writer.close();
 
   const reader = cs.readable.getReader();
   const chunks: Uint8Array[] = [];
@@ -61,14 +87,17 @@ export async function compressSignal(signalText: string): Promise<string> {
 
 export async function decompressSignal(compressed: string): Promise<string> {
   const bytes = fromBase64Url(compressed);
-  if (!hasCompressionStream) {
+  const format = resolveCompressionFormat();
+  if (!format) {
     return new TextDecoder().decode(bytes);
   }
 
-  const ds = new DecompressionStream('deflate-raw');
+  const ds = new DecompressionStream(format as CompressionFormat);
   const writer = ds.writable.getWriter();
-  writer.write(bytes as ArrayBufferView<ArrayBuffer>);
-  writer.close();
+  const strictBytes = new Uint8Array(bytes.byteLength);
+  strictBytes.set(bytes);
+  await writer.write(strictBytes);
+  await writer.close();
 
   const reader = ds.readable.getReader();
   const chunks: Uint8Array[] = [];
