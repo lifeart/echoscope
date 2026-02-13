@@ -95,15 +95,15 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
     let pixMin = 255, pixMax = 0, pixNonZero = 0;
     for (let y = 0; y < pH; y++) {
-      const rowPos = (y / hDen) * rowDen;
-      const r0 = Math.floor(rowPos);
-      const r1 = Math.min(rows - 1, r0 + 1);
-      const fr = rowPos - r0;
+      const colPos = (y / hDen) * colDen;
+      const c0 = Math.floor(colPos);
+      const c1 = Math.min(cols - 1, c0 + 1);
+      const fc = colPos - c0;
       for (let x = 0; x < pW; x++) {
-        const colPos = (x / wDen) * colDen;
-        const c0 = Math.floor(colPos);
-        const c1 = Math.min(cols - 1, c0 + 1);
-        const fc = colPos - c0;
+        const rowPos = (x / wDen) * rowDen;
+        const r0 = Math.floor(rowPos);
+        const r1 = Math.min(rows - 1, r0 + 1);
+        const fr = rowPos - r0;
 
         const v00 = heatmap.display[r0 * cols + c0];
         const v01 = heatmap.display[r0 * cols + c1];
@@ -124,14 +124,13 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.putImageData(img, xPad, yPad);
   }
 
-  // X-axis ticks (range)
+  // X-axis ticks (angle)
   ctx.fillStyle = '#9e9e9e';
   ctx.font = `${10 * s}px system-ui`;
   ctx.textAlign = 'center';
-  const nxTicks = 6;
-  for (let t = 0; t <= nxTicks; t++) {
-    const frac = t / nxTicks;
-    const rangeVal = minR + frac * (maxR - minR);
+  const angleStep = rows <= 7 ? 1 : 2;
+  for (let ri = 0; ri < rows; ri += angleStep) {
+    const frac = ri / Math.max(1, rows - 1);
     const px = xPad + frac * plotW;
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 1 * s;
@@ -139,14 +138,15 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.moveTo(px, yBottom);
     ctx.lineTo(px, yBottom + 5 * s);
     ctx.stroke();
-    ctx.fillText(rangeVal.toFixed(1) + 'm', px, yBottom + 16 * s);
+    ctx.fillText(heatmap.angles[ri] + '\u00b0', px, yBottom + 16 * s);
   }
 
-  // Y-axis ticks (angle)
+  // Y-axis ticks (range)
   ctx.textAlign = 'right';
-  const angleStep = rows <= 7 ? 1 : 2;
-  for (let ri = 0; ri < rows; ri += angleStep) {
-    const frac = ri / Math.max(1, rows - 1);
+  const nyTicks = 6;
+  for (let t = 0; t <= nyTicks; t++) {
+    const frac = t / nyTicks;
+    const rangeVal = minR + frac * (maxR - minR);
     const py = yPad + frac * plotH;
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 1 * s;
@@ -155,7 +155,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.lineTo(xPad, py);
     ctx.stroke();
     ctx.fillStyle = '#9e9e9e';
-    ctx.fillText(heatmap.angles[ri] + '\u00b0', xPad - 8 * s, py + 4 * s);
+    ctx.fillText(rangeVal.toFixed(1) + 'm', xPad - 8 * s, py + 4 * s);
   }
 
   // Title
@@ -172,36 +172,17 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.fillText('Run a Scan to populate heatmap', xPad + plotW / 2, yPad + plotH / 2);
   }
 
-  // Best-target trace
+  // Best-target trace (dots only, no connecting lines)
   const colDen = Math.max(1, cols - 1);
   const rowDen = Math.max(1, rows - 1);
   const showTrace = (document.getElementById('showTrace') as HTMLInputElement)?.checked;
   if (showTrace && heatmap.bestBin && heatmap.bestBin.length === rows) {
     const gate = state.config.strengthGate;
-    ctx.lineWidth = 2 * s;
-    let prev: { x: number; y: number; conf: number } | null = null;
     for (let ri = 0; ri < rows; ri++) {
       const b = heatmap.bestBin[ri];
       if (b < 0) continue;
-      const x = xPad + (b / colDen) * plotW;
-      const y = yPad + (ri / rowDen) * plotH;
-      const conf = clamp((heatmap.bestVal[ri] - gate) / Math.max(1e-6, 1 - gate), 0, 1);
-      if (prev) {
-        const segConf = 0.5 * (prev.conf + conf);
-        ctx.strokeStyle = traceColorFromConfidence(segConf);
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-      }
-      prev = { x, y, conf };
-    }
-
-    for (let ri = 0; ri < rows; ri++) {
-      const b = heatmap.bestBin[ri];
-      if (b < 0) continue;
-      const x = xPad + (b / colDen) * plotW;
-      const y = yPad + (ri / rowDen) * plotH;
+      const x = xPad + (ri / rowDen) * plotW;
+      const y = yPad + (b / colDen) * plotH;
       const conf = clamp((heatmap.bestVal[ri] - gate) / Math.max(1e-6, 1 - gate), 0, 1);
       ctx.fillStyle = traceColorFromConfidence(conf);
       ctx.beginPath(); ctx.arc(x, y, 3 * s, 0, Math.PI * 2); ctx.fill();
@@ -244,8 +225,8 @@ function drawHeatmapCrosshair(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  const rangeFrac = (mx - xPad) / plotW;
-  const angleFrac = (my - yPad) / plotH;
+  const angleFrac = (mx - xPad) / plotW;
+  const rangeFrac = (my - yPad) / plotH;
   const range = minR + rangeFrac * (maxR - minR);
   const rows = heatmap.angles.length;
   const angleIdx = clamp(Math.round(angleFrac * (rows - 1)), 0, rows - 1);
