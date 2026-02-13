@@ -370,6 +370,19 @@ export function initApp(): void {
     });
   }
 
+  const vizDetailIds = ['profileDetails', 'heatmapDetails', 'geometryDetails'];
+  for (const detailId of vizDetailIds) {
+    const detailsEl = el(detailId) as HTMLDetailsElement | null;
+    if (!detailsEl) continue;
+    detailsEl.addEventListener('toggle', () => {
+      if (!detailsEl.open) return;
+      requestAnimationFrame(() => {
+        applyRetinaCanvases();
+        redrawAllCanvases();
+      });
+    });
+  }
+
   // ---- Keyboard shortcuts ----
   function clickIfEnabled(id: string): void {
     const btn = el(id) as HTMLButtonElement | null;
