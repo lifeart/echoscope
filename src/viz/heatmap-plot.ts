@@ -32,7 +32,7 @@ function heatLayout(s: number, w: number, h: number) {
   const xPad = Math.round(50 * s);
   const yPad = Math.round(22 * s);
   const xRight = Math.round(w - 12 * s);
-  const yBottom = Math.round(h - 34 * s);
+  const yBottom = Math.round(h - 46 * s);
   const plotW = xRight - xPad;
   const plotH = yBottom - yPad;
   return { xPad, yPad, xRight, yBottom, plotW, plotH };
@@ -95,7 +95,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
     let pixMin = 255, pixMax = 0, pixNonZero = 0;
     for (let y = 0; y < pH; y++) {
-      const colPos = (y / hDen) * colDen;
+      const colPos = (1 - y / hDen) * colDen;
       const c0 = Math.floor(colPos);
       const c1 = Math.min(cols - 1, c0 + 1);
       const fc = colPos - c0;
@@ -124,10 +124,8 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.putImageData(img, xPad, yPad);
   }
 
-  // X-axis ticks (angle)
-  ctx.fillStyle = '#9e9e9e';
-  ctx.font = `${10 * s}px system-ui`;
-  ctx.textAlign = 'center';
+  // X-axis ticks (angle, rotated 45°)
+  ctx.font = `${8 * s}px system-ui`;
   const angleStep = rows <= 7 ? 1 : 2;
   for (let ri = 0; ri < rows; ri += angleStep) {
     const frac = ri / Math.max(1, rows - 1);
@@ -138,7 +136,13 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.moveTo(px, yBottom);
     ctx.lineTo(px, yBottom + 5 * s);
     ctx.stroke();
-    ctx.fillText(heatmap.angles[ri] + '\u00b0', px, yBottom + 16 * s);
+    ctx.save();
+    ctx.translate(px, yBottom + 8 * s);
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillStyle = '#9e9e9e';
+    ctx.textAlign = 'right';
+    ctx.fillText(heatmap.angles[ri] + '\u00b0', 0, 0);
+    ctx.restore();
   }
 
   // Y-axis ticks (range)
@@ -146,7 +150,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
   const nyTicks = 6;
   for (let t = 0; t <= nyTicks; t++) {
     const frac = t / nyTicks;
-    const rangeVal = minR + frac * (maxR - minR);
+    const rangeVal = maxR - frac * (maxR - minR);
     const py = yPad + frac * plotH;
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 1 * s;
@@ -182,7 +186,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
       const b = heatmap.bestBin[ri];
       if (b < 0) continue;
       const x = xPad + (ri / rowDen) * plotW;
-      const y = yPad + (b / colDen) * plotH;
+      const y = yPad + (1 - b / colDen) * plotH;
       const conf = clamp((heatmap.bestVal[ri] - gate) / Math.max(1e-6, 1 - gate), 0, 1);
       ctx.fillStyle = traceColorFromConfidence(conf);
       ctx.beginPath(); ctx.arc(x, y, 3 * s, 0, Math.PI * 2); ctx.fill();
@@ -226,7 +230,7 @@ function drawHeatmapCrosshair(
   ctx.setLineDash([]);
 
   const angleFrac = (mx - xPad) / plotW;
-  const rangeFrac = (my - yPad) / plotH;
+  const rangeFrac = 1 - (my - yPad) / plotH;
   const range = minR + rangeFrac * (maxR - minR);
   const rows = heatmap.angles.length;
   const angleIdx = clamp(Math.round(angleFrac * (rows - 1)), 0, rows - 1);
