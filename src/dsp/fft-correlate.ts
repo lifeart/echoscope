@@ -1,9 +1,18 @@
 import { fft, ifft, nextPow2, zeroPad } from './fft.js';
 import type { CorrelationResult } from '../types.js';
 
-export function fftCorrelate(signal: Float32Array, reference: Float32Array, _sampleRate: number): CorrelationResult {
+export interface ComplexCorrelationResult extends CorrelationResult {
+  correlationImag: Float32Array;
+}
+
+export function fftCorrelateComplex(signal: Float32Array, reference: Float32Array, _sampleRate: number): ComplexCorrelationResult {
   if (signal.length === 0 || reference.length === 0 || signal.length < reference.length) {
-    return { correlation: new Float32Array(0), tau0: 0, method: 'fft' };
+    return {
+      correlation: new Float32Array(0),
+      correlationImag: new Float32Array(0),
+      tau0: 0,
+      method: 'fft',
+    };
   }
   const L = signal.length + reference.length - 1;
   const N = nextPow2(L);
@@ -28,10 +37,18 @@ export function fftCorrelate(signal: Float32Array, reference: Float32Array, _sam
 
   // Extract valid region (same as time-domain correlate output length)
   const validLen = signal.length - reference.length + 1;
-  const correlation = new Float32Array(Math.max(0, validLen));
+  const valid = Math.max(0, validLen);
+  const correlation = new Float32Array(valid);
+  const correlationImag = new Float32Array(valid);
   for (let i = 0; i < correlation.length; i++) {
     correlation[i] = outReal[i];
+    correlationImag[i] = outImag[i];
   }
 
-  return { correlation, tau0: 0, method: 'fft' };
+  return { correlation, correlationImag, tau0: 0, method: 'fft' };
+}
+
+export function fftCorrelate(signal: Float32Array, reference: Float32Array, sampleRate: number): CorrelationResult {
+  const out = fftCorrelateComplex(signal, reference, sampleRate);
+  return { correlation: out.correlation, tau0: 0, method: 'fft' };
 }

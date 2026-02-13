@@ -55,6 +55,34 @@ export interface RangeProfile {
   bestStrength: number;
 }
 
+export type VirtualArrayWindow = 'hann' | 'gaussian';
+
+export interface VirtualArrayConfig {
+  enabled: boolean;
+  halfWindow: number;
+  window: VirtualArrayWindow;
+  phaseCenterHz: number;
+  coherenceFloor: number;
+  maxTauShiftSamples: number;
+}
+
+export type SaftConfig = VirtualArrayConfig;
+
+export interface RawAngleFrame {
+  angleDeg: number;
+  sampleRate: number;
+  tau0: number;
+  corrReal: Float32Array;
+  corrImag: Float32Array;
+  centerFreqHz: number;
+  quality: number;
+}
+
+export interface PingDetailedResult {
+  profile: RangeProfile;
+  rawFrame: RawAngleFrame;
+}
+
 // --- Spatial ---
 export interface ArrayGeometry {
   speakers: Array<{ x: number; y: number; z: number }>;
@@ -296,6 +324,7 @@ export interface AppConfig {
   heatBins: number;
   speedOfSound: number;
   spacing: number;
+  virtualArray: VirtualArrayConfig;
 }
 
 // --- Events ---

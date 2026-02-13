@@ -45,6 +45,14 @@ const defaultConfig: AppConfig = {
   heatBins: DEFAULT_HEAT_BINS,
   speedOfSound: SPEED_OF_SOUND,
   spacing: 0.20,
+  virtualArray: {
+    enabled: false,
+    halfWindow: 3,
+    window: 'hann',
+    phaseCenterHz: 4000,
+    coherenceFloor: 0.25,
+    maxTauShiftSamples: 192,
+  },
 };
 
 function createInitialState(): AppState {
