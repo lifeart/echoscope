@@ -26,7 +26,15 @@ import { fuseBandResults, getSelectedBandResult } from './band-fusion.js';
 import { qualifyMultiplexCarriers } from './multiplex-carrier-selection.js';
 import { DEFAULT_MULTIPLEX, MULTIBAND_BANDS } from '../constants.js';
 import { peerManager } from '../network/peer-manager.js';
-import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo, MultiplexConfig } from '../types.js';
+import type {
+  CalibrationResult,
+  CalibrationSanity,
+  GolayConfig,
+  MicArrayCalibration,
+  MicChannelCalibration,
+  MultibandInfo,
+  MultiplexConfig,
+} from '../types.js';
 
 interface GolaySumResult {
   corr: Float32Array;
@@ -36,6 +44,12 @@ interface GolaySumResult {
 export interface RepeatMeasurement {
   tauL: number; tauR: number; qualL: number; qualR: number;
   tdoaRatio: number; valid: boolean;
+}
+
+interface SolvedMicGeometry {
+  micX: number;
+  rL: number;
+  rR: number;
 }
 
 /**
@@ -66,6 +80,242 @@ export function softFilterRepeats(
     return goodRepeats;
   }
   return cluster;
+}
+
+function solveMicGeometryFromDeltaR(
+  deltaR: number,
+  d: number,
+  micYPrior: number,
+): SolvedMicGeometry {
+  if (Math.abs(deltaR) < 1e-6) {
+    const r = Math.sqrt((d / 2) * (d / 2) + micYPrior * micYPrior);
+    return { micX: 0, rL: r, rR: r };
+  }
+
+  const A = d / deltaR;
+  const qa = A * A - 1;
+  const qb = A * deltaR - d;
+  const qc = (deltaR * deltaR - d * d) / 4 - micYPrior * micYPrior;
+
+  let micX: number;
+  if (Math.abs(qa) < 1e-12) {
+    micX = qb !== 0 ? -qc / qb : 0;
+  } else {
+    const disc = qb * qb - 4 * qa * qc;
+    if (disc < 0) {
+      micX = -deltaR / 2;
+    } else {
+      const sqrtDisc = Math.sqrt(disc);
+      const x1 = (-qb + sqrtDisc) / (2 * qa);
+      const x2 = (-qb - sqrtDisc) / (2 * qa);
+      const rL1 = -(A * x1 + deltaR / 2);
+      const rL2 = -(A * x2 + deltaR / 2);
+      if (rL1 > 0 && rL2 > 0) {
+        micX = Math.abs(x1) <= Math.abs(x2) ? x1 : x2;
+      } else if (rL1 > 0) {
+        micX = x1;
+      } else if (rL2 > 0) {
+        micX = x2;
+      } else {
+        micX = -deltaR / 2;
+      }
+    }
+  }
+
+  const rL = Math.sqrt((micX + d / 2) * (micX + d / 2) + micYPrior * micYPrior);
+  const rR = Math.sqrt((micX - d / 2) * (micX - d / 2) + micYPrior * micYPrior);
+  return { micX, rL, rR };
+}
+
+function clusterRepeatMeasurements(
+  repeats: RepeatMeasurement[],
+  clusterWindow: number,
+): RepeatMeasurement[] {
+  const validRepeats = repeats.filter(r => r.valid);
+  if (validRepeats.length === 0) return [];
+
+  let bestCluster: RepeatMeasurement[] = [];
+  for (let i = 0; i < validRepeats.length; i++) {
+    const seedMean = (validRepeats[i].tauL + validRepeats[i].tauR) / 2;
+    const members = validRepeats.filter(r => {
+      const mean = (r.tauL + r.tauR) / 2;
+      return Math.abs(mean - seedMean) <= clusterWindow;
+    });
+    if (members.length < 2) {
+      if (members.length > bestCluster.length) bestCluster = members;
+      continue;
+    }
+
+    const memberMeans = members.map(r => (r.tauL + r.tauR) / 2);
+    const clusterCenter = median(memberMeans);
+    const verified = members.filter(r => {
+      const mean = (r.tauL + r.tauR) / 2;
+      return Math.abs(mean - clusterCenter) <= clusterWindow;
+    });
+
+    if (verified.length > bestCluster.length ||
+        (verified.length === bestCluster.length && verified.length > 0 &&
+         median(verified.map(r => (r.tauL + r.tauR) / 2)) <
+         median(bestCluster.map(r => (r.tauL + r.tauR) / 2)))) {
+      bestCluster = verified;
+    }
+  }
+
+  return bestCluster;
+}
+
+export interface BuildMicArrayCalibrationParams {
+  repeatsByChannel: RepeatMeasurement[][];
+  clusterWindow: number;
+  maxTDOA: number;
+  d: number;
+  c: number;
+  micYPrior: number;
+  fallbackTauMeasured: { L: number; R: number };
+  previous?: MicArrayCalibration;
+  nowMs?: number;
+}
+
+export function buildMicArrayCalibrationFromRepeats(params: BuildMicArrayCalibrationParams): MicArrayCalibration | undefined {
+  const {
+    repeatsByChannel,
+    clusterWindow,
+    maxTDOA,
+    d,
+    c,
+    micYPrior,
+    fallbackTauMeasured,
+    previous,
+    nowMs,
+  } = params;
+
+  if (repeatsByChannel.length <= 1) return undefined;
+
+  const channelCalibrations: MicChannelCalibration[] = [];
+
+  for (let ch = 0; ch < repeatsByChannel.length; ch++) {
+    const repeatsForChannel = repeatsByChannel[ch] ?? [];
+    let chCluster = clusterRepeatMeasurements(repeatsForChannel, clusterWindow);
+    chCluster = softFilterRepeats(chCluster, maxTDOA);
+
+    const chTauL = chCluster.map(r => r.tauL);
+    const chTauR = chCluster.map(r => r.tauR);
+    const chPkL = chCluster.map(r => r.qualL);
+    const chPkR = chCluster.map(r => r.qualR);
+    const chMedTauL = chTauL.length > 0 ? median(chTauL) : fallbackTauMeasured.L;
+    const chMedTauR = chTauR.length > 0 ? median(chTauR) : fallbackTauMeasured.R;
+    const chMedPkL = chPkL.length > 0 ? median(chPkL) : 0;
+    const chMedPkR = chPkR.length > 0 ? median(chPkR) : 0;
+    const chMadTauL = chTauL.length > 1 ? mad(chTauL, chMedTauL) : Infinity;
+    const chMadTauR = chTauR.length > 1 ? mad(chTauR, chMedTauR) : Infinity;
+
+    const chPerRepeatDeltas = chCluster.map(r => r.tauR - r.tauL);
+    const chMedDelta = chPerRepeatDeltas.length > 0 ? median(chPerRepeatDeltas) : 0;
+    const chMadDelta = chPerRepeatDeltas.length > 1 ? mad(chPerRepeatDeltas, chMedDelta) : Infinity;
+    const chDeltaConsistency = Number.isFinite(chMadDelta) ? chMadDelta / maxTDOA : 1.0;
+
+    const chDeltaTau = chMedTauR - chMedTauL;
+    const chDeltaR = chDeltaTau * c;
+    const chSolvedMic = solveMicGeometryFromDeltaR(chDeltaR, d, micYPrior);
+    const chMeanTau = (chMedTauL + chMedTauR) / 2;
+    const chMeanRange = (chSolvedMic.rL + chSolvedMic.rR) / 2;
+    const chSysCommon = Math.max(0, chMeanTau - chMeanRange / c);
+    const chSysL = Math.max(0, chMedTauL - chSolvedMic.rL / c);
+    const chSysR = Math.max(0, chMedTauR - chSolvedMic.rR / c);
+
+    const chQuality = computeCalibQuality({
+      tauMadL: chMadTauL,
+      tauMadR: chMadTauR,
+      peakL: chMedPkL,
+      peakR: chMedPkR,
+      geomErr: chDeltaConsistency,
+      monoLikely: false,
+    });
+
+    const chValid =
+      chCluster.length >= 2 &&
+      chMedPkL > 0.12 &&
+      chMedPkR > 0.12 &&
+      chDeltaConsistency < 0.5 &&
+      chQuality > 0.12;
+
+    channelCalibrations.push({
+      channelIndex: ch,
+      valid: chValid,
+      quality: chQuality,
+      tauMeasured: { L: chMedTauL, R: chMedTauR },
+      tauMAD: { L: chMadTauL, R: chMadTauR },
+      distances: { L: chSolvedMic.rL, R: chSolvedMic.rR },
+      micPosition: { x: chSolvedMic.micX, y: micYPrior },
+      systemDelay: { common: chSysCommon, L: chSysL, R: chSysR },
+      relativeDelaySec: 0,
+      repeatClusterSize: chCluster.length,
+      geometryError: chDeltaConsistency,
+    });
+  }
+
+  if (channelCalibrations.length === 0) return undefined;
+
+  const refChannel =
+    channelCalibrations.find(ch => ch.channelIndex === 0 && ch.valid)
+    ?? channelCalibrations.find(ch => ch.valid)
+    ?? channelCalibrations[0];
+
+  for (const ch of channelCalibrations) {
+    ch.relativeDelaySec = ch.systemDelay.common - refChannel.systemDelay.common;
+  }
+
+  const timestampMs = nowMs ?? Date.now();
+  if (previous && previous.channels.length === channelCalibrations.length) {
+    let maxMicShiftM = 0;
+    let maxDelayShiftMs = 0;
+    for (const ch of channelCalibrations) {
+      const prev = previous.channels.find(p => p.channelIndex === ch.channelIndex);
+      if (!prev) continue;
+      const dx = ch.micPosition.x - prev.micPosition.x;
+      const dy = ch.micPosition.y - prev.micPosition.y;
+      maxMicShiftM = Math.max(maxMicShiftM, Math.sqrt(dx * dx + dy * dy));
+      maxDelayShiftMs = Math.max(maxDelayShiftMs, Math.abs(ch.relativeDelaySec - prev.relativeDelaySec) * 1000);
+    }
+
+    const suspiciousDrift = maxMicShiftM > 0.08 || maxDelayShiftMs > 0.35;
+    const prevValidCount = previous.channels.filter(ch => ch.valid).length;
+    const nextValidCount = channelCalibrations.filter(ch => ch.valid).length;
+
+    if (suspiciousDrift && prevValidCount >= nextValidCount) {
+      return {
+        channels: previous.channels.map(ch => ({
+          ...ch,
+          tauMeasured: { ...ch.tauMeasured },
+          tauMAD: { ...ch.tauMAD },
+          distances: { ...ch.distances },
+          micPosition: { ...ch.micPosition },
+          systemDelay: { ...ch.systemDelay },
+        })),
+        generatedAtMs: timestampMs,
+        driftFromPrevious: {
+          maxMicShiftM,
+          maxDelayShiftMs,
+          resetApplied: true,
+        },
+      };
+    }
+
+    return {
+      channels: channelCalibrations,
+      generatedAtMs: timestampMs,
+      driftFromPrevious: {
+        maxMicShiftM,
+        maxDelayShiftMs,
+        resetApplied: false,
+      },
+    };
+  }
+
+  return {
+    channels: channelCalibrations,
+    generatedAtMs: timestampMs,
+  };
 }
 
 function golaySumCorrelation(
@@ -494,6 +744,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
 
   // RepeatMeasurement is now exported at module scope
   const allRepeats: RepeatMeasurement[] = [];
+  const perChannelRepeats: RepeatMeasurement[][] = [];
 
   console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin) pilotAnchor=${(pilotTau * 1000).toFixed(3)}ms pilotWin=${(PILOT_WIN * 1000).toFixed(3)}ms`);
 
@@ -511,6 +762,47 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
     const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
+
+    const channelCount = Math.min(
+      capLA.micChannels.length,
+      capLB.micChannels.length,
+      capRA.micChannels.length,
+      capRB.micChannels.length,
+    );
+    for (let ch = 0; ch < channelCount; ch++) {
+      if (!perChannelRepeats[ch]) perChannelRepeats[ch] = [];
+      const chResL = golaySumCorrelation(capLA.micChannels[ch], capLB.micChannels[ch], a, b, sr);
+      const chResR = golaySumCorrelation(capRA.micChannels[ch], capRB.micChannels[ch], a, b, sr);
+      const chCandsL = findCandidatePeaks(chResL.corr, earlyMs, sr);
+      const chCandsR = findCandidatePeaks(chResR.corr, earlyMs, sr);
+      const chPair = selectTDOAPair(chCandsL, chCandsR, maxTDOA, pilotTau, PILOT_WIN);
+
+      if (chPair) {
+        const corrQualL = correlationQuality(chResL.corr, chPair.idxL, sr);
+        const corrQualR = correlationQuality(chResR.corr, chPair.idxR, sr);
+        const pairDelta = Math.abs(chPair.tauL - chPair.tauR);
+        const tdoaRatio = pairDelta / maxTDOA;
+        perChannelRepeats[ch].push({
+          tauL: chPair.tauL,
+          tauR: chPair.tauR,
+          qualL: corrQualL,
+          qualR: corrQualR,
+          tdoaRatio,
+          valid: true,
+        });
+      } else {
+        const chPeakL = earlyPeakFromCorrelation(chResL.corr, earlyMs, sr);
+        const chPeakR = earlyPeakFromCorrelation(chResR.corr, earlyMs, sr);
+        perChannelRepeats[ch].push({
+          tauL: chPeakL.tau,
+          tauR: chPeakR.tau,
+          qualL: 0,
+          qualR: 0,
+          tdoaRatio: Infinity,
+          valid: false,
+        });
+      }
+    }
 
     // Save raw captures for multiband
     rawRepeatCaptures.push({
@@ -554,34 +846,9 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   // Finds the largest group of repeats whose mean arrival times all satisfy
   // |meanTau - clusterCenter| ≤ window (diameter constraint, not single-linkage).
   // Eliminates mode-hopping between direct path and reflections across repeats.
-  const validRepeats = allRepeats.filter(r => r.valid);
   const CLUSTER_WINDOW = 0.0005; // 0.5ms radius
-  let bestCluster: RepeatMeasurement[] = [];
-
-  for (let i = 0; i < validRepeats.length; i++) {
-    const seedMean = (validRepeats[i].tauL + validRepeats[i].tauR) / 2;
-    const members = validRepeats.filter(r => {
-      const mean = (r.tauL + r.tauR) / 2;
-      return Math.abs(mean - seedMean) <= CLUSTER_WINDOW;
-    });
-    if (members.length < 2) {
-      if (members.length > bestCluster.length) bestCluster = members;
-      continue;
-    }
-    // Verify diameter: recompute cluster center as median, check all members fit
-    const memberMeans = members.map(r => (r.tauL + r.tauR) / 2);
-    const clusterCenter = median(memberMeans);
-    const verified = members.filter(r => {
-      const mean = (r.tauL + r.tauR) / 2;
-      return Math.abs(mean - clusterCenter) <= CLUSTER_WINDOW;
-    });
-    if (verified.length > bestCluster.length ||
-        (verified.length === bestCluster.length && verified.length > 0 &&
-         median(verified.map(r => (r.tauL + r.tauR) / 2)) <
-         median(bestCluster.map(r => (r.tauL + r.tauR) / 2)))) {
-      bestCluster = verified;
-    }
-  }
+  const validRepeats = allRepeats.filter(r => r.valid);
+  let bestCluster = clusterRepeatMeasurements(allRepeats, CLUSTER_WINDOW);
 
   bestCluster = softFilterRepeats(bestCluster, maxTDOA);
 
@@ -621,74 +888,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const micYPrior = (presetMicY !== null && presetMicY !== undefined && Number.isFinite(presetMicY))
     ? presetMicY : 0.01; // fallback: 1cm above speaker line
 
-  // Closed-form TDOA geometry with y prior.
-  //
-  // Speakers at S_L = (−d/2, 0) and S_R = (+d/2, 0), mic at (x, y).
-  //   rL = sqrt((x + d/2)² + y²)
-  //   rR = sqrt((x − d/2)² + y²)
-  //   deltaR = rR − rL
-  //
-  // From rR² − rL² = −2dx and deltaR = rR − rL:
-  //   sumR = rL + rR = −2dx / deltaR      [when deltaR ≠ 0]
-  //   rL = (sumR − deltaR) / 2
-  //
-  // Then from rL² = (x + d/2)² + y²:
-  //   ((−2dx/deltaR − deltaR) / 2)² = (x + d/2)² + y²
-  //
-  // This reduces to a quadratic in x (see derivation below).
-  // When |deltaR| is very small (broadside), use x ≈ 0.
-  let micX: number;
-  let rL: number;
-  let rR: number;
-
-  if (Math.abs(deltaR) < 1e-6) {
-    // Near-broadside: TDOA ≈ 0, mic is centered
-    micX = 0;
-    rL = Math.sqrt((d / 2) * (d / 2) + micYPrior * micYPrior);
-    rR = rL;
-  } else {
-    // From the constraint equations, substituting sumR = -2dx/deltaR:
-    //   rL = (-2dx/deltaR - deltaR) / 2 = -(dx/deltaR + deltaR/2)
-    //   rL² = (x + d/2)² + y²
-    //
-    // Let A = d/deltaR. Then rL = -(Ax + deltaR/2).
-    // Squaring: A²x² + A·deltaR·x + deltaR²/4 = x² + dx + d²/4 + y²
-    //   (A² − 1)x² + (A·deltaR − d)x + (deltaR²/4 − d²/4 − y²) = 0
-    const A = d / deltaR;
-    const qa = A * A - 1;
-    const qb = A * deltaR - d;
-    const qc = (deltaR * deltaR - d * d) / 4 - micYPrior * micYPrior;
-
-    if (Math.abs(qa) < 1e-12) {
-      // Linear case (deltaR ≈ ±d): x = -qc/qb
-      micX = qb !== 0 ? -qc / qb : 0;
-    } else {
-      const disc = qb * qb - 4 * qa * qc;
-      if (disc < 0) {
-        // No real solution (y prior too large for this TDOA) — use linear approx
-        micX = -deltaR / 2;
-      } else {
-        const sqrtDisc = Math.sqrt(disc);
-        const x1 = (-qb + sqrtDisc) / (2 * qa);
-        const x2 = (-qb - sqrtDisc) / (2 * qa);
-        // Pick solution where rL > 0: rL = -(A*x + deltaR/2)
-        const rL1 = -(A * x1 + deltaR / 2);
-        const rL2 = -(A * x2 + deltaR / 2);
-        if (rL1 > 0 && rL2 > 0) {
-          // Both valid — prefer the one closer to center (more likely for a mic)
-          micX = Math.abs(x1) <= Math.abs(x2) ? x1 : x2;
-        } else if (rL1 > 0) {
-          micX = x1;
-        } else if (rL2 > 0) {
-          micX = x2;
-        } else {
-          micX = -deltaR / 2; // fallback
-        }
-      }
-    }
-    rL = Math.sqrt((micX + d / 2) * (micX + d / 2) + micYPrior * micYPrior);
-    rR = Math.sqrt((micX - d / 2) * (micX - d / 2) + micYPrior * micYPrior);
-  }
+  const solvedMic = solveMicGeometryFromDeltaR(deltaR, d, micYPrior);
+  const micX = solvedMic.micX;
+  const rL = solvedMic.rL;
+  const rR = solvedMic.rR;
 
   // System delay: meanTau minus mean range / c
   const meanTau = (medTauL + medTauR) / 2;
@@ -903,47 +1106,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       // Recompute geometry from the selected band's TDOA
       const mbDeltaTau = sel.deltaTau;
       const mbDeltaR = mbDeltaTau * c;
-
-      let mbMicX: number;
-      let mbRL: number;
-      let mbRR: number;
-
-      if (Math.abs(mbDeltaR) < 1e-6) {
-        mbMicX = 0;
-        mbRL = Math.sqrt((d / 2) * (d / 2) + micYPrior * micYPrior);
-        mbRR = mbRL;
-      } else {
-        const mbA = d / mbDeltaR;
-        const mbQa = mbA * mbA - 1;
-        const mbQb = mbA * mbDeltaR - d;
-        const mbQc = (mbDeltaR * mbDeltaR - d * d) / 4 - micYPrior * micYPrior;
-
-        if (Math.abs(mbQa) < 1e-12) {
-          mbMicX = mbQb !== 0 ? -mbQc / mbQb : 0;
-        } else {
-          const mbDisc = mbQb * mbQb - 4 * mbQa * mbQc;
-          if (mbDisc < 0) {
-            mbMicX = -mbDeltaR / 2;
-          } else {
-            const mbSqrtDisc = Math.sqrt(mbDisc);
-            const mbX1 = (-mbQb + mbSqrtDisc) / (2 * mbQa);
-            const mbX2 = (-mbQb - mbSqrtDisc) / (2 * mbQa);
-            const mbRL1 = -(mbA * mbX1 + mbDeltaR / 2);
-            const mbRL2 = -(mbA * mbX2 + mbDeltaR / 2);
-            if (mbRL1 > 0 && mbRL2 > 0) {
-              mbMicX = Math.abs(mbX1) <= Math.abs(mbX2) ? mbX1 : mbX2;
-            } else if (mbRL1 > 0) {
-              mbMicX = mbX1;
-            } else if (mbRL2 > 0) {
-              mbMicX = mbX2;
-            } else {
-              mbMicX = -mbDeltaR / 2;
-            }
-          }
-        }
-        mbRL = Math.sqrt((mbMicX + d / 2) * (mbMicX + d / 2) + micYPrior * micYPrior);
-        mbRR = Math.sqrt((mbMicX - d / 2) * (mbMicX - d / 2) + micYPrior * micYPrior);
-      }
+      const mbSolvedMic = solveMicGeometryFromDeltaR(mbDeltaR, d, micYPrior);
+      const mbMicX = mbSolvedMic.micX;
+      const mbRL = mbSolvedMic.rL;
+      const mbRR = mbSolvedMic.rR;
 
       // Apply multiband overrides
       mbValid = sel.valid;
@@ -962,6 +1128,32 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
         R: Math.max(0, sel.tauMeasured.R - mbRR / c),
       };
     }
+  }
+
+  const micArrayCalibration = buildMicArrayCalibrationFromRepeats({
+    repeatsByChannel: perChannelRepeats,
+    clusterWindow: CLUSTER_WINDOW,
+    maxTDOA,
+    d,
+    c,
+    micYPrior,
+    fallbackTauMeasured: mbTauMeasured,
+    previous: state.calibration?.micArrayCalibration,
+  });
+
+  if (micArrayCalibration) {
+    const validChannels = micArrayCalibration.channels.filter(ch => ch.valid).length;
+    const refChannel =
+      micArrayCalibration.channels.find(ch => ch.channelIndex === 0 && ch.valid)
+      ?? micArrayCalibration.channels.find(ch => ch.valid)
+      ?? micArrayCalibration.channels[0];
+
+    if (micArrayCalibration.driftFromPrevious?.resetApplied) {
+      const drift = micArrayCalibration.driftFromPrevious;
+      console.debug(`[calib] mic-array drift guard: fallback to previous calibration (shift=${drift.maxMicShiftM.toFixed(4)}m, delayShift=${drift.maxDelayShiftMs.toFixed(3)}ms)`);
+    }
+
+    console.debug(`[calib] mic-array: channels=${micArrayCalibration.channels.length}, valid=${validChannels}, refDelay=0 at ch${refChannel.channelIndex}`);
   }
 
   let carrierCalibration = undefined;
@@ -1012,10 +1204,16 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     envBaselinePings,
     sanity,
     multiband: multibandInfo,
+    micArrayCalibration,
     carrierCalibration,
   };
 
   console.debug(`[calib] result: valid=${result.valid} quality=${result.quality.toFixed(3)} mono=${result.monoLikely} rL=${result.distances.L.toFixed(4)}m rR=${result.distances.R.toFixed(4)}m sysDelay={L:${(result.systemDelay.L * 1000).toFixed(3)}ms R:${(result.systemDelay.R * 1000).toFixed(3)}ms common:${(result.systemDelay.common * 1000).toFixed(3)}ms}`);
+  if (result.micArrayCalibration) {
+    const validCount = result.micArrayCalibration.channels.filter(ch => ch.valid).length;
+    const drift = result.micArrayCalibration.driftFromPrevious;
+    console.debug(`[calib] mic-array result: validChannels=${validCount}/${result.micArrayCalibration.channels.length}${drift ? ` drift={mic:${(drift.maxMicShiftM * 100).toFixed(2)}cm delay:${drift.maxDelayShiftMs.toFixed(3)}ms guard:${drift.resetApplied}}` : ''}`);
+  }
 
   store.set('calibration', result);
   store.set('status', 'ready');

@@ -187,6 +187,32 @@ export interface MultibandInfo {
   selectionReason: 'agreement' | 'best-quality' | 'only-valid' | 'fallback';
 }
 
+export interface MicChannelCalibration {
+  channelIndex: number;
+  valid: boolean;
+  quality: number;
+  tauMeasured: { L: number; R: number };
+  tauMAD: { L: number; R: number };
+  distances: { L: number; R: number };
+  micPosition: { x: number; y: number };
+  systemDelay: { common: number; L: number; R: number };
+  relativeDelaySec: number;
+  repeatClusterSize: number;
+  geometryError: number;
+}
+
+export interface MicArrayCalibrationDrift {
+  maxMicShiftM: number;
+  maxDelayShiftMs: number;
+  resetApplied: boolean;
+}
+
+export interface MicArrayCalibration {
+  channels: MicChannelCalibration[];
+  generatedAtMs: number;
+  driftFromPrevious?: MicArrayCalibrationDrift;
+}
+
 export interface CalibrationResult {
   valid: boolean;
   quality: number;
@@ -208,6 +234,8 @@ export interface CalibrationResult {
   sanity: CalibrationSanity;
   /** Multiband info (present when multiband calibration was used) */
   multiband?: MultibandInfo;
+  /** Per-channel mic array calibration for beamforming compensation */
+  micArrayCalibration?: MicArrayCalibration;
   /** Carrier qualification results for multiplex mode */
   carrierCalibration?: CarrierCalibrationResult;
 }

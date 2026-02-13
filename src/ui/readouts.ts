@@ -95,6 +95,18 @@ export function renderCalibInfo(): void {
   lines.push(`tauSysL\u2248${(calib.systemDelay.L * 1e3).toFixed(2)}ms, tauSysR\u2248${(calib.systemDelay.R * 1e3).toFixed(2)}ms`);
   lines.push(`rL\u2248${calib.distances.L.toFixed(3)}m, rR\u2248${calib.distances.R.toFixed(3)}m`);
   lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, deltaConsistency\u2248${calib.geometryError.toFixed(4)}`);
+  if (calib.micArrayCalibration && calib.micArrayCalibration.channels.length > 1) {
+    const channels = [...calib.micArrayCalibration.channels].sort((a, b) => a.channelIndex - b.channelIndex);
+    const validCount = channels.filter(ch => ch.valid).length;
+    lines.push(`mic-array calibration: ${validCount}/${channels.length} valid channels`);
+    for (const ch of channels) {
+      lines.push(`  ch${ch.channelIndex}: valid=${ch.valid ? 'Y' : 'N'} q=${ch.quality.toFixed(3)} mic\u2248(${ch.micPosition.x.toFixed(3)}, ${ch.micPosition.y.toFixed(3)})m delay=${(ch.relativeDelaySec * 1e3).toFixed(3)}ms`);
+    }
+    if (calib.micArrayCalibration.driftFromPrevious) {
+      const drift = calib.micArrayCalibration.driftFromPrevious;
+      lines.push(`  drift: maxMicShift=${(drift.maxMicShiftM * 100).toFixed(2)}cm maxDelayShift=${drift.maxDelayShiftMs.toFixed(3)}ms guard=${drift.resetApplied ? 'applied' : 'ok'}`);
+    }
+  }
   if (calib.envBaseline && calib.envBaselinePings > 0) {
     const filteredTag = calib.envBaselineFiltered ? 'filtered' : 'raw';
     lines.push(`env baseline = YES (${calib.envBaselinePings} pings, active=${filteredTag})`);
@@ -104,7 +116,8 @@ export function renderCalibInfo(): void {
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
   const micSp = state.config.micArraySpacing;
   const chCount = state.audio.channelCount;
-  lines.push(`RX beamforming: ${(micSp > 0 && chCount >= 2) ? `ON (${chCount}ch, mic spacing=${micSp.toFixed(3)}m)` : 'OFF'}`);
+  const calibratedMicArray = calib.micArrayCalibration?.channels.length ?? 0;
+  lines.push(`RX beamforming: ${((micSp > 0 && chCount >= 2) || calibratedMicArray >= 2) ? `ON (${chCount}ch${calibratedMicArray >= 2 ? ', calibrated array' : `, mic spacing=${micSp.toFixed(3)}m`})` : 'OFF'}`);
 
   // Multiband info
   if (calib.multiband) {

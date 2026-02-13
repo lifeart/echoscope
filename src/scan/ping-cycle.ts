@@ -52,20 +52,55 @@ export function resetClutter(): void {
   noiseKalmanState = null;
 }
 
-export function buildRxGeometry(micArraySpacing: number, speedOfSound: number): ArrayGeometry | null {
-  if (micArraySpacing <= 0) return null;
+export function buildRxGeometry(
+  micArraySpacing: number,
+  speedOfSound: number,
+  channelCount: number,
+): ArrayGeometry | null {
+  if (channelCount < 2) return null;
   const geom = store.get().geometry;
+  const state = store.get();
   const mic = geom.microphones[0] ?? { x: 0, y: 0, z: 0 };
-  const half = micArraySpacing / 2;
+
+  const micArrayCal = state.calibration?.valid ? state.calibration.micArrayCalibration : undefined;
+  if (micArrayCal && micArrayCal.channels.length === channelCount) {
+    const sortedChannels = [...micArrayCal.channels].sort((a, b) => a.channelIndex - b.channelIndex);
+    return {
+      speakers: geom.speakers,
+      microphones: sortedChannels.map(ch => ({ x: ch.micPosition.x, y: ch.micPosition.y, z: mic.z })),
+      spacing: geom.spacing,
+      speedOfSound,
+    };
+  }
+
+  const localChannelCount = state.audio.channelCount;
+  if (state.audio.isRunning && channelCount > localChannelCount) return null;
+  if (micArraySpacing <= 0) return null;
+
+  const center = 0.5 * (channelCount - 1);
+  const microphones = new Array(channelCount).fill(0).map((_, i) => ({
+    x: mic.x + (i - center) * micArraySpacing,
+    y: mic.y,
+    z: mic.z,
+  }));
+
   return {
     speakers: geom.speakers,
-    microphones: [
-      { x: mic.x - half, y: mic.y, z: mic.z },
-      { x: mic.x + half, y: mic.y, z: mic.z },
-    ],
+    microphones,
     spacing: geom.spacing,
     speedOfSound,
   };
+}
+
+function getRxChannelDelaySec(channelCount: number): number[] | undefined {
+  const calib = store.get().calibration;
+  if (!calib?.valid) return undefined;
+  const micArrayCal = calib.micArrayCalibration;
+  if (!micArrayCal || micArrayCal.channels.length !== channelCount) return undefined;
+
+  const sorted = [...micArrayCal.channels].sort((a, b) => a.channelIndex - b.channelIndex);
+  if (sorted.some(ch => !ch.valid)) return undefined;
+  return sorted.map(ch => ch.relativeDelaySec);
 }
 
 function signalEnergy(a: Float32Array): number {
@@ -187,9 +222,10 @@ async function captureGolaySteered(
   }
 
   // Apply RX beamforming if stereo mic array is configured
-  const rxGeo = buildRxGeometry(micArraySpacing, c);
-  const micA = rxGeo ? delayAndSum(micChannelsA, angleDeg, rxGeo, sampleRate) : capA.micWin;
-  const micB = rxGeo ? delayAndSum(micChannelsB, angleDeg, rxGeo, sampleRate) : capB.micWin;
+  const rxGeo = buildRxGeometry(micArraySpacing, c, micChannelsA.length);
+  const rxChannelDelaySec = getRxChannelDelaySec(micChannelsA.length);
+  const micA = rxGeo ? delayAndSum(micChannelsA, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capA.micWin;
+  const micB = rxGeo ? delayAndSum(micChannelsB, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capB.micWin;
 
   // Sum raw correlations WITHOUT per-half normalization to preserve Golay sidelobe cancellation
   const corrA = fftCorrelateComplex(micA, a, sampleRate);
@@ -290,8 +326,9 @@ export async function doPingDetailed(
       }
     }
 
-    const rxGeo = buildRxGeometry(config.micArraySpacing, c);
-    const micSignal = rxGeo ? delayAndSum(muxMicChannels, angleDeg, rxGeo, sr) : cap.micWin;
+    const rxGeo = buildRxGeometry(config.micArraySpacing, c, muxMicChannels.length);
+    const rxChannelDelaySec = getRxChannelDelaySec(muxMicChannels.length);
+    const micSignal = rxGeo ? delayAndSum(muxMicChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
 
     const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
     const demux = demuxMultiplexProfile({
@@ -334,7 +371,7 @@ export async function doPingDetailed(
       if (chirpProbe.ref) {
         const fallbackCap = await pingAndCaptureSteered(chirpProbe.ref, dt, gain, listenMs);
         const fallbackTau0 = predictedTau0ForPing(fallbackCap.delayL, fallbackCap.delayR);
-        const fallbackSignal = rxGeo ? delayAndSum(fallbackCap.micChannels, angleDeg, rxGeo, sr) : fallbackCap.micWin;
+        const fallbackSignal = rxGeo ? delayAndSum(fallbackCap.micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : fallbackCap.micWin;
         const fallback = corrAndBuildProfile(
           fallbackSignal,
           chirpProbe.ref,
@@ -377,8 +414,9 @@ export async function doPingDetailed(
     }
 
     // Apply RX beamforming if stereo mic array is configured
-    const rxGeo = buildRxGeometry(config.micArraySpacing, c);
-    const micSignal = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr) : cap.micWin;
+    const rxGeo = buildRxGeometry(config.micArraySpacing, c, micChannels.length);
+    const rxChannelDelaySec = getRxChannelDelaySec(micChannels.length);
+    const micSignal = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
 
     const res = corrAndBuildProfile(micSignal, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
     corrFinalReal = res.corrReal;

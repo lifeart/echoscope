@@ -4,12 +4,12 @@ import type { ArrayGeometry } from '../../src/types.js';
 
 describe('buildRxGeometry', () => {
   it('returns null for spacing <= 0', () => {
-    expect(buildRxGeometry(0, 343)).toBeNull();
-    expect(buildRxGeometry(-0.01, 343)).toBeNull();
+    expect(buildRxGeometry(0, 343, 2)).toBeNull();
+    expect(buildRxGeometry(-0.01, 343, 2)).toBeNull();
   });
 
   it('returns geometry with 2 microphones for positive spacing', () => {
-    const geo = buildRxGeometry(0.05, 343);
+    const geo = buildRxGeometry(0.05, 343, 2);
     expect(geo).not.toBeNull();
     expect(geo!.microphones.length).toBe(2);
     expect(geo!.speedOfSound).toBe(343);

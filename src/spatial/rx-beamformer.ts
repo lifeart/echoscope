@@ -10,6 +10,7 @@ export function delayAndSum(
   steeringAngleDeg: number,
   geometry: ArrayGeometry,
   sampleRate: number,
+  channelDelaySec?: number[],
 ): Float32Array {
   const nChannels = channels.length;
   const nSamples = channels[0]?.length ?? 0;
@@ -35,7 +36,7 @@ export function delayAndSum(
     const mic = mics[ch] ?? mics[0];
     const dx = mic.x - centerX;
     // Delay in samples for plane wave at angle theta
-    const delaySec = (dx * Math.sin(theta)) / c;
+    const delaySec = (dx * Math.sin(theta)) / c + (channelDelaySec?.[ch] ?? 0);
     delays.push(delaySec * sampleRate);
   }
 

@@ -59,10 +59,26 @@ export function applyGeometryWizard(): void {
   store.update(s => {
     s.config.spacing = dNew;
     if (s.calibration?.valid) {
+      const prevMic = { ...s.calibration.micPosition };
       const rL = Math.hypot(h.mic.u - h.spL.u, micY - h.spL.f);
       const rR = Math.hypot(h.mic.u - h.spR.u, micY - h.spR.f);
       s.calibration.distances = { L: rL, R: rR };
       s.calibration.micPosition = { x: micX, y: micY };
+      const c = s.config.speedOfSound;
+      const micArrayCal = s.calibration.micArrayCalibration;
+      if (micArrayCal && micArrayCal.channels.length > 0) {
+        const dx = micX - prevMic.x;
+        const dy = micY - prevMic.y;
+        for (const ch of micArrayCal.channels) {
+          ch.micPosition.x += dx;
+          ch.micPosition.y = Math.max(0, ch.micPosition.y + dy);
+          ch.distances.L = Math.hypot(ch.micPosition.x - h.spL.u, ch.micPosition.y - h.spL.f);
+          ch.distances.R = Math.hypot(ch.micPosition.x - h.spR.u, ch.micPosition.y - h.spR.f);
+          ch.systemDelay.L = Math.max(0, ch.tauMeasured.L - ch.distances.L / c);
+          ch.systemDelay.R = Math.max(0, ch.tauMeasured.R - ch.distances.R / c);
+          ch.systemDelay.common = Math.max(0, (ch.tauMeasured.L + ch.tauMeasured.R) / 2 - (ch.distances.L + ch.distances.R) / 2 / c);
+        }
+      }
       // geometryError now holds deltaConsistency (TDOA metric) — keep it
       // unchanged since the wizard only adjusts visual geometry, not the
       // underlying per-repeat TDOA measurements.

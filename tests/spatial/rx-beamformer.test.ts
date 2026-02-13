@@ -91,4 +91,31 @@ describe('delayAndSum', () => {
     const result = delayAndSum([new Float32Array(0), new Float32Array(0)], 0, geo, sr);
     expect(result.length).toBe(0);
   });
+
+  it('applies per-channel delay compensation offsets', () => {
+    const angleDeg = 25;
+    const freq = 1400;
+    const nSamples = 2048;
+    const extraLagSamples = 3;
+    const channels = synthesizePlaneWave(angleDeg, geo, sr, freq, nSamples);
+
+    const laggedChannels = [
+      channels[0],
+      new Float32Array(nSamples),
+    ];
+    for (let i = extraLagSamples; i < nSamples; i++) {
+      laggedChannels[1][i] = channels[1][i - extraLagSamples];
+    }
+
+    const uncompensated = delayAndSum(laggedChannels, angleDeg, geo, sr);
+    const compensated = delayAndSum(laggedChannels, angleDeg, geo, sr, [0, -extraLagSamples / sr]);
+
+    const rms = (arr: Float32Array) => {
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) sum += arr[i] * arr[i];
+      return Math.sqrt(sum / arr.length);
+    };
+
+    expect(rms(compensated)).toBeGreaterThan(rms(uncompensated));
+  });
 });

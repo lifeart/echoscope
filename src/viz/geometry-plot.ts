@@ -191,6 +191,17 @@ export function drawGeometry(minR: number, maxR: number): void {
   drawNode(spRP, '#8dd0ff', 5 * s, 'Speaker R', wizard.dragging === 'spR');
   drawNode(micP, state.calibration?.valid ? '#ffbf80' : '#8a8a8a', 5 * s, 'Mic', wizard.dragging === 'mic');
 
+  const micArrayChannels = state.calibration?.micArrayCalibration?.channels;
+  if (!wizard.active && state.calibration?.valid && micArrayChannels && micArrayChannels.length > 1) {
+    const sortedChannels = [...micArrayChannels].sort((a, b) => a.channelIndex - b.channelIndex);
+    for (const channel of sortedChannels) {
+      if (channel.channelIndex === 0) continue;
+      const p = toPx(channel.micPosition.x, Math.max(0, channel.micPosition.y));
+      const color = channel.valid ? '#ffbf80' : '#8a8a8a';
+      drawNode(p, color, 3.5 * s, `M${channel.channelIndex}`);
+    }
+  }
+
   // Wizard guide line
   if (wizard.active) {
     gctx.strokeStyle = 'rgba(255,255,255,0.22)';
@@ -309,10 +320,11 @@ export function drawGeometry(minR: number, maxR: number): void {
 
   // Labels
   const spacingNow = Math.abs(model.spR.u - model.spL.u);
+  const micArrayCount = state.calibration?.micArrayCalibration?.channels.length ?? 1;
   gctx.fillStyle = '#bdbdbd';
   gctx.font = `${12 * s}px system-ui`;
   gctx.fillText(`Geometry view (${axisLabel}-axis steering: ${axisDirs[0]} \u2194 ${axisDirs[1]})`, 12 * s, 16 * s);
-  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'} | Tracks=${visibleTracks.length}/${state.targets.length}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
+  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'} | Mics=${micArrayCount} | Tracks=${visibleTracks.length}/${state.targets.length}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
 }
 
 // Export geometry frame helpers for the geometry wizard
