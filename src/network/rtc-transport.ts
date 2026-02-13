@@ -62,36 +62,35 @@ export class RTCTransport {
 
     this.attachConnectionStateHandler(pc, peerId);
 
-    const dcPromise = Promise.race([
-      new Promise<RTCDataChannel>((resolve) => {
-        pc.ondatachannel = (ev) => {
-          const channel = ev.channel;
-          channel.binaryType = 'arraybuffer';
-          channel.onmessage = (msgEv) => this.onMessageCallback?.(peerId, msgEv.data);
-          resolve(channel);
-        };
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Data channel not received within 10s')), 10000)
-      ),
-    ]);
-
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await this.waitForIceGathering(pc);
 
-    const dataChannel = await dcPromise;
-
-    this.peers.set(peerId, {
+    // Register peer immediately so the answer can be returned to the caller
+    // (e.g. for QR display). The data channel arrives later once the
+    // initiator applies the answer and connectivity is established.
+    // No timeout — cleanup is handled by connectionState → 'failed'/'closed'
+    // via attachConnectionStateHandler, which is important for QR pairing
+    // where the remote side may take 30+ seconds to scan the answer.
+    const peerNode: PeerNode = {
       id: peerId,
       connection: pc,
-      dataChannel,
+      dataChannel: null as unknown as RTCDataChannel,
       clockOffset: 0,
       geometry: { ...DEFAULT_GEOMETRY },
       lastHeartbeat: Date.now(),
       state: 'connecting',
-    });
+    };
+    this.peers.set(peerId, peerNode);
+
+    // Patch in the data channel once it arrives (background, non-blocking).
+    pc.ondatachannel = (ev) => {
+      const channel = ev.channel;
+      channel.binaryType = 'arraybuffer';
+      channel.onmessage = (msgEv) => this.onMessageCallback?.(peerId, msgEv.data);
+      peerNode.dataChannel = channel;
+    };
 
     return pc.localDescription!;
   }
