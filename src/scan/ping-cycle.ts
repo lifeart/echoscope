@@ -9,6 +9,7 @@ import { applyQualityAlgorithms, resolveAutoQualityAlgo } from '../dsp/quality.j
 import type { QualityAlgoName } from '../dsp/quality.js';
 import { applyEnvBaseline } from '../dsp/clutter.js';
 import { suppressStaticReflections, type ClutterState } from '../dsp/clutter.js';
+import { applyDisplayReflectionBlanking } from '../dsp/display-reflection-blanking.js';
 import { caCfar } from '../dsp/cfar.js';
 import { demuxMultiplexProfile } from '../dsp/multiplex-demux.js';
 import { computeProfileConfidence } from './confidence.js';
@@ -304,6 +305,18 @@ export async function doPingDetailed(
     let rawNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > rawMax) rawMax = profFinal[i]; if (profFinal[i] > 1e-15) rawNZ++; }
     console.log(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawNZ}/${profFinal.length}`);
+  }
+
+  if (config.displayReflectionBlanking.enabled) {
+    profFinal = applyDisplayReflectionBlanking(
+      profFinal,
+      minR,
+      maxR,
+      config.displayReflectionBlanking,
+    );
+    let dMax = 0, dNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > dMax) dMax = profFinal[i]; if (profFinal[i] > 1e-15) dNZ++; }
+    console.log(`[doPing:displayBlank] max=${dMax.toExponential(3)} nonZero=${dNZ}/${profFinal.length}`);
   }
 
   // Apply env baseline

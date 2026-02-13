@@ -50,6 +50,13 @@ const defaultConfig: AppConfig = {
   adaptiveQuality: { enabled: true, hysteresisMs: 1200 },
   directionAxis: 'horizontal',
   clutterSuppression: { enabled: true, strength: 0.65 },
+  displayReflectionBlanking: {
+    enabled: false,
+    startRange: 0.30,
+    endRange: 0.90,
+    attenuation: 0.85,
+    edgeSoftness: 0.08,
+  },
   envBaseline: { enabled: true, strength: 0.55, pings: 4 },
   subtractionBackoff: { enabled: true, collapseThreshold: 0.24, peakDropThreshold: 0.30 },
   calibration: { repeats: 3, gapMs: 120, useCalib: true, multiband: true },

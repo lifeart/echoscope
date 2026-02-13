@@ -322,6 +322,14 @@ export interface SubtractionBackoffConfig {
   peakDropThreshold: number;
 }
 
+export interface DisplayReflectionBlankingConfig {
+  enabled: boolean;
+  startRange: number;
+  endRange: number;
+  attenuation: number;
+  edgeSoftness: number;
+}
+
 // --- Geometry Wizard ---
 export interface GeomHandle {
   u: number;
@@ -392,6 +400,7 @@ export interface AppConfig {
   adaptiveQuality: AdaptiveQualityConfig;
   directionAxis: 'horizontal' | 'vertical';
   clutterSuppression: { enabled: boolean; strength: number };
+  displayReflectionBlanking: DisplayReflectionBlankingConfig;
   envBaseline: { enabled: boolean; strength: number; pings: number };
   subtractionBackoff: SubtractionBackoffConfig;
   calibration: { repeats: number; gapMs: number; useCalib: boolean; multiband: boolean };

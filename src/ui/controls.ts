@@ -90,6 +90,16 @@ export function readConfigFromDOM(): void {
   const maxR = inputVal('maxR', 4.0);
   const spacing = inputVal('spacing', 0.20);
   const derived = computeDerivedConfig(temperature, maxR, spacing);
+  const blankingMaxRange = Math.max(0, maxR);
+  const blankingStartRange = clamp(
+    inputVal('displayBlankingStartRange', current.displayReflectionBlanking.startRange),
+    0,
+    blankingMaxRange,
+  );
+  const blankingEndRange = Math.max(
+    blankingStartRange,
+    clamp(inputVal('displayBlankingEndRange', current.displayReflectionBlanking.endRange), 0, blankingMaxRange),
+  );
   const trackTrailMinAlpha = clamp(inputVal('trackTrailMinAlpha', current.trackViz.trailMinAlpha), 0, 1);
   const trackTrailMaxAlpha = Math.max(
     trackTrailMinAlpha,
@@ -123,6 +133,19 @@ export function readConfigFromDOM(): void {
     s.config.directionAxis = selectVal('dirAxis') as any;
     s.config.clutterSuppression.enabled = checkVal('scanClutterOn');
     s.config.clutterSuppression.strength = inputVal('scanClutterStrength');
+    s.config.displayReflectionBlanking.enabled = checkVal('displayBlankingOn');
+    s.config.displayReflectionBlanking.startRange = blankingStartRange;
+    s.config.displayReflectionBlanking.endRange = blankingEndRange;
+    s.config.displayReflectionBlanking.attenuation = clamp(
+      inputVal('displayBlankingAttenuation', current.displayReflectionBlanking.attenuation),
+      0,
+      1,
+    );
+    s.config.displayReflectionBlanking.edgeSoftness = clamp(
+      inputVal('displayBlankingEdgeSoftness', current.displayReflectionBlanking.edgeSoftness),
+      0,
+      1.5,
+    );
     s.config.envBaseline.enabled = checkVal('useEnvBaseline');
     s.config.envBaseline.strength = inputVal('envBaselineStrength');
     s.config.envBaseline.pings = inputVal('extraCalPings');

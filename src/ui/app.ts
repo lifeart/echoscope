@@ -273,6 +273,19 @@ export function initApp(): void {
     el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
   }
 
+  const displayBlankingInputIds = [
+    'displayBlankingStartRange',
+    'displayBlankingEndRange',
+    'displayBlankingAttenuation',
+    'displayBlankingEdgeSoftness',
+  ];
+  for (const id of displayBlankingInputIds) {
+    el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
+  }
+  el('displayBlankingOn')?.addEventListener('change', () => {
+    readConfigFromDOM();
+  });
+
   const trackVizInputIds = ['trackTrailMaxPoints', 'trackFadeMissCount', 'trackTrailMinAlpha', 'trackTrailMaxAlpha', 'trackMinConfidenceFloor'];
   for (const id of trackVizInputIds) {
     el(id)?.addEventListener('input', () => {

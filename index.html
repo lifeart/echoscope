@@ -407,6 +407,31 @@
             <input id="subtractionPeakDropThreshold" type="number" step="0.02" min="0.01" max="1" value="0.30">
           </div>
         </div>
+
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Attenuate near-field bins where laptop display multipath often dominates.">
+              <input id="displayBlankingOn" type="checkbox">
+              Display reflection blanking
+            </label>
+          </div>
+          <div>
+            <label title="Range where attenuation starts (m).">Blanking start (m)</label>
+            <input id="displayBlankingStartRange" type="number" step="0.01" min="0" value="0.30">
+          </div>
+          <div>
+            <label title="Range where attenuation ends (m).">Blanking end (m)</label>
+            <input id="displayBlankingEndRange" type="number" step="0.01" min="0" value="0.90">
+          </div>
+          <div>
+            <label title="How strongly to suppress selected range (0..1).">Blanking attenuation</label>
+            <input id="displayBlankingAttenuation" type="number" step="0.05" min="0" max="1" value="0.85">
+          </div>
+          <div>
+            <label title="Soft transition width at window edges (m).">Edge softness (m)</label>
+            <input id="displayBlankingEdgeSoftness" type="number" step="0.01" min="0" max="1.5" value="0.08">
+          </div>
+        </div>
       </details>
 
       <div class="row" style="margin-top:10px">
