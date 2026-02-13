@@ -319,6 +319,15 @@ export async function doScan(): Promise<void> {
     await sleep(dwell);
   }
 
+  // Scan was cancelled mid-run (e.g. user pressed Stop). Avoid committing
+  // consensus/target updates from partial data.
+  if (!store.get().scanning) {
+    const state = store.get();
+    store.set('status', state.audio.context ? 'ready' : 'idle');
+    bus.emit('scan:complete', undefined as unknown as void);
+    return;
+  }
+
   console.log(`[doScan] captured raw-angle frames=${rawFrames.length} of ${angles.length}`);
   applySaftHeatmapIfEnabled(heatmap, rawFrames, angles, minR, maxR, config);
 
