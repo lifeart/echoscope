@@ -424,6 +424,7 @@ export function initApp(): void {
   document.addEventListener('keydown', (ev) => {
     const tag = (ev.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return;
 
     switch (ev.key) {
       case 'i':
