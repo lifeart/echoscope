@@ -85,33 +85,35 @@ export function createTarget(id: number, measurement: Measurement): TargetState 
 }
 
 export function predict(target: TargetState, dt: number, config: KalmanConfig = DEFAULT_KALMAN_CONFIG): TargetState {
+  const dtSafe = Number.isFinite(dt) && dt > 0 ? dt : 0;
+
   // State transition: constant velocity model
   // x_new = F * x
-  const range = target.position.range + target.velocity.rangeRate * dt;
-  const angle = target.position.angleDeg + target.velocity.angleRate * dt;
+  const range = target.position.range + target.velocity.rangeRate * dtSafe;
+  const angle = target.position.angleDeg + target.velocity.angleRate * dtSafe;
   const rangeRate = target.velocity.rangeRate;
   const angleRate = target.velocity.angleRate;
 
   // F matrix (constant velocity)
   const F = identity4x4();
-  F[0 * 4 + 2] = dt; // range += rangeRate * dt
-  F[1 * 4 + 3] = dt; // angle += angleRate * dt
+  F[0 * 4 + 2] = dtSafe; // range += rangeRate * dt
+  F[1 * 4 + 3] = dtSafe; // angle += angleRate * dt
 
   // Process noise Q — continuous white-noise jerk model
   // Q block for [pos, vel] = q * [[dt³/3, dt²/2],[dt²/2, dt]]
   const Q = new Float64Array(16);
   const qr = config.processNoiseRange;
   const qa = config.processNoiseAngle;
-  const dt2 = dt * dt;
-  const dt3 = dt2 * dt;
+  const dt2 = dtSafe * dtSafe;
+  const dt3 = dt2 * dtSafe;
   Q[0]  = qr * dt3 / 3;   // range variance
   Q[2]  = qr * dt2 / 2;   // range–rangeRate cross
   Q[8]  = qr * dt2 / 2;   // rangeRate–range cross
-  Q[10] = qr * dt;         // rangeRate variance
+  Q[10] = qr * dtSafe;         // rangeRate variance
   Q[5]  = qa * dt3 / 3;   // angle variance
   Q[7]  = qa * dt2 / 2;   // angle–angleRate cross
   Q[13] = qa * dt2 / 2;   // angleRate–angle cross
-  Q[15] = qa * dt;         // angleRate variance
+  Q[15] = qa * dtSafe;         // angleRate variance
 
   // P_new = F * P * F^T + Q
   const FP = matMul4x4(F, target.covariance);

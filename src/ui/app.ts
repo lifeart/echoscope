@@ -68,6 +68,10 @@ function canvasMousePos(canvas: HTMLCanvasElement, ev: MouseEvent): { x: number;
 let pingStartTime = 0;
 
 export function initApp(): void {
+  store.subscribe('status', (value) => {
+    if (typeof value === 'string') setStatus(value);
+  });
+
   // Mode UI
   el('mode')?.addEventListener('change', () => { syncModeUI(); readConfigFromDOM(); scheduleSignalPreview(); });
   syncModeUI();

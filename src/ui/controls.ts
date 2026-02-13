@@ -137,7 +137,7 @@ export function setButtonStates(audioReady: boolean, scanning: boolean): void {
 
   if (btnPing) btnPing.disabled = !audioReady || scanning;
   if (btnScan) btnScan.disabled = !audioReady || scanning;
-  if (btnStop) btnStop.disabled = !audioReady;
+  if (btnStop) btnStop.disabled = !audioReady || !scanning;
   if (btnCalibrate) btnCalibrate.disabled = !audioReady || scanning;
   if (btnRefreshDevices) btnRefreshDevices.disabled = !audioReady;
 }

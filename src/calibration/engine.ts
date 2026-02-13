@@ -136,6 +136,15 @@ interface CandidatePeak {
   absVal: number;
 }
 
+export function shouldUseMultibandOverride(
+  wideband: { valid: boolean; quality: number },
+  selected: { valid: boolean; quality: number } | null | undefined,
+): boolean {
+  if (!selected || !selected.valid) return false;
+  if (!wideband.valid) return true;
+  return selected.quality > wideband.quality;
+}
+
 /**
  * Find local maxima above 15% of the global max in the early window.
  * Returns up to `maxPeaks` candidates, combining:
@@ -846,9 +855,10 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
 
     console.debug(`[calib] multiband: selected=${multibandInfo.selectedBand} reason=${multibandInfo.selectionReason} agreement=${multibandInfo.bandAgreementCount} bands=${bandResults.map(b => `${b.bandId}(v=${b.valid} q=${b.quality.toFixed(3)})`).join(', ')}`);
 
-    // If multiband found a better result than wideband, override key fields
-    if (sel && sel.valid && sel.quality > quality) {
-      console.debug(`[calib] multiband: band ${sel.bandId} quality ${sel.quality.toFixed(3)} > wideband ${quality.toFixed(3)}, using multiband result`);
+    // If wideband is invalid, accept any valid multiband selection.
+    // Otherwise only override when multiband quality is strictly better.
+    if (sel && shouldUseMultibandOverride({ valid, quality }, sel)) {
+      console.debug(`[calib] multiband: using band ${sel.bandId} (wideband valid=${valid} q=${quality.toFixed(3)} -> band q=${sel.quality.toFixed(3)})`);
 
       // Recompute geometry from the selected band's TDOA
       const mbDeltaTau = sel.deltaTau;
