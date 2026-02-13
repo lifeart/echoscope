@@ -310,17 +310,38 @@ export function initApp(): void {
   });
 
   bus.on('ping:complete', ({ angleDeg, profile }) => {
+    console.log(`[ping:complete] angleDeg=${angleDeg} bestBin=${profile.bestBin} bestStrength=${profile.bestStrength.toExponential(3)} binsLen=${profile.bins.length}`);
+
+    // Debug: log profile bins stats
+    let bMin = Infinity, bMax = -Infinity, bNonZero = 0;
+    for (let i = 0; i < profile.bins.length; i++) {
+      if (profile.bins[i] < bMin) bMin = profile.bins[i];
+      if (profile.bins[i] > bMax) bMax = profile.bins[i];
+      if (profile.bins[i] > 1e-15) bNonZero++;
+    }
+    console.log(`[ping:complete] bins min=${bMin.toExponential(3)} max=${bMax.toExponential(3)} nonZero=${bNonZero}/${profile.bins.length}`);
+
     const state = store.get();
     const lp = state.lastProfile;
-    if (lp.corr) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    if (lp.corr) {
+      console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
+      drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    } else {
+      console.warn('[ping:complete] no corr in lastProfile');
+    }
 
     // Update heatmap row for current angle (works for both single Ping and Scan)
     const heatmap = state.heatmap;
     if (heatmap) {
       const rowIdx = heatmap.angles.indexOf(angleDeg);
+      console.log(`[ping:complete] heatmap lookup: angleDeg=${angleDeg} rowIdx=${rowIdx} angles=${JSON.stringify(heatmap.angles)}`);
       if (rowIdx >= 0) {
         updateHeatmapRow(heatmap, rowIdx, profile.bins, profile.bestBin, profile.bestStrength);
+      } else {
+        console.warn(`[ping:complete] angle ${angleDeg} not found in heatmap angles`);
       }
+    } else {
+      console.warn('[ping:complete] no heatmap in store');
     }
 
     drawHeatmap(state.config.minRange, state.config.maxRange);

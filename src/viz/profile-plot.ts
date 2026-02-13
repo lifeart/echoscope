@@ -39,9 +39,13 @@ export function drawProfile(
   maxR: number,
 ): void {
   const r = getCanvasCtx('profile');
-  if (!r) return;
+  if (!r) {
+    console.warn('[drawProfile] no canvas context');
+    return;
+  }
   const { ctx, w, h, s } = r;
   const sr = store.get().audio.actualSampleRate;
+  console.log(`[drawProfile] corr.length=${corr.length} tau0=${tau0.toFixed(6)} c=${c} minR=${minR} maxR=${maxR} sr=${sr} canvas=${w}x${h} scale=${s}`);
   const { xPad, yTop, yBottom, xRight, xSpan, ySpan } = layout(s, w, h);
 
   clearCanvas(ctx, w, h);

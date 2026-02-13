@@ -40,18 +40,28 @@ function heatLayout(s: number, w: number, h: number) {
 
 export function drawHeatmap(minR: number, maxR: number): void {
   const r = getHeatmapCtx();
-  if (!r) return;
+  if (!r) {
+    console.warn('[drawHeatmap] no canvas context');
+    return;
+  }
   const { ctx, w, h, s } = r;
+  console.log(`[drawHeatmap] canvas w=${w} h=${h} scale=${s} minR=${minR} maxR=${maxR}`);
   clearCanvas(ctx, w, h);
   cachedImageData = null;
 
   const state = store.get();
   const heatmap = state.heatmap;
-  if (!heatmap || heatmap.angles.length === 0) return;
+  if (!heatmap || heatmap.angles.length === 0) {
+    console.warn('[drawHeatmap] no heatmap in store or empty angles');
+    return;
+  }
+
+  console.log(`[drawHeatmap] heatmap angles=${heatmap.angles.length} bins=${heatmap.bins} data.length=${heatmap.data.length} display.length=${heatmap.display.length}`);
 
   smoothHeatmapDisplay(heatmap);
 
   const { xPad, yPad, yBottom, plotW, plotH } = heatLayout(s, w, h);
+  console.log(`[drawHeatmap] layout xPad=${xPad} yPad=${yPad} yBottom=${yBottom} plotW=${plotW} plotH=${plotH}`);
 
   // find max display value
   let dataMax = 0;
@@ -65,9 +75,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
   const hasData = displayMax > 1e-12;
 
-  if (hasData) {
-    console.log(`[heatmap] rows=${heatmap.angles.length} cols=${heatmap.bins} dataMax=${dataMax.toExponential(3)} displayMax=${displayMax.toExponential(3)} nonZero=${nonZeroCount}/${heatmap.display.length} plotW=${plotW} plotH=${plotH}`);
-  }
+  console.log(`[drawHeatmap] dataMax=${dataMax.toExponential(3)} displayMax=${displayMax.toExponential(3)} nonZero=${nonZeroCount}/${heatmap.display.length} hasData=${hasData}`);
 
   const rows = heatmap.angles.length;
   const cols = heatmap.bins;
@@ -80,9 +88,12 @@ export function drawHeatmap(minR: number, maxR: number): void {
     const rowDen = Math.max(1, rows - 1);
     const colDen = Math.max(1, cols - 1);
 
+    console.log(`[drawHeatmap] creating ImageData pW=${pW} pH=${pH} rows=${rows} cols=${cols}`);
+
     const img = ctx.createImageData(pW, pH);
     const data = img.data;
 
+    let pixMin = 255, pixMax = 0, pixNonZero = 0;
     for (let y = 0; y < pH; y++) {
       const rowPos = (y / hDen) * rowDen;
       const r0 = Math.floor(rowPos);
@@ -102,10 +113,14 @@ export function drawHeatmap(minR: number, maxR: number): void {
         const v1 = v10 + (v11 - v10) * fc;
         const v = (v0 + (v1 - v0) * fr) / displayMax;
         const g = Math.floor(255 * clamp(v, 0, 1));
+        if (g < pixMin) pixMin = g;
+        if (g > pixMax) pixMax = g;
+        if (g > 0) pixNonZero++;
         const idx = (y * pW + x) * 4;
         data[idx] = g; data[idx + 1] = g; data[idx + 2] = g; data[idx + 3] = 255;
       }
     }
+    console.log(`[drawHeatmap] pixel stats: min=${pixMin} max=${pixMax} nonZero=${pixNonZero}/${pW * pH} putImageData at (${xPad}, ${yPad})`);
     ctx.putImageData(img, xPad, yPad);
   }
 

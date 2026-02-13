@@ -46,8 +46,18 @@ function corrAndBuildProfile(
   heatBins: number,
 ) {
   const corr = fftCorrelate(micWin, ref, sampleRate).correlation;
-  energyNormalize(corr, signalEnergy(ref));
+  const refE = signalEnergy(ref);
+  energyNormalize(corr, refE);
+
+  // Debug: correlation stats
+  let corrMax = 0, corrMaxIdx = 0, micMax = 0;
+  for (let i = 0; i < corr.length; i++) { const v = Math.abs(corr[i]); if (v > corrMax) { corrMax = v; corrMaxIdx = i; } }
+  for (let i = 0; i < micWin.length; i++) { const v = Math.abs(micWin[i]); if (v > micMax) micMax = v; }
+  console.log(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corr.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
+
   const tau0 = findDirectPathTau(corr, predictedTau0OrNull, lockStrength, sampleRate);
+  console.log(`[corrAndBuild] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms, sample=${Math.round(tau0 * sampleRate)})`);
+
   const prof = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR, sampleRate, heatBins);
   const best = estimateBestFromProfile(prof, minR, maxR);
   return { corr, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR: best.range };
@@ -81,7 +91,15 @@ async function captureGolaySteered(
   const L = Math.min(corrA.length, corrB.length);
   const corrSum = new Float32Array(L);
   for (let i = 0; i < L; i++) corrSum[i] = corrA[i] + corrB[i];
-  energyNormalize(corrSum, signalEnergy(a) + signalEnergy(b));
+  const totalEnergy = signalEnergy(a) + signalEnergy(b);
+  energyNormalize(corrSum, totalEnergy);
+
+  // Debug: Golay correlation stats
+  let micMaxA = 0, micMaxB = 0, corrSumMax = 0, corrSumMaxIdx = 0;
+  for (let i = 0; i < capA.micWin.length; i++) { const v = Math.abs(capA.micWin[i]); if (v > micMaxA) micMaxA = v; }
+  for (let i = 0; i < capB.micWin.length; i++) { const v = Math.abs(capB.micWin[i]); if (v > micMaxB) micMaxB = v; }
+  for (let i = 0; i < corrSum.length; i++) { const v = Math.abs(corrSum[i]); if (v > corrSumMax) { corrSumMax = v; corrSumMaxIdx = i; } }
+  console.log(`[golayCorr] micA=${capA.micWin.length} micMaxA=${micMaxA.toExponential(3)} micB=${capB.micWin.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}`);
 
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));
@@ -89,6 +107,8 @@ async function captureGolaySteered(
   else if (Number.isFinite(predTau0B)) predTau0 = predTau0B;
 
   const tau0 = findDirectPathTau(corrSum, predTau0, lockStrength, sampleRate);
+  console.log(`[golayCorr] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms) predTau0=${predTau0?.toFixed(6) ?? 'null'}`);
+
   const prof = buildRangeProfileFromCorrelation(corrSum, tau0, c, minR, maxR, sampleRate, heatBins);
   return { corr: corrSum, tau0, prof };
 }
@@ -141,10 +161,27 @@ export async function doPing(
     profFinal = res.prof;
   }
 
+  // Debug: raw profile stats
+  let rawMax = 0;
+  {
+    let rawNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > rawMax) rawMax = profFinal[i]; if (profFinal[i] > 1e-15) rawNZ++; }
+    console.log(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawNZ}/${profFinal.length}`);
+  }
+
   // Apply env baseline
   const envBaseline = state.calibration?.envBaseline ?? null;
   if (config.envBaseline.enabled) {
+    const beforeBaseline = profFinal;
     profFinal = applyEnvBaseline(profFinal, envBaseline, config.envBaseline.strength);
+    let eMax = 0, eNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > eMax) eMax = profFinal[i]; if (profFinal[i] > 1e-15) eNZ++; }
+    console.log(`[doPing:envBaseline] max=${eMax.toExponential(3)} nonZero=${eNZ}/${profFinal.length}`);
+    // Safeguard: if envBaseline removed ALL signal but raw had data, fall back
+    if (eMax < 1e-15 && rawMax > 1e-15) {
+      console.warn('[doPing] envBaseline zeroed out entire profile — falling back to raw profile');
+      profFinal = beforeBaseline;
+    }
   }
 
   // Apply static clutter suppression during scanning
@@ -152,11 +189,19 @@ export async function doPing(
     const result = suppressStaticReflections(profFinal, clutterState, config.clutterSuppression.strength);
     profFinal = result.profile;
     clutterState = result.clutterState;
+    let cMax = 0, cNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > cMax) cMax = profFinal[i]; if (profFinal[i] > 1e-15) cNZ++; }
+    console.log(`[doPing:clutter] max=${cMax.toExponential(3)} nonZero=${cNZ}/${profFinal.length}`);
   }
 
   // Apply quality algorithms
   const algoName: QualityAlgoName = config.qualityAlgo === 'auto' ? 'balanced' : config.qualityAlgo;
   profFinal = applyQualityAlgorithms(profFinal, algoName);
+  {
+    let qMax = 0, qNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > qMax) qMax = profFinal[i]; if (profFinal[i] > 1e-15) qNZ++; }
+    console.log(`[doPing:quality] algo=${algoName} max=${qMax.toExponential(3)} nonZero=${qNZ}/${profFinal.length}`);
+  }
 
   const bestPost = estimateBestFromProfile(profFinal, minR, maxR);
   let bestBin = bestPost.bin;
@@ -195,6 +240,15 @@ export async function doPing(
       }
     }
   });
+
+  // Debug: log profile stats before emitting
+  let profMin = Infinity, profMax = -Infinity, profNonZero = 0;
+  for (let i = 0; i < profFinal.length; i++) {
+    if (profFinal[i] < profMin) profMin = profFinal[i];
+    if (profFinal[i] > profMax) profMax = profFinal[i];
+    if (profFinal[i] > 1e-15) profNonZero++;
+  }
+  console.log(`[doPing] angle=${angleDeg} profLen=${profFinal.length} profMin=${profMin.toExponential(3)} profMax=${profMax.toExponential(3)} nonZero=${profNonZero}/${profFinal.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)} bestR=${bestR.toFixed(3)} isWeak=${isWeak} tau0=${tau0Final.toFixed(6)}`);
 
   const rangeProfile: RangeProfile = {
     bins: profFinal,
