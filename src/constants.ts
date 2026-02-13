@@ -46,7 +46,7 @@ export const LAPTOP_PRESET_SCAN = {
   scanStep: 3,
   scanDwell: 220,
   listenMs: 180,
-  strengthGate: 0.003,
+  strengthGate: 0.0001,
   clutterStrength: 0.70,
   qualityAlgo: 'auto' as const,
   extraCalPings: 6,

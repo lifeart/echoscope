@@ -9,12 +9,14 @@ import { readConfigFromDOM, syncModeUI, setButtonStates } from './controls.js';
 import { setStatus, log, updateDirectionReadout, updateBestReadout, renderCalibInfo } from './readouts.js';
 import { detectDevice, applyDevicePreset } from './device-presets.js';
 import { setupGeometryPointerHandlers, ensureGeometryWizardHandlesInitialized, resetGeometryWizardHandles, applyGeometryWizard, setGeomWizardStatus, syncGeometryWizardControls } from './geometry-wizard.js';
-import { drawProfile, drawProfilePlaceholder } from '../viz/profile-plot.js';
-import { drawHeatmap } from '../viz/heatmap-plot.js';
+import { drawProfile, drawProfilePlaceholder, setProfileMouse } from '../viz/profile-plot.js';
+import { drawHeatmap, setHeatmapMouse, redrawHeatmapCrosshair } from '../viz/heatmap-plot.js';
 import { drawGeometry } from '../viz/geometry-plot.js';
 import { drawCalibSanityPlot, drawSanityPlaceholder } from '../viz/sanity-plot.js';
 import { resizeCanvasForDPR } from '../viz/renderer.js';
-import { createHeatmap } from '../scan/heatmap-data.js';
+import { createHeatmap, updateHeatmapRow } from '../scan/heatmap-data.js';
+import { initLevelMeter } from '../viz/level-meter.js';
+import { drawSignalPreview, scheduleSignalPreview } from '../viz/signal-preview.js';
 import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
 
 function el(id: string): HTMLElement | null {
@@ -22,7 +24,7 @@ function el(id: string): HTMLElement | null {
 }
 
 function applyRetinaCanvases(): boolean {
-  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry'];
+  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry', 'previewChirp', 'previewMls', 'previewGolay'];
   let changed = false;
   for (const id of ids) {
     const canvas = el(id) as HTMLCanvasElement | null;
@@ -50,11 +52,24 @@ function redrawAllCanvases(): void {
   } else {
     drawSanityPlaceholder();
   }
+
+  drawSignalPreview();
 }
+
+/* ---- canvas mouse → pixel coords ---- */
+function canvasMousePos(canvas: HTMLCanvasElement, ev: MouseEvent): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / Math.max(1, rect.width);
+  const sy = canvas.height / Math.max(1, rect.height);
+  return { x: (ev.clientX - rect.left) * sx, y: (ev.clientY - rect.top) * sy };
+}
+
+/* ---- ping stats ---- */
+let pingStartTime = 0;
 
 export function initApp(): void {
   // Mode UI
-  el('mode')?.addEventListener('change', () => { syncModeUI(); readConfigFromDOM(); });
+  el('mode')?.addEventListener('change', () => { syncModeUI(); readConfigFromDOM(); scheduleSignalPreview(); });
   syncModeUI();
 
   // Service Worker
@@ -85,6 +100,8 @@ export function initApp(): void {
       await refreshDeviceInfo();
       log(`[ok] audio initialized: sr=${store.get().audio.actualSampleRate} Hz, capture=${store.get().audio.captureMethod}`);
       setStatus('ready');
+      initLevelMeter();
+      drawSignalPreview();
     } catch (e: any) {
       setStatus('error');
       log('[err] init failed: ' + (e?.message || e));
@@ -202,6 +219,131 @@ export function initApp(): void {
     renderCalibInfo();
   });
 
+  // Signal preview on param changes
+  const paramInputIds = ['f1', 'f2', 'T', 'mlsOrder', 'chipRate', 'golayOrder', 'golayChipRate', 'golayGapMs'];
+  for (const id of paramInputIds) {
+    el(id)?.addEventListener('input', () => { readConfigFromDOM(); scheduleSignalPreview(); });
+  }
+
+  // ---- Mouse crosshair wiring ----
+  const profileCanvas = el('profile') as HTMLCanvasElement | null;
+  if (profileCanvas) {
+    profileCanvas.addEventListener('mousemove', (ev) => {
+      setProfileMouse(canvasMousePos(profileCanvas, ev));
+      const state = store.get();
+      const lp = state.lastProfile;
+      if (lp.corr && lp.corr.length) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    });
+    profileCanvas.addEventListener('mouseleave', () => {
+      setProfileMouse(null);
+      const state = store.get();
+      const lp = state.lastProfile;
+      if (lp.corr && lp.corr.length) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    });
+  }
+
+  const heatmapCanvas = el('heatmap') as HTMLCanvasElement | null;
+  if (heatmapCanvas) {
+    heatmapCanvas.addEventListener('mousemove', (ev) => {
+      setHeatmapMouse(canvasMousePos(heatmapCanvas, ev));
+      redrawHeatmapCrosshair();
+    });
+    heatmapCanvas.addEventListener('mouseleave', () => {
+      setHeatmapMouse(null);
+      redrawHeatmapCrosshair();
+    });
+  }
+
+  // ---- Keyboard shortcuts ----
+  function clickIfEnabled(id: string): void {
+    const btn = el(id) as HTMLButtonElement | null;
+    if (btn && !btn.disabled) btn.click();
+  }
+
+  document.addEventListener('keydown', (ev) => {
+    const tag = (ev.target as HTMLElement)?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+    switch (ev.key) {
+      case 'i':
+      case 'I':
+        clickIfEnabled('btnInit');
+        break;
+      case 'p':
+      case 'P':
+      case ' ':
+        ev.preventDefault();
+        clickIfEnabled('btnPing');
+        break;
+      case 's':
+      case 'S':
+        clickIfEnabled('btnScan');
+        break;
+      case 'Escape':
+        clickIfEnabled('btnStop');
+        break;
+      case 'c':
+      case 'C':
+        clickIfEnabled('btnCalibrate');
+        break;
+    }
+  });
+
+  // ---- Scan progress bar ----
+  bus.on('scan:step', ({ angleDeg, index, total }) => {
+    const progressEl = el('scanProgress');
+    const textEl = el('scanProgressText');
+    const fillEl = el('scanProgressFill');
+    if (progressEl) progressEl.style.display = 'block';
+    if (textEl) textEl.textContent = `Scanning ${index + 1}/${total} (${angleDeg}\u00b0)`;
+    if (fillEl) fillEl.style.width = `${((index + 1) / total) * 100}%`;
+  });
+
+  bus.on('scan:complete', () => {
+    const progressEl = el('scanProgress');
+    if (progressEl) progressEl.style.display = 'none';
+  });
+
+  // ---- Ping statistics ----
+  bus.on('ping:start', () => {
+    pingStartTime = performance.now();
+  });
+
+  bus.on('ping:complete', ({ angleDeg, profile }) => {
+    const state = store.get();
+    const lp = state.lastProfile;
+    if (lp.corr) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+
+    // Update heatmap row for current angle (works for both single Ping and Scan)
+    const heatmap = state.heatmap;
+    if (heatmap) {
+      const rowIdx = heatmap.angles.indexOf(angleDeg);
+      if (rowIdx >= 0) {
+        updateHeatmapRow(heatmap, rowIdx, profile.bins, profile.bestBin, profile.bestStrength);
+      }
+    }
+
+    drawHeatmap(state.config.minRange, state.config.maxRange);
+    drawGeometry(state.config.minRange, state.config.maxRange);
+    updateBestReadout();
+    updateDirectionReadout();
+
+    // Ping stats
+    const elapsed = (performance.now() - pingStartTime).toFixed(0);
+    const peak = profile.bestStrength;
+    const bins = profile.bins;
+    if (bins && bins.length > 0) {
+      const sorted = Float32Array.from(bins).sort();
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const snr = median > 1e-12 ? 10 * Math.log10(peak / median) : 0;
+      const statsEl = el('pingStats');
+      if (statsEl) {
+        statsEl.style.display = 'inline-block';
+        statsEl.textContent = `Ping: ${elapsed}ms | peak: ${peak.toFixed(4)} | SNR: ${snr.toFixed(1)} dB`;
+      }
+    }
+  });
+
   // Resize
   window.addEventListener('resize', () => {
     if (applyRetinaCanvases()) redrawAllCanvases();
@@ -209,17 +351,6 @@ export function initApp(): void {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') resumeIfSuspended().catch(() => {});
-  });
-
-  // Subscribe to events for auto-redraw
-  bus.on('ping:complete', () => {
-    const state = store.get();
-    const lp = state.lastProfile;
-    if (lp.corr) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
-    drawHeatmap(state.config.minRange, state.config.maxRange);
-    drawGeometry(state.config.minRange, state.config.maxRange);
-    updateBestReadout();
-    updateDirectionReadout();
   });
 
   // Initial render
@@ -240,6 +371,7 @@ export function initApp(): void {
   drawHeatmap(config.minRange, config.maxRange);
   drawGeometry(config.minRange, config.maxRange);
   drawSanityPlaceholder();
+  drawSignalPreview();
 
   refreshDeviceInfo().catch(() => {});
   renderCalibInfo();

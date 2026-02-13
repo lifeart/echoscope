@@ -18,10 +18,16 @@
 
     <section class="card">
       <div class="row" style="justify-content:space-between">
-        <button id="btnInit">Init Audio</button>
-        <button id="btnPing" disabled>Ping</button>
-        <button id="btnScan" disabled>Scan</button>
-        <button id="btnStop" disabled>Stop</button>
+        <button id="btnInit">Init Audio <kbd>I</kbd></button>
+        <button id="btnPing" disabled>Ping <kbd>P</kbd></button>
+        <button id="btnScan" disabled>Scan <kbd>S</kbd></button>
+        <button id="btnStop" disabled>Stop <kbd>Esc</kbd></button>
+      </div>
+
+      <div id="levelMeterWrap" style="display:none" class="level-meter-wrap">
+        <span class="small">Mic</span>
+        <canvas id="levelMeter" width="200" height="16"></canvas>
+        <span class="small" id="levelDb"></span>
       </div>
 
       <p class="hint warn">
@@ -122,6 +128,7 @@
             <input id="T" type="number" step="1" value="7">
           </div>
         </div>
+        <canvas id="previewChirp" width="400" height="80" style="margin-top:6px"></canvas>
       </div>
 
       <div id="mlsBox" style="display:none; margin-top:10px">
@@ -159,6 +166,7 @@
             <input id="chipRate" type="number" step="50" value="4000">
           </div>
         </div>
+        <canvas id="previewMls" width="400" height="80" style="margin-top:6px"></canvas>
       </div>
 
       <div id="golayBox" style="display:none; margin-top:10px">
@@ -201,6 +209,7 @@
             <input id="golayGapMs" type="number" step="1" value="12">
           </div>
         </div>
+        <canvas id="previewGolay" width="400" height="80" style="margin-top:6px"></canvas>
       </div>
 
       <div class="row" style="margin-top:10px">
@@ -264,6 +273,7 @@
       <div class="row" style="margin-top:10px">
         <div class="pill"><span id="bestReadout">Best: —</span></div>
         <div class="pill"><span id="dirReadout">Direction: —</span></div>
+        <div class="pill" id="pingStats" style="display:none"></div>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="showTrace" type="checkbox" checked>
           Show best-target trace
@@ -277,7 +287,7 @@
       <!-- Calibration -->
       <p class="hint">Calibration measures speaker-to-mic distances to lock direct-path timing and improve range accuracy.</p>
       <div class="row" style="justify-content:space-between">
-        <button id="btnCalibrate" disabled>Calibrate (refined + sanity)</button>
+        <button id="btnCalibrate" disabled>Calibrate <kbd>C</kbd></button>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="useCalib" type="checkbox" checked>
           Use calibration to lock direct-path search
@@ -339,6 +349,13 @@
     <section class="card">
       <div class="row" style="justify-content:space-between">
         <div class="small" id="status">Status: idle</div>
+      </div>
+
+      <div id="scanProgress" style="display:none; margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="small" id="scanProgressText">Scanning...</span>
+          <div class="progress-bar-bg"><div class="progress-bar-fill" id="scanProgressFill"></div></div>
+        </div>
       </div>
 
       <details open style="margin-top:10px">

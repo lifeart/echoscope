@@ -34,7 +34,7 @@ const defaultConfig: AppConfig = {
   maxRange: 4.0,
   scanStep: 10,
   scanDwell: 140,
-  strengthGate: 0.003,
+  strengthGate: 0.0001,
   qualityAlgo: 'balanced',
   directionAxis: 'horizontal',
   clutterSuppression: { enabled: true, strength: 0.65 },
