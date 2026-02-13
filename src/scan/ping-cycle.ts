@@ -168,7 +168,6 @@ export async function doPing(
     bestBin = -1;
     bestVal = 0;
     bestR = NaN;
-    if (updateHeatRowIndex !== null) profFinal.fill(0);
   }
 
   // Update store

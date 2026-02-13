@@ -26,8 +26,8 @@ export function findDirectPathTau(
   }
 
   const dp = findPeakAbs(corr, start, end);
-  if (dp.absValue < 0.06) {
-    const fb = findPeakAbs(corr, 0, earlyEnd);
+  const fb = findPeakAbs(corr, 0, earlyEnd);
+  if (fb.absValue > 1e-12 && dp.absValue < 0.1 * fb.absValue) {
     return fb.index / sampleRate;
   }
 
