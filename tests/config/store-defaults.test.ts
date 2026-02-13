@@ -35,4 +35,9 @@ describe('store default config consistency', () => {
     const store = new Store();
     expect(store.get().config.temperature).toBe(25);
   });
+
+  it('default captureTimeoutMs is 300', () => {
+    const store = new Store();
+    expect(store.get().config.distributed.captureTimeoutMs).toBe(300);
+  });
 });

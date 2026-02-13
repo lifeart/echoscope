@@ -141,7 +141,7 @@ export class PeerManager {
   getConnectedPeerIds(): string[] {
     const ids: string[] = [];
     for (const [id, session] of this.sessions) {
-      if (session.state === 'ready' || session.state === 'syncing') {
+      if (session.state === 'ready') {
         ids.push(id);
       }
     }
@@ -291,7 +291,7 @@ export class PeerManager {
 
     const chunk: SyncedAudioChunk = {
       peerId,
-      timestamp: decoded.timestamp + session.clockSync.getOffset(),
+      timestamp: decoded.timestamp - session.clockSync.getOffset(),
       sampleRate: decoded.sampleRate,
       channels: decoded.channels,
       probeConfig: store.get().config.probe,

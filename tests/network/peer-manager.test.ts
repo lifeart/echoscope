@@ -583,8 +583,8 @@ describe('PeerManager', () => {
           'peer:data',
           expect.objectContaining({
             peerId,
-            // timestamp = mockTimestamp + clockSync.getOffset() = 1000.0 + 0.005
-            timestamp: mockTimestamp + 0.005,
+            // timestamp = mockTimestamp - clockSync.getOffset() = 1000.0 - 0.005
+            timestamp: mockTimestamp - 0.005,
             sampleRate: 48000,
             channels: mockChannels,
           }),
@@ -642,7 +642,7 @@ describe('PeerManager', () => {
         expect(chunks).toHaveLength(8);
         // The oldest chunks should have been shifted off; the last chunk should have the latest timestamp
         // Chunk timestamps = 0,100,200,...,900. After shift, we should have 200..900
-        expect(chunks[chunks.length - 1].timestamp).toBeCloseTo(900 + 0.005, 2);
+        expect(chunks[chunks.length - 1].timestamp).toBeCloseTo(900 - 0.005, 2);
       } finally {
         vi.useRealTimers();
       }
@@ -855,15 +855,15 @@ describe('PeerManager', () => {
   });
 
   // -------------------------------------------------------------------------
-  // getConnectedPeerIds includes syncing and ready peers
+  // getConnectedPeerIds only includes ready peers
   // -------------------------------------------------------------------------
 
   describe('getConnectedPeerIds', () => {
-    it('includes peers in syncing state', async () => {
+    it('excludes peers in syncing state', async () => {
       const { peerId } = await pm.createOffer();
       callbacks.stateCallback!(peerId, 'connected');
       expect(pm.getPeerState(peerId)).toBe('syncing');
-      expect(pm.getConnectedPeerIds()).toContain(peerId);
+      expect(pm.getConnectedPeerIds()).not.toContain(peerId);
     });
 
     it('includes peers in ready state', async () => {

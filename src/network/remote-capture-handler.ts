@@ -1,47 +1,45 @@
 import { peerManager } from './peer-manager.js';
 import { encodeAudioChunk } from './codec.js';
+import { getRingBuffer, computeListenSamples, getSampleRate } from '../audio/engine.js';
 import { store } from '../core/store.js';
-import { getSampleRate } from '../audio/engine.js';
+import { sleep } from '../utils.js';
 import type { CaptureRequest } from '../types.js';
 
-/**
- * Handles incoming capture requests on the remote (non-orchestrator) device.
- * Reads from the local audio ring buffer and sends back a capture response.
- */
+const CAPTURE_MARGIN_MS = 100;
+
 export function setupRemoteCaptureHandler(): void {
   peerManager.onCaptureRequest((_peerId: string, data: ArrayBuffer) => {
     let request: CaptureRequest;
     try {
       const json = new TextDecoder().decode(data);
       request = JSON.parse(json);
-    } catch {
-      return; // Malformed capture request
-    }
+    } catch { return; }
     handleCaptureRequest(_peerId, request);
   });
 }
 
-function handleCaptureRequest(peerId: string, request: CaptureRequest): void {
-  const state = store.get();
+async function handleCaptureRequest(peerId: string, request: CaptureRequest): Promise<void> {
+  const ring = getRingBuffer();
+  if (!ring) return;
   const sampleRate = getSampleRate();
 
-  // Get recent audio from the last received chunks
-  // If we have local audio data available, encode and send it back
-  const probeConfig = state.config.probe;
+  // Wait for orchestrator's probe + echo window to elapse
+  await sleep(request.listenMs + CAPTURE_MARGIN_MS);
+
+  // Read local mic audio from ring buffer — wider window to capture early echoes
+  // that arrived during the CAPTURE_MARGIN_MS wait period
+  const totalMs = request.listenMs + CAPTURE_MARGIN_MS;
+  const listenSamples = computeListenSamples(totalMs, 0, sampleRate);
+  const end = ring.position;
+  const channels = ring.readMulti(end, listenSamples);
+
+  // Timestamp = ring buffer read time (remote clock, corrected by orchestrator)
   const timestamp = performance.now() / 1000;
 
-  // For now, we send back whatever local audio we have captured
-  // In a full implementation, this would read from a local ring buffer
-  const chunks = peerManager.getAllRemoteChunks();
-  const localChunk = chunks.length > 0 ? chunks[chunks.length - 1] : null;
-
-  if (localChunk) {
-    // Build response: pingId prefix (4 bytes) + encoded audio
-    const encoded = encodeAudioChunk(timestamp, sampleRate, localChunk.channels, probeConfig);
-    const response = new ArrayBuffer(4 + encoded.byteLength);
-    const view = new DataView(response);
-    view.setUint32(0, request.pingId);
-    new Uint8Array(response).set(new Uint8Array(encoded), 4);
-    peerManager.sendCaptureResponse(peerId, response);
-  }
+  const probeConfig = store.get().config.probe;
+  const encoded = encodeAudioChunk(timestamp, sampleRate, channels, probeConfig);
+  const response = new ArrayBuffer(4 + encoded.byteLength);
+  new DataView(response).setUint32(0, request.pingId);
+  new Uint8Array(response).set(new Uint8Array(encoded), 4);
+  peerManager.sendCaptureResponse(peerId, response);
 }

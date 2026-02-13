@@ -423,7 +423,7 @@ export function initApp(): void {
     const progressEl = el('scanProgress');
     const textEl = el('scanProgressText');
     const fillEl = el('scanProgressFill');
-    if (progressEl) progressEl.style.display = 'block';
+    progressEl?.classList.remove('is-hidden');
     const passLabel = totalPasses > 1 ? ` pass ${pass + 1}/${totalPasses}` : '';
     if (textEl) textEl.textContent = `Scanning ${index + 1}/${total} (${angleDeg}\u00b0)${passLabel}`;
     const progress = totalPasses > 1
@@ -434,7 +434,11 @@ export function initApp(): void {
 
   bus.on('scan:complete', () => {
     const progressEl = el('scanProgress');
-    if (progressEl) progressEl.style.display = 'none';
+    const textEl = el('scanProgressText');
+    const fillEl = el('scanProgressFill');
+    progressEl?.classList.add('is-hidden');
+    if (textEl) textEl.textContent = 'Scanning...';
+    if (fillEl) fillEl.style.width = '0%';
   });
 
   // ---- Ping statistics ----

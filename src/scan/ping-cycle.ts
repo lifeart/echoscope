@@ -147,8 +147,8 @@ async function captureGolaySteered(
   const pingIdA = nextPingId++;
   if (hasPeers) broadcastCaptureRequest(pingIdA, angleDeg, listenMs, 'golay');
 
-  const localTsA = performance.now() / 1000;
   const capA = await pingAndCaptureSteered(a, dt, gain, listenMs);
+  const localTsA = performance.now() / 1000;
   const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
 
   let micChannelsA = capA.micChannels;
@@ -165,8 +165,8 @@ async function captureGolaySteered(
   const pingIdB = nextPingId++;
   if (hasPeers) broadcastCaptureRequest(pingIdB, angleDeg, listenMs, 'golay');
 
-  const localTsB = performance.now() / 1000;
   const capB = await pingAndCaptureSteered(b, dt, gain, listenMs);
+  const localTsB = performance.now() / 1000;
   const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
 
   let micChannelsB = capB.micChannels;
@@ -268,8 +268,8 @@ export async function doPingDetailed(
       broadcastCaptureRequest(muxPingId, angleDeg, listenMs, probe.type);
     }
 
-    const muxLocalTs = performance.now() / 1000;
     const cap = await pingAndCaptureSteered(probe.ref, dt, gain, listenMs);
+    const muxLocalTs = performance.now() / 1000;
     const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
 
     // Merge remote audio if distributed
@@ -354,8 +354,8 @@ export async function doPingDetailed(
       broadcastCaptureRequest(pingId, angleDeg, listenMs, probe.type);
     }
 
-    const localTs = performance.now() / 1000;
     const cap = await pingAndCaptureSteered(ref, dt, gain, listenMs);
+    const localTs = performance.now() / 1000;
     const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
 
     // Merge remote audio if distributed

@@ -615,9 +615,9 @@
         <div class="small" id="status">Status: idle</div>
       </div>
 
-      <div id="scanProgress" style="display:none; margin-top:6px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span class="small" id="scanProgressText">Scanning...</span>
+      <div id="scanProgress" class="scan-progress is-hidden" aria-live="polite">
+        <div class="scan-progress-row">
+          <span class="small scan-progress-text" id="scanProgressText">Scanning...</span>
           <div class="progress-bar-bg"><div class="progress-bar-fill" id="scanProgressFill"></div></div>
         </div>
       </div>

@@ -68,7 +68,7 @@ export function setupCaptureResponseHandler(): void {
     onCaptureResponse({
       pingId,
       peerId,
-      timestamp: decoded.timestamp + clockOffset,
+      timestamp: decoded.timestamp - clockOffset,
       sampleRate: decoded.sampleRate,
       channels: decoded.channels,
     });
