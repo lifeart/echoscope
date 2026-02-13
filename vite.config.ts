@@ -1,12 +1,37 @@
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import basicSsl from '@vitejs/plugin-basic-ssl';
+import os from 'node:os';
+
+const useHttps = process.env.HTTPS !== '0';
+
+/** Find the first non-internal IPv4 address (the machine's LAN IP). */
+function getLanIp(): string | undefined {
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    if (!ifaces) continue;
+    for (const iface of ifaces) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return undefined;
+}
+
+const lanIp = getLanIp();
 
 export default defineConfig({
   root: '.',
   publicDir: 'public',
+  define: {
+    // Expose LAN IP to runtime so QR URLs can point to it
+    ...(lanIp ? { 'import.meta.env.VITE_LAN_IP': JSON.stringify(lanIp) } : {}),
+  },
   plugins: [
+    ...(useHttps ? [basicSsl()] : []),
     VitePWA({
       registerType: 'autoUpdate',
+      devOptions: {
+        enabled: !useHttps,
+      },
       manifest: {
         name: 'Echolocation Lab',
         short_name: 'EchoLab',
@@ -37,6 +62,7 @@ export default defineConfig({
     target: 'es2022',
   },
   server: {
+    host: true,
     open: true,
   },
   test: {
