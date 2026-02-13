@@ -324,6 +324,7 @@ export interface AppConfig {
   heatBins: number;
   speedOfSound: number;
   spacing: number;
+  micArraySpacing: number;
   virtualArray: VirtualArrayConfig;
 }
 

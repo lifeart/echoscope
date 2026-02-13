@@ -28,6 +28,7 @@
         <span class="small">Mic</span>
         <canvas id="levelMeter" width="200" height="16"></canvas>
         <span class="small" id="levelDb"></span>
+        <span id="stereoIndicator" class="small" style="display:none; color:#4caf50;"></span>
       </div>
 
       <p class="hint warn">
@@ -79,6 +80,10 @@
         <div>
           <label title="Distance between L/R speakers. Steering delay &amp; TDOA gating depend on this. Must be > 0.02 m.">Speaker spacing d (m)</label>
           <input id="spacing" type="number" step="0.01" min="0.02" value="0.20">
+        </div>
+        <div>
+          <label title="Distance between microphones for RX beamforming. Set 0 to disable. Typical laptop ~0.05 m.">Mic spacing (m)</label>
+          <input id="micArraySpacing" type="number" step="0.001" min="0" value="0">
         </div>
         <div>
           <label title="Speed of sound in air (~343 m/s at 20°C). Range 200–400. Affects all range calculations.">Speed of sound c (m/s)</label>

@@ -98,7 +98,17 @@ export function initApp(): void {
       setButtonStates(true, false);
       renderCalibInfo();
       await refreshDeviceInfo();
-      log(`[ok] audio initialized: sr=${store.get().audio.actualSampleRate} Hz, capture=${store.get().audio.captureMethod}`);
+      const audioState = store.get().audio;
+      log(`[ok] audio initialized: sr=${audioState.actualSampleRate} Hz, capture=${audioState.captureMethod}, channels=${audioState.channelCount}`);
+      const stereoEl = el('stereoIndicator');
+      if (stereoEl) {
+        if (audioState.channelCount >= 2) {
+          stereoEl.style.display = 'inline';
+          stereoEl.textContent = `${audioState.channelCount}ch`;
+        } else {
+          stereoEl.style.display = 'none';
+        }
+      }
       setStatus('ready');
       initLevelMeter();
       drawSignalPreview();

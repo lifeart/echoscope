@@ -38,12 +38,13 @@ export async function initAudio(): Promise<void> {
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
-      channelCount: 1,
+      channelCount: 2,
     },
   });
 
   const micSource = ac.createMediaStreamSource(micStream);
-  ringBuffer = new RingBuffer(1, Math.floor(sampleRate * DEFAULT_BUFFER_SECONDS));
+  const actualChannels = micSource.channelCount;
+  ringBuffer = new RingBuffer(actualChannels, Math.floor(sampleRate * DEFAULT_BUFFER_SECONDS));
 
   let captureMethod: 'worklet' | 'script-processor' = 'script-processor';
   let micTapNode: AudioNode;
@@ -53,7 +54,14 @@ export async function initAudio(): Promise<void> {
       class MicTapProcessor extends AudioWorkletProcessor {
         process(inputs) {
           const input = inputs[0];
-          if (input && input[0] && input[0].length) this.port.postMessage(input[0]);
+          if (!input || !input[0] || !input[0].length) return true;
+          const channels = [];
+          for (let c = 0; c < input.length; c++) {
+            const copy = new Float32Array(input[c].length);
+            copy.set(input[c]);
+            channels.push(copy);
+          }
+          this.port.postMessage(channels);
           return true;
         }
       }
@@ -64,25 +72,30 @@ export async function initAudio(): Promise<void> {
     await ac.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
 
-    const workletNode = new AudioWorkletNode(ac, 'mic-tap');
+    const workletNode = new AudioWorkletNode(ac, 'mic-tap', {
+      channelCount: actualChannels,
+      channelCountMode: 'explicit',
+    });
     workletNode.port.onmessage = (e: MessageEvent) => {
-      const samples = e.data as Float32Array;
-      const copy = new Float32Array(samples.length);
-      copy.set(samples);
-      ringBuffer?.pushMono(copy);
-      bus.emit('audio:samples', copy);
+      const channels = e.data as Float32Array[];
+      ringBuffer?.push(channels);
+      bus.emit('audio:samples', channels[0]);
     };
     micSource.connect(workletNode);
     micTapNode = workletNode;
     captureMethod = 'worklet';
   } catch {
-    const sp = ac.createScriptProcessor(1024, 1, 1);
+    const sp = ac.createScriptProcessor(1024, actualChannels, actualChannels);
     sp.onaudioprocess = (ev: AudioProcessingEvent) => {
-      const input = ev.inputBuffer.getChannelData(0);
-      const copy = new Float32Array(input.length);
-      copy.set(input);
-      ringBuffer?.pushMono(copy);
-      bus.emit('audio:samples', copy);
+      const channels: Float32Array[] = [];
+      for (let c = 0; c < ev.inputBuffer.numberOfChannels; c++) {
+        const input = ev.inputBuffer.getChannelData(c);
+        const copy = new Float32Array(input.length);
+        copy.set(input);
+        channels.push(copy);
+      }
+      ringBuffer?.push(channels);
+      bus.emit('audio:samples', channels[0]);
     };
     micSource.connect(sp);
     sp.connect(ac.destination);
@@ -100,7 +113,7 @@ export async function initAudio(): Promise<void> {
   store.update(s => {
     s.audio.context = ac;
     s.audio.actualSampleRate = sampleRate;
-    s.audio.channelCount = 1;
+    s.audio.channelCount = actualChannels;
     s.audio.baseLatency = ac.baseLatency ?? 0;
     s.audio.outputLatency = (ac as any).outputLatency ?? 0;
     s.audio.captureMethod = captureMethod;

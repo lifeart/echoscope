@@ -45,6 +45,7 @@ const defaultConfig: AppConfig = {
   heatBins: DEFAULT_HEAT_BINS,
   speedOfSound: SPEED_OF_SOUND,
   spacing: 0.20,
+  micArraySpacing: 0,
   virtualArray: {
     enabled: false,
     halfWindow: 3,

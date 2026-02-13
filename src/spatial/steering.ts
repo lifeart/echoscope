@@ -64,7 +64,7 @@ export async function pingAndCaptureOneSide(
   which: 'L' | 'R',
   gain: number,
   listenMs: number,
-): Promise<{ micWin: Float32Array; which: 'L' | 'R'; delay: number }> {
+): Promise<{ micWin: Float32Array; micChannels: Float32Array[]; which: 'L' | 'R'; delay: number }> {
   const ac = getAudioContext();
   const sr = getSampleRate();
   const ring = getRingBuffer();
@@ -84,9 +84,10 @@ export async function pingAndCaptureOneSide(
   const end = ring.position;
   const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
   const micWin = ring.read(end, listenSamples);
+  const micChannels = ring.channels > 1 ? ring.readMulti(end, listenSamples) : [micWin];
 
   ping.out.disconnect();
-  return { micWin, which, delay };
+  return { micWin, micChannels, which, delay };
 }
 
 export async function pingAndCaptureSteered(
@@ -94,7 +95,7 @@ export async function pingAndCaptureSteered(
   dt: number,
   gain: number,
   listenMs: number,
-): Promise<{ micWin: Float32Array; delayL: number; delayR: number }> {
+): Promise<{ micWin: Float32Array; micChannels: Float32Array[]; delayL: number; delayR: number }> {
   const ac = getAudioContext();
   const sr = getSampleRate();
   const ring = getRingBuffer();
@@ -113,9 +114,10 @@ export async function pingAndCaptureSteered(
   const end = ring.position;
   const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
   const micWin = ring.read(end, listenSamples);
+  const micChannels = ring.channels > 1 ? ring.readMulti(end, listenSamples) : [micWin];
 
   ping.out.disconnect();
-  return { micWin, delayL: ping.delayL, delayR: ping.delayR };
+  return { micWin, micChannels, delayL: ping.delayL, delayR: ping.delayR };
 }
 
 export function computeSteeringDelay(angleDeg: number, spacing: number, speedOfSound: number): number {

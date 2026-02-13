@@ -97,6 +97,9 @@ export function renderCalibInfo(): void {
   lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, deltaConsistency\u2248${calib.geometryError.toFixed(4)}`);
   lines.push(`env baseline = ${(calib.envBaseline && calib.envBaselinePings > 0) ? `YES (${calib.envBaselinePings} pings)` : 'no'}`);
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
+  const micSp = state.config.micArraySpacing;
+  const chCount = state.audio.channelCount;
+  lines.push(`RX beamforming: ${(micSp > 0 && chCount >= 2) ? `ON (${chCount}ch, mic spacing=${micSp.toFixed(3)}m)` : 'OFF'}`);
 
   // Multiband info
   if (calib.multiband) {

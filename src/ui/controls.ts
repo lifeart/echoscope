@@ -34,6 +34,7 @@ export function readConfigFromDOM(): void {
     s.config.probe = probe;
     s.config.steeringAngleDeg = inputVal('angle');
     s.config.spacing = inputVal('spacing');
+    s.config.micArraySpacing = inputVal('micArraySpacing', 0);
     s.config.speedOfSound = inputVal('c');
     s.config.gain = inputVal('gain');
     s.config.listenMs = inputVal('listenMs');

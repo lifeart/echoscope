@@ -13,13 +13,30 @@ import { createProbe } from '../signal/probe-factory.js';
 import { resumeIfSuspended, getSampleRate } from '../audio/engine.js';
 import { pingAndCaptureSteered } from '../spatial/steering.js';
 import { computeSteeringDelay } from '../spatial/steering.js';
+import { delayAndSum } from '../spatial/rx-beamformer.js';
 import { predictedTau0ForPing } from '../calibration/engine.js';
-import type { PingDetailedResult, RangeProfile } from '../types.js';
+import type { PingDetailedResult, RangeProfile, ArrayGeometry } from '../types.js';
 
 let clutterState: ClutterState = { model: null };
 
 export function resetClutter(): void {
   clutterState = { model: null };
+}
+
+export function buildRxGeometry(micArraySpacing: number, speedOfSound: number): ArrayGeometry | null {
+  if (micArraySpacing <= 0) return null;
+  const geom = store.get().geometry;
+  const mic = geom.microphones[0] ?? { x: 0, y: 0, z: 0 };
+  const half = micArraySpacing / 2;
+  return {
+    speakers: geom.speakers,
+    microphones: [
+      { x: mic.x - half, y: mic.y, z: mic.z },
+      { x: mic.x + half, y: mic.y, z: mic.z },
+    ],
+    spacing: geom.spacing,
+    speedOfSound,
+  };
 }
 
 function signalEnergy(a: Float32Array): number {
@@ -93,6 +110,8 @@ async function captureGolaySteered(
   lockStrength: number,
   sampleRate: number,
   heatBins: number,
+  angleDeg: number,
+  micArraySpacing: number,
 ) {
   const capA = await pingAndCaptureSteered(a, dt, gain, listenMs);
   const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
@@ -102,9 +121,14 @@ async function captureGolaySteered(
   const capB = await pingAndCaptureSteered(b, dt, gain, listenMs);
   const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
 
+  // Apply RX beamforming if stereo mic array is configured
+  const rxGeo = buildRxGeometry(micArraySpacing, c);
+  const micA = rxGeo ? delayAndSum(capA.micChannels, angleDeg, rxGeo, sampleRate) : capA.micWin;
+  const micB = rxGeo ? delayAndSum(capB.micChannels, angleDeg, rxGeo, sampleRate) : capB.micWin;
+
   // Sum raw correlations WITHOUT per-half normalization to preserve Golay sidelobe cancellation
-  const corrA = fftCorrelateComplex(capA.micWin, a, sampleRate);
-  const corrB = fftCorrelateComplex(capB.micWin, b, sampleRate);
+  const corrA = fftCorrelateComplex(micA, a, sampleRate);
+  const corrB = fftCorrelateComplex(micB, b, sampleRate);
   const L = Math.min(corrA.correlation.length, corrB.correlation.length);
   const corrRealSum = new Float32Array(L);
   const corrImagSum = new Float32Array(L);
@@ -118,10 +142,10 @@ async function captureGolaySteered(
 
   // Debug: Golay correlation stats
   let micMaxA = 0, micMaxB = 0, corrSumMax = 0, corrSumMaxIdx = 0;
-  for (let i = 0; i < capA.micWin.length; i++) { const v = Math.abs(capA.micWin[i]); if (v > micMaxA) micMaxA = v; }
-  for (let i = 0; i < capB.micWin.length; i++) { const v = Math.abs(capB.micWin[i]); if (v > micMaxB) micMaxB = v; }
+  for (let i = 0; i < micA.length; i++) { const v = Math.abs(micA[i]); if (v > micMaxA) micMaxA = v; }
+  for (let i = 0; i < micB.length; i++) { const v = Math.abs(micB[i]); if (v > micMaxB) micMaxB = v; }
   for (let i = 0; i < corrRealSum.length; i++) { const v = Math.abs(corrRealSum[i]); if (v > corrSumMax) { corrSumMax = v; corrSumMaxIdx = i; } }
-  console.log(`[golayCorr] micA=${capA.micWin.length} micMaxA=${micMaxA.toExponential(3)} micB=${capB.micWin.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}`);
+  console.log(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
 
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));
@@ -170,6 +194,7 @@ export async function doPingDetailed(
     const golay = await captureGolaySteered(
       probe.a, probe.b, probe.gapMs ?? 12,
       dt, gain, listenMs, c, minR, maxR, lockStrength, sr, heatBins,
+      angleDeg, config.micArraySpacing,
     );
     corrFinalReal = golay.corrReal;
     corrFinalImag = golay.corrImag;
@@ -179,7 +204,12 @@ export async function doPingDetailed(
     const ref = probe.ref!;
     const cap = await pingAndCaptureSteered(ref, dt, gain, listenMs);
     const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
-    const res = corrAndBuildProfile(cap.micWin, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
+
+    // Apply RX beamforming if stereo mic array is configured
+    const rxGeo = buildRxGeometry(config.micArraySpacing, c);
+    const micSignal = rxGeo ? delayAndSum(cap.micChannels, angleDeg, rxGeo, sr) : cap.micWin;
+
+    const res = corrAndBuildProfile(micSignal, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
     corrFinalReal = res.corrReal;
     corrFinalImag = res.corrImag;
     tau0Final = res.tau0;

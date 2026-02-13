@@ -26,6 +26,15 @@ describe('RingBuffer', () => {
     expect(Array.from(ch1)).toEqual([4, 5, 6]);
   });
 
+  it('readMulti returns all channels', () => {
+    const rb = new RingBuffer(2, 8);
+    rb.push([new Float32Array([1, 2, 3]), new Float32Array([4, 5, 6])]);
+    const channels = rb.readMulti(rb.position, 3);
+    expect(channels.length).toBe(2);
+    expect(Array.from(channels[0])).toEqual([1, 2, 3]);
+    expect(Array.from(channels[1])).toEqual([4, 5, 6]);
+  });
+
   it('clears buffer', () => {
     const rb = new RingBuffer(1, 4);
     rb.pushMono(new Float32Array([1, 2, 3, 4]));

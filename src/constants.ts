@@ -28,17 +28,18 @@ export interface DevicePreset {
   name: string;
   d: number | null;
   mic: { x: number | null; y: number | null };
+  micSpacing: number | null;
 }
 
 export const DEVICE_PRESETS: Record<string, DevicePreset> = {
-  'mbp14':  { name: 'MacBook Pro 14\u2033',  d: 0.245, mic: { x: 0, y: 0.01 } },
-  'mbp16':  { name: 'MacBook Pro 16\u2033',  d: 0.275, mic: { x: 0, y: 0.01 } },
-  'mba13':  { name: 'MacBook Air 13\u2033',  d: 0.195, mic: { x: 0, y: 0.01 } },
-  'mba15':  { name: 'MacBook Air 15\u2033',  d: 0.235, mic: { x: 0, y: 0.01 } },
-  'iphone': { name: 'iPhone (portrait)',      d: 0.140, mic: { x: 0.05, y: 0.01 } },
-  'ipad11': { name: 'iPad Pro 11\u2033',      d: 0.180, mic: { x: 0, y: 0.005 } },
-  'ipad13': { name: 'iPad Pro 13\u2033',      d: 0.215, mic: { x: 0, y: 0.005 } },
-  'custom': { name: 'Custom',                 d: null,  mic: { x: null, y: null } },
+  'mbp14':  { name: 'MacBook Pro 14\u2033',  d: 0.245, mic: { x: 0, y: 0.01 }, micSpacing: 0.055 },
+  'mbp16':  { name: 'MacBook Pro 16\u2033',  d: 0.275, mic: { x: 0, y: 0.01 }, micSpacing: 0.055 },
+  'mba13':  { name: 'MacBook Air 13\u2033',  d: 0.195, mic: { x: 0, y: 0.01 }, micSpacing: 0.045 },
+  'mba15':  { name: 'MacBook Air 15\u2033',  d: 0.235, mic: { x: 0, y: 0.01 }, micSpacing: 0.045 },
+  'iphone': { name: 'iPhone (portrait)',      d: 0.140, mic: { x: 0.05, y: 0.01 }, micSpacing: 0.070 },
+  'ipad11': { name: 'iPad Pro 11\u2033',      d: 0.180, mic: { x: 0, y: 0.005 }, micSpacing: 0.050 },
+  'ipad13': { name: 'iPad Pro 13\u2033',      d: 0.215, mic: { x: 0, y: 0.005 }, micSpacing: 0.065 },
+  'custom': { name: 'Custom',                 d: null,  mic: { x: null, y: null }, micSpacing: null },
 };
 
 export const LAPTOP_PRESET_SCAN = {
@@ -52,6 +53,7 @@ export const LAPTOP_PRESET_SCAN = {
   qualityAlgo: 'auto' as const,
   extraCalPings: 6,
   envBaselineStrength: 0.60,
+  micArraySpacing: 0.055,
 };
 
 export const QUALITY_WEIGHTS = {

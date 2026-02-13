@@ -46,6 +46,11 @@ export function applyDevicePreset(key: string, silent = false): void {
       s.presetMicPosition.x = null;
       s.presetMicPosition.y = null;
     }
+    if (preset.micSpacing !== null) {
+      s.config.micArraySpacing = preset.micSpacing;
+      const micSpacingEl = document.getElementById('micArraySpacing') as HTMLInputElement | null;
+      if (micSpacingEl) micSpacingEl.value = preset.micSpacing.toFixed(3);
+    }
   });
 
   if (!silent) {
@@ -74,6 +79,7 @@ function applyLaptopScanPreset(): void {
     qualityAlgo: lp.qualityAlgo,
     extraCalPings: String(lp.extraCalPings),
     envBaselineStrength: String(lp.envBaselineStrength),
+    micArraySpacing: String(lp.micArraySpacing),
   };
 
   for (const [id, val] of Object.entries(sets)) {
