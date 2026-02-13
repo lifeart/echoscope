@@ -248,11 +248,23 @@ export interface HeatmapData {
 
 // --- Quality ---
 export type QualityAlgo = 'auto' | 'fast' | 'balanced' | 'max';
+export type ScanAggregateMode = 'mean' | 'median' | 'trimmedMean';
 
 export interface QualityPerf {
   ewmaMs: number;
   lastResolved: string;
   lastSwitchAt: number;
+}
+
+export interface AdaptiveQualityConfig {
+  enabled: boolean;
+  hysteresisMs: number;
+}
+
+export interface SubtractionBackoffConfig {
+  enabled: boolean;
+  collapseThreshold: number;
+  peakDropThreshold: number;
 }
 
 // --- Geometry Wizard ---
@@ -315,10 +327,18 @@ export interface AppConfig {
   scanDwell: number;
   scanPasses: number;
   strengthGate: number;
+  confidenceGate: number;
+  scanAggregateMode: ScanAggregateMode;
+  scanTrimFraction: number;
+  temporalIirAlpha: number;
+  outlierHistoryN: number;
+  continuityBins: number;
   qualityAlgo: QualityAlgo;
+  adaptiveQuality: AdaptiveQualityConfig;
   directionAxis: 'horizontal' | 'vertical';
   clutterSuppression: { enabled: boolean; strength: number };
   envBaseline: { enabled: boolean; strength: number; pings: number };
+  subtractionBackoff: SubtractionBackoffConfig;
   calibration: { repeats: number; gapMs: number; useCalib: boolean; multiband: boolean };
   devicePreset: string;
   heatBins: number;

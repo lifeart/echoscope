@@ -1,6 +1,16 @@
 import type { HeatmapData } from '../types.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
 
+export interface HeatmapRowUpdateOptions {
+  decayFactor?: number;
+  temporalIirAlpha?: number;
+}
+
+export interface ProfileAggregateOptions {
+  mode?: 'mean' | 'median' | 'trimmedMean';
+  trimFraction?: number;
+}
+
 export function createHeatmap(angles: number[], bins: number): HeatmapData {
   const count = angles.length;
   return {
@@ -19,9 +29,14 @@ export function updateHeatmapRow(
   profile: Float32Array,
   bestBin: number,
   bestVal: number,
-  decayFactor = 0.90,
+  decayOrOptions: number | HeatmapRowUpdateOptions = 0.90,
 ): void {
   const { bins, data, bestBin: bestBinArr, bestVal: bestValArr } = heatmap;
+  const options: HeatmapRowUpdateOptions = typeof decayOrOptions === 'number'
+    ? { decayFactor: decayOrOptions }
+    : decayOrOptions;
+  const decayFactor = options.decayFactor ?? 0.90;
+  const temporalIirAlpha = options.temporalIirAlpha;
 
   // Debug: log profile stats
   let pMin = Infinity, pMax = -Infinity, pNonZero = 0;
@@ -34,10 +49,23 @@ export function updateHeatmapRow(
 
   for (let b = 0; b < bins; b++) {
     const idx = rowIndex * bins + b;
-    data[idx] = Math.max(data[idx] * decayFactor, profile[b]);
+    const decayed = data[idx] * decayFactor;
+    if (Number.isFinite(temporalIirAlpha)) {
+      const alpha = Math.max(0.01, Math.min(1, temporalIirAlpha!));
+      data[idx] = decayed + alpha * (profile[b] - decayed);
+    } else {
+      data[idx] = Math.max(decayed, profile[b]);
+    }
   }
-  bestBinArr[rowIndex] = bestBin;
-  bestValArr[rowIndex] = bestVal;
+  if (Number.isFinite(temporalIirAlpha)) {
+    const integrated = data.subarray(rowIndex * bins, rowIndex * bins + bins);
+    const bestIntegrated = pickBestFromProfile(integrated);
+    bestBinArr[rowIndex] = bestIntegrated.bin;
+    bestValArr[rowIndex] = bestIntegrated.val;
+  } else {
+    bestBinArr[rowIndex] = bestBin;
+    bestValArr[rowIndex] = bestVal;
+  }
 
   // Debug: verify data was written
   let dMax = 0, dNonZero = 0;
@@ -52,6 +80,24 @@ export function updateHeatmapRow(
 export function averageProfiles(
   profiles: Float32Array[],
 ): { averaged: Float32Array; bestBin: number; bestVal: number } {
+  return aggregateProfiles(profiles, { mode: 'mean' });
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  values.sort((a, b) => a - b);
+  const mid = Math.floor(values.length / 2);
+  if (values.length % 2 === 0) return 0.5 * (values[mid - 1] + values[mid]);
+  return values[mid];
+}
+
+export function aggregateProfiles(
+  profiles: Float32Array[],
+  options?: ProfileAggregateOptions,
+): { averaged: Float32Array; bestBin: number; bestVal: number } {
+  const mode = options?.mode ?? 'mean';
+  const trimFraction = Math.max(0, Math.min(0.45, options?.trimFraction ?? 0.2));
+
   if (profiles.length === 0) {
     const empty = new Float32Array(0);
     return { averaged: empty, bestBin: -1, bestVal: 0 };
@@ -63,11 +109,31 @@ export function averageProfiles(
   const len = profiles[0].length;
   const averaged = new Float32Array(len);
   const n = profiles.length;
-  for (let i = 0; i < len; i++) {
-    let sum = 0;
-    for (let p = 0; p < n; p++) sum += profiles[p][i];
-    averaged[i] = sum / n;
+
+  if (mode === 'mean') {
+    for (let i = 0; i < len; i++) {
+      let sum = 0;
+      for (let p = 0; p < n; p++) sum += profiles[p][i];
+      averaged[i] = sum / n;
+    }
+  } else {
+    const values: number[] = new Array(n);
+    for (let i = 0; i < len; i++) {
+      for (let p = 0; p < n; p++) values[p] = profiles[p][i];
+      if (mode === 'median') {
+        averaged[i] = median(values);
+      } else {
+        values.sort((a, b) => a - b);
+        const trim = Math.min(Math.floor(n * trimFraction), Math.floor((n - 1) / 2));
+        const lo = trim;
+        const hi = n - trim;
+        let sum = 0;
+        for (let j = lo; j < hi; j++) sum += values[j];
+        averaged[i] = sum / Math.max(1, hi - lo);
+      }
+    }
   }
+
   const best = pickBestFromProfile(averaged);
   return { averaged, bestBin: best.bin, bestVal: best.val };
 }

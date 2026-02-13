@@ -5,10 +5,11 @@ import { fftCorrelateComplex } from '../dsp/fft-correlate.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { estimateBestFromProfile } from '../dsp/peak.js';
-import { applyQualityAlgorithms } from '../dsp/quality.js';
+import { applyQualityAlgorithms, resolveAutoQualityAlgo } from '../dsp/quality.js';
 import type { QualityAlgoName } from '../dsp/quality.js';
 import { applyEnvBaseline } from '../dsp/clutter.js';
 import { suppressStaticReflections, type ClutterState } from '../dsp/clutter.js';
+import { computeProfileConfidence } from './confidence.js';
 import { createProbe } from '../signal/probe-factory.js';
 import { resumeIfSuspended, getSampleRate } from '../audio/engine.js';
 import { pingAndCaptureSteered } from '../spatial/steering.js';
@@ -182,6 +183,7 @@ export async function doPingDetailed(
 
   const lockStrength = (state.calibration?.valid && config.calibration.useCalib)
     ? state.calibration.quality : 0;
+  const nowMs = Date.now();
 
   let corrFinalReal: Float32Array;
   let corrFinalImag: Float32Array;
@@ -228,7 +230,12 @@ export async function doPingDetailed(
   const envBaseline = state.calibration?.envBaseline ?? null;
   if (config.envBaseline.enabled) {
     const beforeBaseline = profFinal;
-    profFinal = applyEnvBaseline(profFinal, envBaseline, config.envBaseline.strength);
+    profFinal = applyEnvBaseline(
+      profFinal,
+      envBaseline,
+      config.envBaseline.strength,
+      config.subtractionBackoff,
+    );
     let eMax = 0, eNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > eMax) eMax = profFinal[i]; if (profFinal[i] > 1e-15) eNZ++; }
     console.log(`[doPing:envBaseline] max=${eMax.toExponential(3)} nonZero=${eNZ}/${profFinal.length}`);
@@ -241,7 +248,10 @@ export async function doPingDetailed(
 
   // Apply static clutter suppression during scanning
   if (updateHeatRowIndex !== null && config.clutterSuppression.enabled) {
-    const result = suppressStaticReflections(profFinal, clutterState, config.clutterSuppression.strength);
+    const result = suppressStaticReflections(profFinal, clutterState, config.clutterSuppression.strength, {
+      backoff: config.subtractionBackoff,
+      selectiveUpdate: { enabled: true, noveltyRatio: 0.35 },
+    });
     profFinal = result.profile;
     clutterState = result.clutterState;
     let cMax = 0, cNZ = 0;
@@ -250,7 +260,17 @@ export async function doPingDetailed(
   }
 
   // Apply quality algorithms
-  const algoName: QualityAlgoName = config.qualityAlgo === 'auto' ? 'balanced' : config.qualityAlgo;
+  let algoName: QualityAlgoName = config.qualityAlgo === 'auto' ? 'balanced' : config.qualityAlgo;
+  let autoSwitched = false;
+  if (config.qualityAlgo === 'auto') {
+    const resolved = resolveAutoQualityAlgo(profFinal, state.qualityPerf, nowMs, {
+      enabled: config.adaptiveQuality.enabled,
+      hysteresisMs: config.adaptiveQuality.hysteresisMs,
+    });
+    algoName = resolved.resolved;
+    autoSwitched = resolved.switched;
+    console.log(`[doPing:autoQuality] resolved=${algoName} psr=${resolved.stats.psr.toFixed(2)} snrDb=${resolved.stats.snrDb.toFixed(2)} switched=${autoSwitched}`);
+  }
   profFinal = applyQualityAlgorithms(profFinal, algoName);
   {
     let qMax = 0, qNZ = 0;
@@ -263,8 +283,9 @@ export async function doPingDetailed(
   let bestVal = bestPost.val;
   let bestR = bestPost.range;
 
-  const isWeak = bestVal < strengthGate;
-  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} isWeak=${isWeak}`);
+  const conf = computeProfileConfidence(profFinal, bestBin, bestVal);
+  const isWeak = bestVal < strengthGate || conf.confidence < config.confidenceGate;
+  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} confidence=${conf.confidence.toFixed(3)} confidenceGate=${config.confidenceGate.toFixed(3)} isWeak=${isWeak}`);
   if (isWeak) {
     bestBin = -1;
     bestVal = 0;
@@ -273,6 +294,13 @@ export async function doPingDetailed(
 
   // Update store
   store.update(s => {
+    if (config.qualityAlgo === 'auto') {
+      s.qualityPerf.lastResolved = algoName;
+      if (autoSwitched || s.qualityPerf.lastSwitchAt <= 0) {
+        s.qualityPerf.lastSwitchAt = nowMs;
+      }
+    }
+
     s.lastProfile.corr = corrFinalReal;
     s.lastProfile.tau0 = tau0Final;
     s.lastProfile.c = c;

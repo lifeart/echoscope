@@ -1,3 +1,5 @@
+import type { QualityPerf } from '../types.js';
+
 export function median3Profile(src: Float32Array): Float32Array {
   const n = src.length;
   const out = new Float32Array(n);
@@ -39,6 +41,83 @@ export function adaptiveFloorSuppressProfile(src: Float32Array): Float32Array {
 }
 
 export type QualityAlgoName = 'fast' | 'balanced' | 'max';
+
+export interface ProfileQualityStats {
+  peak: number;
+  floor: number;
+  psr: number;
+  snrDb: number;
+}
+
+export interface ResolveAutoQualityOptions {
+  enabled: boolean;
+  hysteresisMs: number;
+  lowPsr: number;
+  highPsr: number;
+}
+
+function medianValue(src: Float32Array): number {
+  if (!src.length) return 0;
+  const sorted = Array.from(src).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
+  return sorted[mid];
+}
+
+export function computeProfileQualityStats(profile: Float32Array): ProfileQualityStats {
+  if (profile.length === 0) {
+    return { peak: 0, floor: 0, psr: 0, snrDb: -Infinity };
+  }
+  let peak = 0;
+  for (let i = 0; i < profile.length; i++) {
+    if (profile[i] > peak) peak = profile[i];
+  }
+  const floor = Math.max(1e-12, medianValue(profile));
+  const psr = peak / floor;
+  const snrDb = 10 * Math.log10(Math.max(1e-12, psr));
+  return { peak, floor, psr, snrDb };
+}
+
+export function resolveAutoQualityAlgo(
+  profile: Float32Array,
+  perf: QualityPerf,
+  nowMs: number,
+  options?: Partial<ResolveAutoQualityOptions>,
+): { resolved: QualityAlgoName; stats: ProfileQualityStats; switched: boolean } {
+  const opts: ResolveAutoQualityOptions = {
+    enabled: true,
+    hysteresisMs: 1200,
+    lowPsr: 3,
+    highPsr: 8,
+    ...options,
+  };
+
+  const stats = computeProfileQualityStats(profile);
+  if (!opts.enabled) return { resolved: 'balanced', stats, switched: false };
+
+  const current = (perf.lastResolved === 'fast' || perf.lastResolved === 'balanced' || perf.lastResolved === 'max')
+    ? perf.lastResolved
+    : 'balanced';
+
+  let target: QualityAlgoName = current;
+  if (current === 'max') {
+    target = (stats.psr > opts.lowPsr + 1 && stats.snrDb > 8) ? 'balanced' : 'max';
+  } else if (current === 'fast') {
+    target = (stats.psr < opts.highPsr - 1 || stats.snrDb < 12) ? 'balanced' : 'fast';
+  } else {
+    if (stats.psr < opts.lowPsr - 0.5 || stats.snrDb < 5) target = 'max';
+    else if (stats.psr > opts.highPsr + 1 && stats.snrDb > 16) target = 'fast';
+    else target = 'balanced';
+  }
+
+  if (target === current) return { resolved: current, stats, switched: false };
+
+  const elapsed = nowMs - perf.lastSwitchAt;
+  if (elapsed < opts.hysteresisMs) {
+    return { resolved: current, stats, switched: false };
+  }
+  return { resolved: target, stats, switched: true };
+}
 
 export function applyQualityAlgorithms(profile: Float32Array, algo: QualityAlgoName): Float32Array {
   if (algo === 'fast') return new Float32Array(profile);

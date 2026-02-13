@@ -2,6 +2,87 @@
 
 ## Context
 
+## Scan Robustness Gap Plan (2026-02-13)
+
+Code-audited status against requested scan improvements:
+
+### Already wired
+
+- Multi-pass per-angle scanning exists via `scanPasses` in `src/scan/scan-engine.ts`.
+- SAFT post-focusing exists and is integrated (`src/scan/saft.ts` + `applySaftHeatmapIfEnabled`).
+- RX beamforming is already used in scan ping path when `micArraySpacing > 0` (`src/scan/ping-cycle.ts`).
+- Stereo capture is requested (`channelCount: 2`) in `src/audio/engine.ts`.
+
+### Missing / incomplete features
+
+1. **Adaptive confidence gating (missing)**
+  - Current acceptance is mostly `bestVal > strengthGate`.
+  - Add per-row confidence score: peak-to-local-floor + peak sharpness + sidelobe ratio.
+
+2. **Neighborhood consensus winner selection (missing)**
+  - Current scan end chooses global strongest row (`bestVal`).
+  - Add 3-row smoothing plus `bestBin` continuity checks before selecting final direction.
+
+3. **Robust multi-ping integration (partial)**
+  - Multipass currently uses arithmetic mean.
+  - Add robust aggregation option: median / trimmed mean (2-4 pings).
+
+4. **Temporal IIR in data path (missing)**
+  - Existing IIR is display-only (`display`), not fed into `data` accumulation.
+  - Add optional temporal IIR update in `heatmap.data` before best-bin extraction.
+
+5. **Per-angle outlier rejection (missing)**
+  - No per-angle profile history + clustering in scan path.
+  - Add N-profile history per angle and reject spikes via median/MAD clustering.
+
+6. **Quality auto mode truly adaptive (missing)**
+  - `qualityAlgo='auto'` is effectively hardwired to `'balanced'`.
+  - Resolve `fast|balanced|max` from measured SNR/PSR with hysteresis.
+
+7. **Self-limiting env/clutter subtraction (partial)**
+  - Env-baseline fallback protects full-zero collapse only.
+  - Add automatic subtraction-strength backoff when collapse ratio is high or peak drops too sharply.
+
+8. **Selective clutter model update (missing)**
+  - Clutter model updates all bins every ping, which can learn persistent targets.
+  - Update only low-confidence/non-moving bins.
+
+### Priority implementation order
+
+#### P0: Stability first
+
+1. Adaptive confidence gating + confidence thresholding.
+2. Neighborhood consensus direction selection.
+3. Self-limiting subtraction + selective clutter model updates.
+
+#### P1: SNR accumulation
+
+4. Robust multiping aggregation (median/trimmed).
+5. Temporal IIR feedback into data layer.
+6. Per-angle outlier rejection history.
+
+#### P2: Resolution upgrades
+
+7. Adaptive quality auto mode.
+8. Cross-angle continuity across sweeps.
+
+### Ranked improvement options (impact/feasibility)
+
+1. **Stereo RX + TX/RX combined processing**: partially implemented, needs robust fusion path.
+2. **Synthetic aperture (SAFT/DAS)**: baseline implemented, can be tightened with confidence coupling.
+3. **Frequency-dependent steering refinement**: not implemented.
+4. **Capon/MVDR beamforming**: not implemented.
+5. **Beam-pattern deconvolution (CLEAN/RL)**: not implemented.
+
+### Planned file touch points
+
+- `src/scan/scan-engine.ts`: consensus winner + angular continuity.
+- `src/scan/heatmap-data.ts`: robust aggregation + temporal IIR.
+- `src/scan/ping-cycle.ts`: adaptive confidence and quality auto resolver hooks.
+- `src/dsp/clutter.ts`: self-limiting subtraction and selective model update.
+- `src/types.ts`, `src/core/store.ts`, `src/ui/controls.ts`: config surface additions.
+- `tests/scan/*`, `tests/dsp/*`: regression coverage for gating/consensus/multiping/subtraction.
+
 The app is a browser-based active sonar echolocation system currently implemented as a 2538-line monolithic `index.html`. A partial extraction exists in `src/` (8 JS files, ~1100 lines) but is **not wired into the running app** — the HTML still contains all logic inline. The existing `src/` code also has architectural problems: mutable global `state` singleton, DSP functions coupled to DOM (`el()` calls inside signal processing), and no TypeScript.
 
 This plan refactors into a Vite + TypeScript project and implements all missing features from the research document: FFT-based correlation, GCC-PHAT, multichannel RX with beamforming/DOA, Wasm AudioWorklet DSP, TensorFlow.js ML, WebRTC multi-device sync, and Kalman tracking.
