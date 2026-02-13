@@ -126,7 +126,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
   // X-axis ticks (angle, rotated 45°)
   ctx.font = `${8 * s}px system-ui`;
-  const angleStep = rows <= 7 ? 1 : 2;
+  const angleStep = rows <= 7 ? 1 : Math.max(1, Math.round(10 / Math.abs(heatmap.angles[1] - heatmap.angles[0] || 1)));
   for (let ri = 0; ri < rows; ri += angleStep) {
     const frac = ri / Math.max(1, rows - 1);
     const px = xPad + frac * plotW;
