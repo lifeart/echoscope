@@ -1,13 +1,11 @@
 import { RTCTransport } from './rtc-transport.js';
 import { encodeSignal, decodeSignal } from './signaling.js';
 import { ClockSync } from './sync-protocol.js';
-import { encodeAudioChunk, decodeAudioChunk } from './codec.js';
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import type { PeerConnectionState, SyncedAudioChunk, ArrayGeometry } from '../types.js';
+import type { PeerConnectionState, ArrayGeometry } from '../types.js';
 
 // Message tag bytes
-const TAG_AUDIO = 0x01;
 const TAG_CLOCK_SYNC = 0x02;
 const TAG_HEARTBEAT = 0x03;
 const TAG_GEOMETRY = 0x04;
@@ -21,13 +19,11 @@ const HEARTBEAT_DISCONNECT_MS = 18000;
 const SYNC_WARMUP_INTERVAL_MS = 500;
 const SYNC_STEADY_INTERVAL_MS = 3000;
 const SYNC_WARMUP_COUNT = 5;
-const MAX_CHUNKS_PER_PEER = 8;
 
 interface PeerSession {
   clockSync: ClockSync;
   syncInterval: ReturnType<typeof setInterval> | null;
   heartbeatInterval: ReturnType<typeof setInterval> | null;
-  lastChunks: SyncedAudioChunk[];
   state: PeerConnectionState;
   syncCount: number;
 }
@@ -101,13 +97,6 @@ export class PeerManager {
     this.updateStoreFromSessions();
   }
 
-  sendAudioChunk(channels: Float32Array[], timestamp: number, sampleRate: number): void {
-    const probeConfig = store.get().config.probe;
-    const encoded = encodeAudioChunk(timestamp, sampleRate, channels, probeConfig);
-    const tagged = tagMessage(TAG_AUDIO, encoded);
-    this.transport.broadcast(tagged);
-  }
-
   sendCaptureRequest(data: ArrayBuffer): void {
     const tagged = tagMessage(TAG_CAPTURE_REQUEST, data);
     this.transport.broadcast(tagged);
@@ -124,14 +113,6 @@ export class PeerManager {
 
   onCaptureResponse(handler: (peerId: string, data: ArrayBuffer) => void): void {
     this.captureResponseHandler = handler;
-  }
-
-  getAllRemoteChunks(): SyncedAudioChunk[] {
-    const chunks: SyncedAudioChunk[] = [];
-    for (const session of this.sessions.values()) {
-      chunks.push(...session.lastChunks);
-    }
-    return chunks;
   }
 
   getPeerState(peerId: string): PeerConnectionState {
@@ -165,7 +146,6 @@ export class PeerManager {
       clockSync: new ClockSync(),
       syncInterval: null,
       heartbeatInterval: null,
-      lastChunks: [],
       state: 'connecting',
       syncCount: 0,
     };
@@ -261,9 +241,6 @@ export class PeerManager {
     }
 
     switch (tag) {
-      case TAG_AUDIO:
-        this.handleAudioChunk(peerId, payload);
-        break;
       case TAG_CLOCK_SYNC:
         this.handleClockSync(peerId, payload);
         break;
@@ -280,29 +257,6 @@ export class PeerManager {
         this.captureResponseHandler?.(peerId, payload);
         break;
     }
-  }
-
-  private handleAudioChunk(peerId: string, payload: ArrayBuffer): void {
-    const decoded = decodeAudioChunk(payload);
-    if (!decoded) return;
-
-    const session = this.sessions.get(peerId);
-    if (!session) return;
-
-    const chunk: SyncedAudioChunk = {
-      peerId,
-      timestamp: decoded.timestamp - session.clockSync.getOffset(),
-      sampleRate: decoded.sampleRate,
-      channels: decoded.channels,
-      probeConfig: store.get().config.probe,
-    };
-
-    session.lastChunks.push(chunk);
-    if (session.lastChunks.length > MAX_CHUNKS_PER_PEER) {
-      session.lastChunks.shift();
-    }
-
-    bus.emit('peer:data', chunk);
   }
 
   private handleClockSync(peerId: string, payload: ArrayBuffer): void {

@@ -275,6 +275,29 @@ export function initApp(): void {
     el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
   }
 
+  const liveConfigControlIds = [
+    'micArraySpacing', 'gain',
+    'scanStep', 'scanPasses',
+    'strengthGate', 'confidenceGate',
+    'scanClutterOn', 'scanClutterStrength',
+    'qualityAlgo', 'scanAggregateMode', 'scanTrimFraction',
+    'temporalIirAlpha', 'outlierHistoryN', 'continuityBins',
+    'adaptiveQualityOn', 'adaptiveQualityHysteresisMs',
+    'subtractionBackoffOn', 'subtractionCollapseThreshold', 'subtractionPeakDropThreshold',
+    'calRepeats', 'calRepeatGapMs', 'extraCalPings', 'envBaselineStrength', 'useEnvBaseline', 'useMultiband',
+    'vaEnabled', 'vaHalfWindow', 'vaWindow', 'vaCoherenceFloor',
+  ];
+  for (const id of liveConfigControlIds) {
+    const control = el(id) as HTMLInputElement | HTMLSelectElement | null;
+    if (!control) continue;
+    const eventName = control instanceof HTMLSelectElement || control.type === 'checkbox' || control.type === 'range'
+      ? 'change'
+      : 'input';
+    control.addEventListener(eventName, () => {
+      readConfigFromDOM();
+    });
+  }
+
   const displayBlankingInputIds = [
     'displayBlankingStartRange',
     'displayBlankingEndRange',

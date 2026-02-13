@@ -461,7 +461,6 @@ export interface AppEvents {
   'peer:connected': { peerId: string };
   'peer:disconnected': { peerId: string };
   'peer:stale': { peerId: string };
-  'peer:data': SyncedAudioChunk;
   'state:changed': { path: string; value: unknown };
   'audio:initialized': AudioState;
   'audio:samples': Float32Array;

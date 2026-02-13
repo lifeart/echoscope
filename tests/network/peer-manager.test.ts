@@ -52,10 +52,6 @@ vi.mock('../../src/network/signaling.js', () => ({
   decodeSignal: vi.fn((text: string) => JSON.parse(atob(text))),
 }));
 
-vi.mock('../../src/network/codec.js', () => ({
-  encodeAudioChunk: vi.fn(() => new ArrayBuffer(10)),
-  decodeAudioChunk: vi.fn(() => null),
-}));
 
 // Mock ClockSync so we can control convergence per instance
 vi.mock('../../src/network/sync-protocol.js', () => {
@@ -91,7 +87,6 @@ vi.mock('../../src/core/event-bus.js', () => ({
 
 import { PeerManager } from '../../src/network/peer-manager.js';
 import { bus } from '../../src/core/event-bus.js';
-import { decodeAudioChunk } from '../../src/network/codec.js';
 
 // --- Helpers ---
 
@@ -118,7 +113,6 @@ function buildTaggedEmptyMessage(tag: number): ArrayBuffer {
 }
 
 // Tag constants
-const TAG_AUDIO = 0x01;
 const TAG_CLOCK_SYNC = 0x02;
 const TAG_HEARTBEAT = 0x03;
 const TAG_GEOMETRY = 0x04;
@@ -171,10 +165,6 @@ describe('PeerManager', () => {
     expect(pm.getConnectedPeerIds()).toEqual([]);
   });
 
-  it('getAllRemoteChunks returns empty initially', () => {
-    expect(pm.getAllRemoteChunks()).toEqual([]);
-  });
-
   it('disconnect emits peer:disconnected', async () => {
     const { peerId } = await pm.createOffer();
     pm.disconnect(peerId);
@@ -186,13 +176,6 @@ describe('PeerManager', () => {
     await pm.createOffer();
     pm.disconnectAll();
     expect(pm.getPeerCount()).toBe(0);
-  });
-
-  it('sendAudioChunk calls broadcast on transport', () => {
-    const channels = [new Float32Array([1, 2, 3])];
-    pm.sendAudioChunk(channels, 0, 48000);
-    const transport = pm.getTransport();
-    expect(transport.broadcast).toHaveBeenCalled();
   });
 
   it('onCaptureRequest registers handler', () => {
@@ -540,112 +523,6 @@ describe('PeerManager', () => {
       const payload = new Uint8Array([0x01]);
       const msg = buildTaggedMessage(TAG_CAPTURE_REQUEST, payload);
       expect(() => callbacks.messageCallback!(peerId, msg)).not.toThrow();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Audio chunk handling
-  // -------------------------------------------------------------------------
-
-  describe('handleAudioChunk', () => {
-    it('applies clock offset and emits peer:data', async () => {
-      vi.useFakeTimers();
-      try {
-        const { peerId } = await pm.createOffer();
-        callbacks.stateCallback!(peerId, 'connected');
-
-        // Drive to 'ready' state
-        for (let i = 0; i < 3; i++) {
-          const pong = JSON.stringify({ type: 'pong', t0: 0.1, t1: 0.1, t2: 0.1 });
-          callbacks.messageCallback!(peerId, buildTaggedStringMessage(TAG_CLOCK_SYNC, pong));
-        }
-        expect(pm.getPeerState(peerId)).toBe('ready');
-
-        // Override codec mock for this test to return decoded data
-        const mockTimestamp = 1000.0;
-        const mockChannels = [new Float32Array([0.1, 0.2, 0.3])];
-        vi.mocked(decodeAudioChunk).mockReturnValueOnce({
-          timestamp: mockTimestamp,
-          sampleRate: 48000,
-          channels: mockChannels,
-          probeType: 'chirp',
-        });
-
-        vi.mocked(bus.emit).mockClear();
-
-        // Send an audio message
-        const audioPayload = new Uint8Array([0x00]); // content doesn't matter, mock controls decode
-        const msg = buildTaggedMessage(TAG_AUDIO, audioPayload);
-        callbacks.messageCallback!(peerId, msg);
-
-        // bus.emit should be called with 'peer:data' with adjusted timestamp
-        expect(bus.emit).toHaveBeenCalledWith(
-          'peer:data',
-          expect.objectContaining({
-            peerId,
-            // timestamp = mockTimestamp - clockSync.getOffset() = 1000.0 - 0.005
-            timestamp: mockTimestamp - 0.005,
-            sampleRate: 48000,
-            channels: mockChannels,
-          }),
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('decoded null audio chunk is ignored', async () => {
-      vi.useFakeTimers();
-      try {
-        const { peerId } = await pm.createOffer();
-        callbacks.stateCallback!(peerId, 'connected');
-
-        // decodeAudioChunk returns null by default from the mock
-        vi.mocked(bus.emit).mockClear();
-
-        const msg = buildTaggedMessage(TAG_AUDIO, new Uint8Array([0x00]));
-        callbacks.messageCallback!(peerId, msg);
-
-        // No peer:data should be emitted
-        const dataCalls = vi.mocked(bus.emit).mock.calls
-          .filter(c => c[0] === 'peer:data');
-        expect(dataCalls).toHaveLength(0);
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('stores chunks in lastChunks up to MAX_CHUNKS_PER_PEER', async () => {
-      vi.useFakeTimers();
-      try {
-        const { peerId } = await pm.createOffer();
-        callbacks.stateCallback!(peerId, 'connected');
-
-        // Drive to ready
-        for (let i = 0; i < 3; i++) {
-          const pong = JSON.stringify({ type: 'pong', t0: 0.1, t1: 0.1, t2: 0.1 });
-          callbacks.messageCallback!(peerId, buildTaggedStringMessage(TAG_CLOCK_SYNC, pong));
-        }
-
-        // Send 10 audio chunks (max per peer is 8)
-        for (let i = 0; i < 10; i++) {
-          vi.mocked(decodeAudioChunk).mockReturnValueOnce({
-            timestamp: i * 100,
-            sampleRate: 48000,
-            channels: [new Float32Array([i])],
-            probeType: 'chirp',
-          });
-          callbacks.messageCallback!(peerId, buildTaggedMessage(TAG_AUDIO, new Uint8Array([0x00])));
-        }
-
-        const chunks = pm.getAllRemoteChunks();
-        expect(chunks).toHaveLength(8);
-        // The oldest chunks should have been shifted off; the last chunk should have the latest timestamp
-        // Chunk timestamps = 0,100,200,...,900. After shift, we should have 200..900
-        expect(chunks[chunks.length - 1].timestamp).toBeCloseTo(900 - 0.005, 2);
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 

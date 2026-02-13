@@ -18,10 +18,10 @@
 
     <section class="card controls-pane">
       <div class="row actions-sticky" style="justify-content:space-between">
-        <button id="btnInit">Init Audio <kbd>I</kbd></button>
-        <button id="btnPing" disabled>Ping <kbd>P</kbd></button>
-        <button id="btnScan" disabled>Scan <kbd>S</kbd></button>
-        <button id="btnStop" disabled>Stop <kbd>Esc</kbd></button>
+        <button id="btnInit" title="Initialize Web Audio, request microphone access, and prepare the app for ping/scan operations.">Init Audio <kbd>I</kbd></button>
+        <button id="btnPing" disabled title="Run a single measurement at the current steering angle and update readouts.">Ping <kbd>P</kbd></button>
+        <button id="btnScan" disabled title="Run a full angular sweep using current scan settings and build the heatmap.">Scan <kbd>S</kbd></button>
+        <button id="btnStop" disabled title="Stop the active scan loop immediately.">Stop <kbd>Esc</kbd></button>
       </div>
 
       <div id="levelMeterWrap" style="display:none" class="level-meter-wrap">
@@ -41,7 +41,7 @@
       <div class="row">
         <div>
           <label>Mode</label>
-          <select id="mode">
+          <select id="mode" title="Select probing waveform: chirp, MLS, Golay, or multiplex.">
             <option value="chirp">Chirp</option>
             <option value="mls">MLS (PRBS)</option>
             <option value="golay">Golay pair (A+B)</option>
@@ -51,14 +51,14 @@
 
         <div>
           <label>Angle θ (deg): <span id="angleVal">0</span></label>
-          <input id="angle" type="range" min="-60" max="60" step="1" value="0"/>
+          <input id="angle" type="range" min="-60" max="60" step="1" value="0" title="Steering angle in degrees. Negative is left/down, positive is right/up."/>
         </div>
       </div>
 
       <div class="row" style="margin-top:10px">
         <div>
           <label>Device preset</label>
-          <select id="devicePreset">
+          <select id="devicePreset" title="Apply known device geometry defaults for speaker spacing and mic position.">
             <option value="mbp14">MacBook Pro 14″</option>
             <option value="mbp16">MacBook Pro 16″</option>
             <option value="mba13">MacBook Air 13″</option>
@@ -71,7 +71,7 @@
         </div>
         <div>
           <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
-            <input id="presetApplyScan" type="checkbox">
+            <input id="presetApplyScan" type="checkbox" title="Also apply recommended scan parameters when a laptop preset is selected.">
             Also apply scan settings
           </label>
         </div>
@@ -507,7 +507,7 @@
         <div class="pill"><span id="dirReadout">Direction: —</span></div>
         <div class="pill" id="pingStats" style="display:none"></div>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
-          <input id="showTrace" type="checkbox" checked>
+          <input id="showTrace" type="checkbox" checked title="Overlay current best-target trajectory on the heatmap/geometry views.">
           Show best-target trace
         </label>
       </div>
@@ -519,13 +519,13 @@
       <!-- Calibration -->
       <p class="hint">Calibration measures speaker-to-mic distances to lock direct-path timing and improve range accuracy.</p>
       <div class="row" style="justify-content:space-between">
-        <button id="btnCalibrate" disabled>Calibrate <kbd>C</kbd></button>
+        <button id="btnCalibrate" disabled title="Run direct-path calibration to improve timing lock and range accuracy.">Calibrate <kbd>C</kbd></button>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
-          <input id="useCalib" type="checkbox" checked>
+          <input id="useCalib" type="checkbox" checked title="Use calibration data to constrain direct-path search and reduce ambiguity.">
           Use calibration to lock direct-path search
         </label>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
-          <input id="useMultiband" type="checkbox" checked>
+          <input id="useMultiband" type="checkbox" checked title="Use multiple frequency bands during calibration for more robust lock.">
           Multiband calibration
         </label>
       </div>
@@ -551,7 +551,7 @@
           </div>
           <div>
             <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
-              <input id="useEnvBaseline" type="checkbox" checked>
+              <input id="useEnvBaseline" type="checkbox" checked title="Capture ambient baseline and subtract static room reflections during calibration.">
               Use env baseline
             </label>
           </div>
@@ -575,7 +575,7 @@
       <details style="margin-top:12px;">
         <summary>Device Info</summary>
         <div class="row" style="margin-top:10px;">
-          <button id="btnRefreshDevices" disabled>Refresh device list</button>
+          <button id="btnRefreshDevices" disabled title="Re-query available media devices after permissions are granted.">Refresh device list</button>
           <span class="small">(Device labels appear after mic permission.)</span>
         </div>
         <div class="mono" id="deviceInfo" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
@@ -586,17 +586,17 @@
         <p class="hint">Connect two devices via WebRTC. One creates an offer, the other accepts.</p>
 
         <div class="row" style="margin-top:8px">
-          <button id="btnPeerCreateOffer" disabled>Create Offer</button>
-          <button id="btnPeerAcceptOffer" disabled>Accept Offer</button>
-          <button id="btnPeerDisconnect" disabled>Disconnect</button>
+          <button id="btnPeerCreateOffer" disabled title="Create a WebRTC offer to start pairing with another device.">Create Offer</button>
+          <button id="btnPeerAcceptOffer" disabled title="Start responder flow and paste a remote offer.">Accept Offer</button>
+          <button id="btnPeerDisconnect" disabled title="Close the current peer connection and reset signaling state.">Disconnect</button>
         </div>
 
         <div id="peerSignalBox" style="display:none; margin-top:10px;">
           <label id="peerSignalLabel">Signal:</label>
-          <textarea id="peerSignalText" class="mono" rows="3" style="width:100%; font-size:11px; background:#111; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; resize:vertical;"></textarea>
+          <textarea id="peerSignalText" class="mono" rows="3" title="Paste incoming signaling payload here, or copy the generated payload to send to another device." style="width:100%; font-size:11px; background:#111; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; resize:vertical;"></textarea>
           <div class="row" style="margin-top:6px">
-            <button id="btnPeerCopySignal">Copy</button>
-            <button id="btnPeerApplySignal" style="display:none">Apply</button>
+            <button id="btnPeerCopySignal" title="Copy the current signaling payload to clipboard.">Copy</button>
+            <button id="btnPeerApplySignal" style="display:none" title="Apply the pasted signaling payload and continue the handshake.">Apply</button>
           </div>
         </div>
 
@@ -630,17 +630,17 @@
         <canvas id="heatmap" width="1000" height="520"></canvas>
         <div class="row" style="margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <label style="font-size:12px;color:#bdbdbd">Colormap
-            <select id="colormapSelect">
+            <select id="colormapSelect" title="Choose color mapping for heatmap intensity rendering.">
               <option value="inferno" selected>Inferno</option>
               <option value="viridis">Viridis</option>
               <option value="grayscale">Grayscale</option>
             </select>
           </label>
           <label style="font-size:12px;color:#bdbdbd;display:flex;align-items:center;gap:4px">
-            <input id="heatmapDbScaleOn" type="checkbox"> dB scale
+            <input id="heatmapDbScaleOn" type="checkbox" title="Display heatmap values on logarithmic dB scale."> dB scale
           </label>
           <label style="font-size:12px;color:#bdbdbd">Dynamic range (dB)
-            <input id="heatmapDynamicRangeDb" type="number" step="5" min="10" max="120" value="40" style="width:50px">
+            <input id="heatmapDynamicRangeDb" type="number" step="5" min="10" max="120" value="40" title="Dynamic range window in dB; lower values increase contrast for weak echoes." style="width:50px">
           </label>
         </div>
       </details>
@@ -661,11 +661,11 @@
         <canvas id="geometry" width="1000" height="280"></canvas>
         <div class="row" style="margin-top:8px">
           <label style="display:flex; align-items:center; gap:8px; margin:0;">
-            <input id="geomWizardOn" type="checkbox">
+            <input id="geomWizardOn" type="checkbox" title="Enable interactive geometry editing by dragging handles on the geometry plot.">
             Geometry wizard
           </label>
-          <button id="btnGeomReset" type="button">Reset handles</button>
-          <button id="btnGeomApply" type="button">Apply geometry</button>
+          <button id="btnGeomReset" type="button" title="Reset geometry handles to current spacing/calibration values.">Reset handles</button>
+          <button id="btnGeomApply" type="button" title="Apply dragged geometry handles to active spacing/mic configuration.">Apply geometry</button>
           <span class="small" id="geomWizardStatus">Enable wizard to drag speakers/mic on geometry view.</span>
         </div>
       </details>
