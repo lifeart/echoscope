@@ -12,8 +12,10 @@ export function setGeomWizardStatus(msg: string): void {
 export function syncGeometryWizardControls(): void {
   const state = store.get();
   const en = state.geomWizard.active;
+  const wizardToggle = document.getElementById('geomWizardOn') as HTMLInputElement | null;
   const btnReset = document.getElementById('btnGeomReset') as HTMLButtonElement | null;
   const btnApply = document.getElementById('btnGeomApply') as HTMLButtonElement | null;
+  if (wizardToggle) wizardToggle.checked = en;
   if (btnReset) btnReset.disabled = !en;
   if (btnApply) btnApply.disabled = !en;
 }

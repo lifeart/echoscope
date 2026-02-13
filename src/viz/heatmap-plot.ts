@@ -268,7 +268,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
   // Best-target trace (dots only, no connecting lines)
   const colDen = Math.max(1, cols - 1);
   const rowDen = Math.max(1, rows - 1);
-  const showTrace = (document.getElementById('showTrace') as HTMLInputElement)?.checked;
+  const showTrace = state.config.showTrace;
   if (showTrace && heatmap.bestBin && heatmap.bestBin.length === rows) {
     const gate = state.config.strengthGate;
     for (let ri = 0; ri < rows; ri++) {

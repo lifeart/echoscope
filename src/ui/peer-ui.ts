@@ -4,6 +4,8 @@ import { setupCaptureResponseHandler } from '../network/capture-collector.js';
 import { setupRemoteCaptureHandler } from '../network/remote-capture-handler.js';
 import { bus } from '../core/event-bus.js';
 import { log } from './readouts.js';
+import { compressSignal, decompressSignal } from '../network/signal-compress.js';
+import { buildOfferUrl, buildAnswerUrl } from './url-params.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -12,6 +14,7 @@ function el(id: string): HTMLElement | null {
 let currentPeerId: string | null = null;
 let flowState: 'idle' | 'offer-created' | 'waiting-answer' | 'waiting-offer' | 'answer-created' | 'connected' = 'idle';
 let statusInterval: ReturnType<typeof setInterval> | null = null;
+let activeScanner: { stop: () => void } | null = null;
 
 export function setupPeerUI(): void {
   // Wire capture handlers
@@ -23,6 +26,8 @@ export function setupPeerUI(): void {
   el('btnPeerDisconnect')?.addEventListener('click', handleDisconnect);
   el('btnPeerCopySignal')?.addEventListener('click', handleCopySignal);
   el('btnPeerApplySignal')?.addEventListener('click', handleApplySignal);
+  el('btnPeerScanQr')?.addEventListener('click', handleStartScanAnswer);
+  el('btnPeerStopScan')?.addEventListener('click', handleStopScan);
 
   // Listen for peer lifecycle events to update UI (especially for responder flow)
   bus.on('peer:connected', () => {
@@ -62,6 +67,26 @@ async function handleCreateOffer(): Promise<void> {
     showSignalBox('Offer (copy and send to other device):', offerText, false);
     log('[peer] Offer created. Copy it and send to the other device, then paste their answer.');
     syncPeerButtons();
+
+    // Generate QR code with compressed offer URL
+    try {
+      const compressed = await compressSignal(offerText);
+      const url = buildOfferUrl(compressed);
+      const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
+      const qrBox = el('peerQrBox');
+      const qrLabel = el('peerQrLabel');
+      if (qrCanvas && qrBox) {
+        const { renderQrCode } = await import('./qr-code.js');
+        await renderQrCode(qrCanvas, url);
+        qrBox.classList.remove('hidden');
+        if (qrLabel) qrLabel.textContent = 'Scan this QR from your phone';
+      }
+      // Show scan button for scanning answer back
+      const scanBox = el('peerScanBox');
+      if (scanBox) scanBox.classList.remove('hidden');
+    } catch (qrErr: any) {
+      log('[peer] QR generation failed (manual copy still works): ' + (qrErr?.message || qrErr));
+    }
   } catch (e: any) {
     log('[peer:err] Create offer failed: ' + (e?.message || e));
   }
@@ -182,10 +207,122 @@ function renderPeerStatus(): void {
   statusEl.textContent = lines.join('\n');
 }
 
+async function handleStartScanAnswer(): Promise<void> {
+  const video = el('peerScanVideo') as HTMLVideoElement | null;
+  const scanBtn = el('btnPeerScanQr');
+  const stopBtn = el('btnPeerStopScan');
+  if (!video) return;
+
+  if (scanBtn) scanBtn.classList.add('hidden');
+  if (stopBtn) stopBtn.classList.remove('hidden');
+
+  const { startQrScanner } = await import('./qr-code.js');
+  activeScanner = startQrScanner(video, async (data: string) => {
+    handleStopScan();
+    try {
+      // Extract answer param from scanned URL
+      const url = new URL(data);
+      const answerParam = url.searchParams.get('answer');
+      if (!answerParam) {
+        log('[peer:err] Scanned QR does not contain an answer');
+        return;
+      }
+      const answerText = await decompressSignal(answerParam);
+      if (currentPeerId) {
+        await peerManager.acceptAnswer(currentPeerId, answerText);
+        log('[peer] Answer scanned and applied. Connecting...');
+        flowState = 'connected';
+        hideSignalBox();
+        hideQrBoxes();
+        startStatusPolling();
+        syncPeerButtons();
+      }
+    } catch (e: any) {
+      log('[peer:err] Failed to process scanned QR: ' + (e?.message || e));
+    }
+  });
+}
+
+function handleStopScan(): void {
+  if (activeScanner) {
+    activeScanner.stop();
+    activeScanner = null;
+  }
+  const scanBtn = el('btnPeerScanQr');
+  const stopBtn = el('btnPeerStopScan');
+  if (scanBtn) scanBtn.classList.remove('hidden');
+  if (stopBtn) stopBtn.classList.add('hidden');
+}
+
+function hideQrBoxes(): void {
+  const qrBox = el('peerQrBox');
+  const scanBox = el('peerScanBox');
+  if (qrBox) qrBox.classList.add('hidden');
+  if (scanBox) scanBox.classList.add('hidden');
+  handleStopScan();
+}
+
+/** Called from app.ts when URL has ?offer= param (phone scanned desktop QR) */
+export async function handleUrlOffer(offerParam: string): Promise<void> {
+  try {
+    const offerText = await decompressSignal(offerParam);
+    const { peerId, answerText } = await peerManager.acceptOffer(offerText);
+    currentPeerId = peerId;
+    flowState = 'answer-created';
+
+    // Show answer as QR for desktop to scan
+    const compressed = await compressSignal(answerText);
+    const answerUrl = buildAnswerUrl(compressed);
+    const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
+    const qrBox = el('peerQrBox');
+    const qrLabel = el('peerQrLabel');
+    if (qrCanvas && qrBox) {
+      const { renderQrCode } = await import('./qr-code.js');
+      await renderQrCode(qrCanvas, answerUrl);
+      qrBox.classList.remove('hidden');
+      if (qrLabel) qrLabel.textContent = 'Show this QR to the other device';
+    }
+
+    // Also show text fallback
+    showSignalBox('Answer (copy and send back):', answerText, false);
+    log('[peer] Offer accepted via URL. Show the answer QR to the other device.');
+    syncPeerButtons();
+
+    // Open diagnostics + peer section so QR is visible
+    const peerSection = el('peerSection') as HTMLDetailsElement | null;
+    const diagnostics = el('diagnostics') as HTMLDetailsElement | null;
+    if (peerSection) peerSection.open = true;
+    if (diagnostics) diagnostics.open = true;
+  } catch (e: any) {
+    log('[peer:err] URL offer failed: ' + (e?.message || e));
+  }
+}
+
+/** Called from app.ts when URL has ?answer= param */
+export async function handleUrlAnswer(answerParam: string): Promise<void> {
+  try {
+    const answerText = await decompressSignal(answerParam);
+    if (currentPeerId) {
+      await peerManager.acceptAnswer(currentPeerId, answerText);
+      log('[peer] Answer applied via URL. Connecting...');
+      flowState = 'connected';
+      hideSignalBox();
+      hideQrBoxes();
+      startStatusPolling();
+      syncPeerButtons();
+    } else {
+      log('[peer:err] No active offer to apply answer to');
+    }
+  } catch (e: any) {
+    log('[peer:err] URL answer failed: ' + (e?.message || e));
+  }
+}
+
 function resetFlow(): void {
   currentPeerId = null;
   flowState = 'idle';
   hideSignalBox();
+  hideQrBoxes();
   if (statusInterval) {
     clearInterval(statusInterval);
     statusInterval = null;

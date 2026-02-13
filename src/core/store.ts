@@ -82,6 +82,8 @@ const defaultConfig: AppConfig = {
     coherenceFloor: 0.25,
     maxTauShiftSamples: 192,
   },
+  showTrace: true,
+  presetApplyScan: false,
   colormap: 'inferno',
   heatmapDbScale: false,
   heatmapDynamicRangeDb: 40,

@@ -37,6 +37,7 @@ export interface MultiplexConfig {
   fusion: MultiplexFusionMode;
   activeCarrierHz?: number[];
   carrierWeights?: number[];
+  useCalibrated?: boolean;
   fallbackToChirp?: boolean;
 }
 export type ProbeConfig =
@@ -442,6 +443,8 @@ export interface AppConfig {
     minConfidenceFloor: number;
   };
   virtualArray: VirtualArrayConfig;
+  showTrace: boolean;
+  presetApplyScan: boolean;
   colormap: ColormapName;
   heatmapDbScale: boolean;
   heatmapDynamicRangeDb: number;

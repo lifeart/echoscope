@@ -600,6 +600,21 @@
           </div>
         </div>
 
+        <!-- QR display -->
+        <div id="peerQrBox" class="hidden" style="margin-top:10px;">
+          <canvas id="peerQrCanvas" width="256" height="256" style="display:block;max-width:256px;margin:0.5em 0;image-rendering:pixelated;"></canvas>
+          <p id="peerQrLabel" class="hint"></p>
+        </div>
+        <!-- QR scanner (webcam) -->
+        <div id="peerScanBox" class="hidden" style="margin-top:10px;">
+          <video id="peerScanVideo" autoplay playsinline muted
+                 style="max-width:320px;display:block;margin:0.5em 0;border-radius:4px;"></video>
+          <div class="row" style="margin-top:6px">
+            <button id="btnPeerScanQr" type="button" title="Open webcam to scan answer QR from the other device.">Scan Answer QR</button>
+            <button id="btnPeerStopScan" type="button" class="hidden" title="Stop the webcam scanner.">Stop</button>
+          </div>
+        </div>
+
         <div id="peerStatusBox" style="display:none; margin-top:10px;">
           <div class="mono" id="peerStatus" style="border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a; font-size:12px;"></div>
         </div>

@@ -1,7 +1,7 @@
 import { store } from '../core/store.js';
 import { clamp } from '../utils.js';
-import { speedOfSoundFromTemp } from '../constants.js';
-import type { ProbeConfig, ColormapName } from '../types.js';
+import { speedOfSoundFromTemp, DEFAULT_CHIRP, DEFAULT_GOLAY, DEFAULT_MLS, DEFAULT_MULTIPLEX } from '../constants.js';
+import type { ProbeConfig, ColormapName, MultiplexConfig } from '../types.js';
 
 export interface DerivedConfig {
   speedOfSound: number;
@@ -42,6 +42,129 @@ function checkVal(id: string): boolean {
   return (el(id) as HTMLInputElement)?.checked ?? false;
 }
 
+function setVal(id: string, value: string): void {
+  const node = el(id) as HTMLInputElement | HTMLSelectElement | null;
+  if (node) node.value = value;
+}
+
+function setChecked(id: string, checked: boolean): void {
+  const node = el(id) as HTMLInputElement | null;
+  if (node) node.checked = checked;
+}
+
+export function syncDOMFromConfig(): void {
+  const state = store.get();
+  const config = state.config;
+
+  setVal('mode', config.probe.type);
+  setVal('devicePreset', config.devicePreset);
+  setChecked('presetApplyScan', config.presetApplyScan);
+  setVal('angle', `${config.steeringAngleDeg}`);
+  const angleValEl = el('angleVal');
+  if (angleValEl) angleValEl.textContent = `${config.steeringAngleDeg}`;
+
+  setVal('spacing', `${config.spacing}`);
+  setVal('micArraySpacing', `${config.micArraySpacing}`);
+  setVal('temperature', `${config.temperature}`);
+  setVal('gain', `${config.gain}`);
+  setVal('maxR', `${config.maxRange}`);
+
+  const chirpParams = config.probe.type === 'chirp' ? config.probe.params : DEFAULT_CHIRP;
+  setVal('f1', `${chirpParams.f1}`);
+  setVal('f2', `${chirpParams.f2}`);
+  setVal('T', `${chirpParams.durationMs}`);
+
+  const mlsParams = config.probe.type === 'mls' ? config.probe.params : DEFAULT_MLS;
+  setVal('mlsOrder', `${mlsParams.order}`);
+  setVal('chipRate', `${mlsParams.chipRate}`);
+
+  const golayParams = config.probe.type === 'golay' ? config.probe.params : DEFAULT_GOLAY;
+  setVal('golayOrder', `${golayParams.order}`);
+  setVal('golayChipRate', `${golayParams.chipRate}`);
+  setVal('golayGapMs', `${golayParams.gapMs}`);
+
+  const multiplexParams: MultiplexConfig = config.probe.type === 'multiplex'
+    ? config.probe.params
+    : {
+      ...DEFAULT_MULTIPLEX,
+      useCalibrated: true,
+      fallbackToChirp: true,
+    };
+  setVal('multiplexCarrierCount', `${multiplexParams.carrierCount}`);
+  setVal('multiplexFStart', `${multiplexParams.fStart}`);
+  setVal('multiplexFEnd', `${multiplexParams.fEnd}`);
+  setVal('multiplexSymbolMs', `${multiplexParams.symbolMs}`);
+  setVal('multiplexGuardHz', `${multiplexParams.guardHz}`);
+  setVal('multiplexMinSpacingHz', `${multiplexParams.minSpacingHz}`);
+  setVal('multiplexCalibrationCandidates', `${multiplexParams.calibrationCandidates}`);
+  setVal('multiplexFusion', `${multiplexParams.fusion}`);
+  setChecked('multiplexUseCalibrated', multiplexParams.useCalibrated ?? true);
+  setChecked('multiplexFallbackToChirp', multiplexParams.fallbackToChirp ?? true);
+
+  setVal('scanStep', `${config.scanStep}`);
+  setVal('scanPasses', `${config.scanPasses}`);
+  setVal('dirAxis', `${config.directionAxis}`);
+
+  setVal('strengthGate', `${config.strengthGate}`);
+  setVal('confidenceGate', `${config.confidenceGate}`);
+  setChecked('scanClutterOn', config.clutterSuppression.enabled);
+  setVal('scanClutterStrength', `${config.clutterSuppression.strength}`);
+  setVal('qualityAlgo', `${config.qualityAlgo}`);
+  setVal('scanAggregateMode', `${config.scanAggregateMode}`);
+  setVal('scanTrimFraction', `${config.scanTrimFraction}`);
+  setVal('temporalIirAlpha', `${config.temporalIirAlpha}`);
+  setVal('outlierHistoryN', `${config.outlierHistoryN}`);
+  setVal('continuityBins', `${config.continuityBins}`);
+  setChecked('adaptiveQualityOn', config.adaptiveQuality.enabled);
+  setVal('adaptiveQualityHysteresisMs', `${config.adaptiveQuality.hysteresisMs}`);
+  setChecked('subtractionBackoffOn', config.subtractionBackoff.enabled);
+  setVal('subtractionCollapseThreshold', `${config.subtractionBackoff.collapseThreshold}`);
+  setVal('subtractionPeakDropThreshold', `${config.subtractionBackoff.peakDropThreshold}`);
+
+  setChecked('displayBlankingOn', config.displayReflectionBlanking.enabled);
+  setVal('displayBlankingStartRange', `${config.displayReflectionBlanking.startRange}`);
+  setVal('displayBlankingEndRange', `${config.displayReflectionBlanking.endRange}`);
+  setVal('displayBlankingAttenuation', `${config.displayReflectionBlanking.attenuation}`);
+  setVal('displayBlankingEdgeSoftness', `${config.displayReflectionBlanking.edgeSoftness}`);
+
+  setVal('trackTrailMaxPoints', `${config.trackViz.trailMaxPoints}`);
+  setVal('trackFadeMissCount', `${config.trackViz.fadeMissCount}`);
+  setVal('trackTrailMinAlpha', `${config.trackViz.trailMinAlpha}`);
+  setVal('trackTrailMaxAlpha', `${config.trackViz.trailMaxAlpha}`);
+  setVal('trackMinConfidenceFloor', `${config.trackViz.minConfidenceFloor}`);
+
+  setChecked('useCalib', config.calibration.useCalib);
+  setChecked('useMultiband', config.calibration.multiband);
+  setChecked('showTrace', config.showTrace);
+  setVal('calRepeats', `${config.calibration.repeats}`);
+  setVal('calRepeatGapMs', `${config.calibration.gapMs}`);
+
+  setChecked('useEnvBaseline', config.envBaseline.enabled);
+  setVal('envBaselineStrength', `${config.envBaseline.strength}`);
+  setVal('extraCalPings', `${config.envBaseline.pings}`);
+
+  setChecked('vaEnabled', config.virtualArray.enabled);
+  setVal('vaHalfWindow', `${config.virtualArray.halfWindow}`);
+  setVal('vaWindow', `${config.virtualArray.window}`);
+  setVal('vaCoherenceFloor', `${config.virtualArray.coherenceFloor}`);
+
+  setVal('colormapSelect', `${config.colormap}`);
+  setChecked('heatmapDbScaleOn', config.heatmapDbScale);
+  setVal('heatmapDynamicRangeDb', `${config.heatmapDynamicRangeDb}`);
+
+  const derived = computeDerivedConfig(config.temperature, config.maxRange, config.spacing);
+  const computedC = el('computedC');
+  if (computedC) computedC.textContent = derived.speedOfSound.toFixed(1);
+  const computedListenMs = el('computedListenMs');
+  if (computedListenMs) computedListenMs.textContent = derived.listenMs.toFixed(0);
+  const computedMinR = el('computedMinR');
+  if (computedMinR) computedMinR.textContent = derived.minRange.toFixed(2);
+  const computedScanDwell = el('computedScanDwell');
+  if (computedScanDwell) computedScanDwell.textContent = derived.scanDwell.toFixed(0);
+  const computedMinGolayGap = el('computedMinGolayGap');
+  if (computedMinGolayGap) computedMinGolayGap.textContent = derived.minGolayGapMs.toFixed(0);
+}
+
 export function readConfigFromDOM(): void {
   const current = store.get().config;
   const calibration = store.get().calibration;
@@ -70,6 +193,7 @@ export function readConfigFromDOM(): void {
         minSpacingHz: clamp(inputVal('multiplexMinSpacingHz', 220), 20, 3000),
         calibrationCandidates: Math.floor(clamp(inputVal('multiplexCalibrationCandidates', 12), 4, 32)),
         fusion,
+        useCalibrated: checkVal('multiplexUseCalibrated'),
         activeCarrierHz: useCalibrated ? calibration?.carrierCalibration?.activeCarrierHz.slice() : undefined,
         carrierWeights: useCalibrated ? calibration?.carrierCalibration?.carrierWeights.slice() : undefined,
         fallbackToChirp: checkVal('multiplexFallbackToChirp'),
@@ -156,6 +280,8 @@ export function readConfigFromDOM(): void {
     s.config.calibration.gapMs = inputVal('calRepeatGapMs');
     s.config.calibration.useCalib = checkVal('useCalib');
     s.config.calibration.multiband = checkVal('useMultiband');
+    s.config.showTrace = checkVal('showTrace');
+    s.config.presetApplyScan = checkVal('presetApplyScan');
     s.config.trackViz.trailMaxPoints = Math.floor(clamp(inputVal('trackTrailMaxPoints', current.trackViz.trailMaxPoints), 4, 80));
     s.config.trackViz.fadeMissCount = Math.floor(clamp(inputVal('trackFadeMissCount', current.trackViz.fadeMissCount), 1, 60));
     s.config.trackViz.trailMinAlpha = trackTrailMinAlpha;

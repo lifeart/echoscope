@@ -5,7 +5,7 @@ import { doPing } from '../scan/ping-cycle.js';
 import { doScan, stopScan } from '../scan/scan-engine.js';
 import { calibrateRefinedWithSanity } from '../calibration/engine.js';
 import { refreshDeviceInfo } from './device-info.js';
-import { readConfigFromDOM, syncModeUI, setButtonStates } from './controls.js';
+import { readConfigFromDOM, syncDOMFromConfig, syncModeUI, setButtonStates } from './controls.js';
 import { setStatus, log, updateDirectionReadout, updateBestReadout, renderCalibInfo } from './readouts.js';
 import { detectDevice, applyDevicePreset } from './device-presets.js';
 import { setupGeometryPointerHandlers, ensureGeometryWizardHandlesInitialized, resetGeometryWizardHandles, applyGeometryWizard, setGeomWizardStatus, syncGeometryWizardControls } from './geometry-wizard.js';
@@ -18,7 +18,8 @@ import { createHeatmap, updateHeatmapRow } from '../scan/heatmap-data.js';
 import { initLevelMeter } from '../viz/level-meter.js';
 import { drawSignalPreview, scheduleSignalPreview } from '../viz/signal-preview.js';
 import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
-import { setupPeerUI, syncPeerButtons } from './peer-ui.js';
+import { setupPeerUI, syncPeerButtons, handleUrlOffer, handleUrlAnswer } from './peer-ui.js';
+import { getOfferFromUrl, getAnswerFromUrl, clearSignalFromUrl } from './url-params.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -72,6 +73,9 @@ export function initApp(): void {
   store.subscribe('status', (value) => {
     if (typeof value === 'string') setStatus(value);
   });
+
+  // One-way startup init: config -> DOM
+  syncDOMFromConfig();
 
   // Mode UI
   el('mode')?.addEventListener('change', () => { syncModeUI(); readConfigFromDOM(); scheduleSignalPreview(); });
@@ -224,7 +228,12 @@ export function initApp(): void {
 
   // Trace & direction
   el('showTrace')?.addEventListener('change', () => {
+    readConfigFromDOM();
     drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
+  });
+
+  el('presetApplyScan')?.addEventListener('change', () => {
+    readConfigFromDOM();
   });
 
   // Heatmap display settings — redraw immediately on change
@@ -528,6 +537,19 @@ export function initApp(): void {
   // Peer network UI
   setupPeerUI();
 
+  // Auto-connect from URL params (QR code pairing)
+  const offerParam = getOfferFromUrl();
+  if (offerParam) {
+    clearSignalFromUrl();
+    handleUrlOffer(offerParam);
+  } else {
+    const answerParam = getAnswerFromUrl();
+    if (answerParam) {
+      clearSignalFromUrl();
+      handleUrlAnswer(answerParam);
+    }
+  }
+
   // Resize
   window.addEventListener('resize', () => {
     if (applyRetinaCanvases()) redrawAllCanvases();
@@ -546,6 +568,10 @@ export function initApp(): void {
   const savedPreset = localStorage.getItem('echoscope:devicePreset');
   const deviceKey = (savedPreset && DEVICE_PRESETS[savedPreset]) ? savedPreset : detectDevice();
   applyDevicePreset(deviceKey, true);
+  // Preset may update DOM/store; normalize back to single source of truth
+  readConfigFromDOM();
+  syncDOMFromConfig();
+  syncModeUI();
   log(`[init] device: ${deviceKey}${savedPreset === deviceKey ? ' (saved)' : ''}`);
 
   const defaultAngles = [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60];
