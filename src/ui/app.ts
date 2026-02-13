@@ -248,6 +248,14 @@ export function initApp(): void {
     el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
   }
 
+  const trackVizInputIds = ['trackTrailMaxPoints', 'trackFadeMissCount', 'trackTrailMinAlpha', 'trackTrailMaxAlpha', 'trackMinConfidenceFloor'];
+  for (const id of trackVizInputIds) {
+    el(id)?.addEventListener('input', () => {
+      readConfigFromDOM();
+      drawGeometry(store.get().config.minRange, store.get().config.maxRange);
+    });
+  }
+
   // ---- Mouse crosshair wiring ----
   const profileCanvas = el('profile') as HTMLCanvasElement | null;
   if (profileCanvas) {

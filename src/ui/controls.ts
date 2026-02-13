@@ -63,6 +63,11 @@ export function readConfigFromDOM(): void {
   const maxR = inputVal('maxR', 4.0);
   const spacing = inputVal('spacing', 0.20);
   const derived = computeDerivedConfig(temperature, maxR, spacing);
+  const trackTrailMinAlpha = clamp(inputVal('trackTrailMinAlpha', current.trackViz.trailMinAlpha), 0, 1);
+  const trackTrailMaxAlpha = Math.max(
+    trackTrailMinAlpha,
+    clamp(inputVal('trackTrailMaxAlpha', current.trackViz.trailMaxAlpha), 0, 1),
+  );
 
   store.update(s => {
     s.config.probe = probe;
@@ -101,6 +106,11 @@ export function readConfigFromDOM(): void {
     s.config.calibration.gapMs = inputVal('calRepeatGapMs');
     s.config.calibration.useCalib = checkVal('useCalib');
     s.config.calibration.multiband = checkVal('useMultiband');
+    s.config.trackViz.trailMaxPoints = Math.floor(clamp(inputVal('trackTrailMaxPoints', current.trackViz.trailMaxPoints), 4, 80));
+    s.config.trackViz.fadeMissCount = Math.floor(clamp(inputVal('trackFadeMissCount', current.trackViz.fadeMissCount), 1, 60));
+    s.config.trackViz.trailMinAlpha = trackTrailMinAlpha;
+    s.config.trackViz.trailMaxAlpha = trackTrailMaxAlpha;
+    s.config.trackViz.minConfidenceFloor = clamp(inputVal('trackMinConfidenceFloor', current.trackViz.minConfidenceFloor), 0, 1);
     s.config.virtualArray.enabled = checkVal('vaEnabled');
     s.config.virtualArray.halfWindow = Math.floor(clamp(inputVal('vaHalfWindow', 3), 0, 12));
     s.config.virtualArray.window = selectVal('vaWindow') === 'gaussian' ? 'gaussian' : 'hann';

@@ -346,6 +346,13 @@ export interface AppConfig {
   temperature: number;
   spacing: number;
   micArraySpacing: number;
+  trackViz: {
+    trailMaxPoints: number;
+    fadeMissCount: number;
+    trailMinAlpha: number;
+    trailMaxAlpha: number;
+    minConfidenceFloor: number;
+  };
   virtualArray: VirtualArrayConfig;
 }
 

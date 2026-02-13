@@ -9,7 +9,6 @@ interface TrailPoint {
 }
 
 const trackTrails = new Map<number, TrailPoint[]>();
-const TRAIL_MAX_POINTS = 18;
 
 function trackToUF(track: { position: { range: number; angleDeg: number } }, baselineCenterU: number): TrailPoint | null {
   const { range, angleDeg } = track.position;
@@ -19,7 +18,11 @@ function trackToUF(track: { position: { range: number; angleDeg: number } }, bas
   return { u, f };
 }
 
-function updateTrackTrails(targets: Array<{ id: number; position: { range: number; angleDeg: number } }>, baselineCenterU: number): void {
+function updateTrackTrails(
+  targets: Array<{ id: number; position: { range: number; angleDeg: number } }>,
+  baselineCenterU: number,
+  trailMaxPoints: number,
+): void {
   const activeIds = new Set<number>();
 
   for (const track of targets) {
@@ -30,7 +33,7 @@ function updateTrackTrails(targets: Array<{ id: number; position: { range: numbe
     const trail = trackTrails.get(track.id) ?? [];
     const prev = trail[trail.length - 1];
     if (!prev || Math.hypot(prev.u - p.u, prev.f - p.f) > 1e-3) trail.push(p);
-    while (trail.length > TRAIL_MAX_POINTS) trail.shift();
+    while (trail.length > trailMaxPoints) trail.shift();
     trackTrails.set(track.id, trail);
   }
 
@@ -39,6 +42,18 @@ function updateTrackTrails(targets: Array<{ id: number; position: { range: numbe
     if (!activeIds.has(id)) staleIds.push(id);
   }
   for (const id of staleIds) trackTrails.delete(id);
+}
+
+function shouldRenderTrack(
+  track: { confidence: number; missCount: number },
+  strengthGate: number,
+  minConfidenceFloor: number,
+  fadeMissCount: number,
+): boolean {
+  const confidenceGate = Math.max(minConfidenceFloor, strengthGate);
+  if (!(Number.isFinite(track.confidence) && track.confidence > confidenceGate)) return false;
+  if (!(Number.isFinite(track.missCount) && track.missCount >= 0 && track.missCount < fadeMissCount)) return false;
+  return true;
 }
 
 interface GeomModel {
@@ -203,9 +218,19 @@ export function drawGeometry(minR: number, maxR: number): void {
   gctx.stroke();
   gctx.setLineDash([]);
 
-  updateTrackTrails(state.targets, baselineCenterU);
+  const vizCfg = state.config.trackViz;
+  const trailMaxPoints = Math.floor(clamp(vizCfg.trailMaxPoints, 4, 80));
+  const fadeMissCount = Math.floor(clamp(vizCfg.fadeMissCount, 1, 60));
+  const minConfidenceFloor = clamp(vizCfg.minConfidenceFloor, 0, 1);
+  const trailMinAlpha = clamp(vizCfg.trailMinAlpha, 0, 1);
+  const trailMaxAlpha = Math.max(trailMinAlpha, clamp(vizCfg.trailMaxAlpha, 0, 1));
 
-  for (const track of state.targets) {
+  const gate = state.config.strengthGate;
+  const visibleTracks = state.targets.filter(track => shouldRenderTrack(track, gate, minConfidenceFloor, fadeMissCount));
+
+  updateTrackTrails(state.targets, baselineCenterU, trailMaxPoints);
+
+  for (const track of visibleTracks) {
     const p = trackToUF(track, baselineCenterU);
     if (!p) continue;
 
@@ -213,35 +238,39 @@ export function drawGeometry(minR: number, maxR: number): void {
     const conf = clamp(track.confidence, 0, 1);
     const color = traceColorFromConfidence(conf);
     const trail = trackTrails.get(track.id);
+    const freshness = clamp(1 - track.missCount / Math.max(1, fadeMissCount), 0.2, 1);
 
     if (trail && trail.length > 1) {
-      gctx.globalAlpha = 0.45;
       gctx.strokeStyle = color;
-      gctx.lineWidth = 1.4 * s;
-      gctx.beginPath();
-      const first = toPx(trail[0].u, trail[0].f);
-      gctx.moveTo(first.x, first.y);
       for (let i = 1; i < trail.length; i++) {
-        const t = toPx(trail[i].u, trail[i].f);
-        gctx.lineTo(t.x, t.y);
+        const p0 = toPx(trail[i - 1].u, trail[i - 1].f);
+        const p1 = toPx(trail[i].u, trail[i].f);
+        const frac = i / Math.max(1, trail.length - 1);
+        const alpha = clamp((trailMinAlpha + (trailMaxAlpha - trailMinAlpha) * frac) * freshness, 0, 1);
+        gctx.globalAlpha = alpha;
+        gctx.lineWidth = (1.0 + 0.8 * frac) * s;
+        gctx.beginPath();
+        gctx.moveTo(p0.x, p0.y);
+        gctx.lineTo(p1.x, p1.y);
+        gctx.stroke();
       }
-      gctx.stroke();
       gctx.globalAlpha = 1;
     }
 
     gctx.fillStyle = color;
+    gctx.globalAlpha = 0.55 + 0.45 * freshness;
     gctx.beginPath();
-    gctx.arc(tp.x, tp.y, 5 * s, 0, Math.PI * 2);
+    gctx.arc(tp.x, tp.y, (4.2 + 1.1 * freshness) * s, 0, Math.PI * 2);
     gctx.fill();
+    gctx.globalAlpha = 1;
 
     gctx.fillStyle = '#eaeaea';
     gctx.font = `${10 * s}px system-ui`;
     gctx.fillText(`T${track.id}`, tp.x + 7 * s, tp.y - 8 * s);
   }
 
-  const gate = state.config.strengthGate;
   const target = state.lastTarget;
-  if (state.targets.length === 0 && Number.isFinite(target.angle) && Number.isFinite(target.range) && target.strength > gate) {
+  if (visibleTracks.length === 0 && Number.isFinite(target.angle) && Number.isFinite(target.range) && target.strength > gate) {
     const targetU = baselineCenterU + target.range * Math.sin(target.angle * Math.PI / 180);
     const targetF = Math.max(0, target.range * Math.cos(target.angle * Math.PI / 180));
     const tp = toPx(targetU, targetF);
@@ -259,7 +288,7 @@ export function drawGeometry(minR: number, maxR: number): void {
   gctx.fillStyle = '#bdbdbd';
   gctx.font = `${12 * s}px system-ui`;
   gctx.fillText(`Geometry view (${axisLabel}-axis steering: ${axisDirs[0]} \u2194 ${axisDirs[1]})`, 12 * s, 16 * s);
-  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'} | Tracks=${state.targets.length}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
+  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'} | Tracks=${visibleTracks.length}/${state.targets.length}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
 }
 
 // Export geometry frame helpers for the geometry wizard

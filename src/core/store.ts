@@ -59,6 +59,13 @@ const defaultConfig: AppConfig = {
   temperature: 25,
   spacing: 0.20,
   micArraySpacing: 0,
+  trackViz: {
+    trailMaxPoints: 22,
+    fadeMissCount: 8,
+    trailMinAlpha: 0.08,
+    trailMaxAlpha: 0.55,
+    minConfidenceFloor: 0.0001,
+  },
   virtualArray: {
     enabled: false,
     halfWindow: 3,
