@@ -20,15 +20,30 @@ export interface AudioState {
 }
 
 // --- Probes ---
-export type ProbeType = 'chirp' | 'mls' | 'golay';
+export type ProbeType = 'chirp' | 'mls' | 'golay' | 'multiplex';
 
 export interface ChirpConfig { f1: number; f2: number; durationMs: number; }
 export interface MLSConfig { order: number; chipRate: number; }
 export interface GolayConfig { order: number; chipRate: number; gapMs: number; }
+export type MultiplexFusionMode = 'snrWeighted' | 'median' | 'trimmedMean';
+export interface MultiplexConfig {
+  carrierCount: number;
+  fStart: number;
+  fEnd: number;
+  symbolMs: number;
+  guardHz: number;
+  minSpacingHz: number;
+  calibrationCandidates: number;
+  fusion: MultiplexFusionMode;
+  activeCarrierHz?: number[];
+  carrierWeights?: number[];
+  fallbackToChirp?: boolean;
+}
 export type ProbeConfig =
   | { type: 'chirp'; params: ChirpConfig }
   | { type: 'mls'; params: MLSConfig }
-  | { type: 'golay'; params: GolayConfig };
+  | { type: 'golay'; params: GolayConfig }
+  | { type: 'multiplex'; params: MultiplexConfig };
 
 export interface ProbeSignal {
   type: ProbeType;
@@ -36,6 +51,22 @@ export interface ProbeSignal {
   a?: Float32Array;
   b?: Float32Array;
   gapMs?: number;
+  refsByCarrier?: Float32Array[];
+  carrierHz?: number[];
+}
+
+export interface SubcarrierStat {
+  frequencyHz: number;
+  snrDb: number;
+  psr: number;
+  confidence: number;
+  weight: number;
+}
+
+export interface MultiplexDebugInfo {
+  activeCarrierCount: number;
+  usedCarrierHz: number[];
+  stats: SubcarrierStat[];
 }
 
 // --- DSP ---
@@ -174,6 +205,27 @@ export interface CalibrationResult {
   sanity: CalibrationSanity;
   /** Multiband info (present when multiband calibration was used) */
   multiband?: MultibandInfo;
+  /** Carrier qualification results for multiplex mode */
+  carrierCalibration?: CarrierCalibrationResult;
+}
+
+export interface CarrierCalibrationCandidate {
+  frequencyHz: number;
+  snrDb: number;
+  psr: number;
+  stability: number;
+  detectRate: number;
+  score: number;
+  selected: boolean;
+  rejectionReason?: 'snr' | 'psr' | 'stability' | 'spacing' | 'floor';
+}
+
+export interface CarrierCalibrationResult {
+  activeCarrierHz: number[];
+  carrierWeights: number[];
+  minSpacingHz: number;
+  candidates: CarrierCalibrationCandidate[];
+  computedAtMs: number;
 }
 
 export interface CalibrationSanity {

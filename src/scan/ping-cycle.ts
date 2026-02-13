@@ -10,6 +10,7 @@ import type { QualityAlgoName } from '../dsp/quality.js';
 import { applyEnvBaseline } from '../dsp/clutter.js';
 import { suppressStaticReflections, type ClutterState } from '../dsp/clutter.js';
 import { caCfar } from '../dsp/cfar.js';
+import { demuxMultiplexProfile } from '../dsp/multiplex-demux.js';
 import { computeProfileConfidence } from './confidence.js';
 import { createProbe } from '../signal/probe-factory.js';
 import { resumeIfSuspended, getSampleRate } from '../audio/engine.js';
@@ -64,6 +65,13 @@ function estimateProbeCenterHz(): number {
   }
   if (probe.type === 'golay') {
     return Math.max(500, 0.5 * probe.params.chipRate);
+  }
+  if (probe.type === 'multiplex') {
+    if (probe.params.activeCarrierHz && probe.params.activeCarrierHz.length > 0) {
+      const sum = probe.params.activeCarrierHz.reduce((acc, hz) => acc + hz, 0);
+      return sum / probe.params.activeCarrierHz.length;
+    }
+    return 0.5 * (probe.params.fStart + probe.params.fEnd);
   }
   return 4000;
 }
@@ -207,6 +215,73 @@ export async function doPingDetailed(
     corrFinalImag = golay.corrImag;
     tau0Final = golay.tau0;
     profFinal = golay.prof;
+  } else if (probe.type === 'multiplex' && probe.ref && probe.refsByCarrier && probe.carrierHz) {
+    const cap = await pingAndCaptureSteered(probe.ref, dt, gain, listenMs);
+    const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
+
+    const rxGeo = buildRxGeometry(config.micArraySpacing, c);
+    const micSignal = rxGeo ? delayAndSum(cap.micChannels, angleDeg, rxGeo, sr) : cap.micWin;
+
+    const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
+    const demux = demuxMultiplexProfile({
+      signal: micSignal,
+      refsByCarrier: probe.refsByCarrier,
+      carrierHz: probe.carrierHz,
+      fusion: muxCfg?.fusion ?? 'snrWeighted',
+      trimFraction: config.scanTrimFraction,
+      c,
+      minR,
+      maxR,
+      sampleRate: sr,
+      heatBins,
+      predictedTau0: predTau0,
+      lockStrength,
+      carrierWeights: muxCfg?.carrierWeights,
+    });
+
+    corrFinalReal = demux.corrReal;
+    corrFinalImag = demux.corrImag;
+    tau0Final = demux.tau0;
+    profFinal = demux.profile;
+
+    const muxBest = estimateBestFromProfile(profFinal, minR, maxR);
+    const muxConf = computeProfileConfidence(profFinal, muxBest.bin, muxBest.val);
+    const fallbackEnabled = !!muxCfg?.fallbackToChirp;
+    const lowCarrierSupport = demux.debug.activeCarrierCount < Math.max(2, Math.floor((probe.carrierHz.length || 1) / 2));
+    const lowConfidence = muxConf.confidence < Math.min(config.confidenceGate * 0.8, 0.24);
+
+    if (fallbackEnabled && (lowCarrierSupport || lowConfidence)) {
+      const chirpProbe = createProbe({
+        type: 'chirp',
+        params: {
+          f1: Math.min(muxCfg?.fStart ?? 2000, muxCfg?.fEnd ?? 9000),
+          f2: Math.max(muxCfg?.fStart ?? 2000, muxCfg?.fEnd ?? 9000),
+          durationMs: Math.max(4, muxCfg?.symbolMs ?? 8),
+        },
+      }, sr);
+
+      if (chirpProbe.ref) {
+        const fallbackCap = await pingAndCaptureSteered(chirpProbe.ref, dt, gain, listenMs);
+        const fallbackTau0 = predictedTau0ForPing(fallbackCap.delayL, fallbackCap.delayR);
+        const fallbackSignal = rxGeo ? delayAndSum(fallbackCap.micChannels, angleDeg, rxGeo, sr) : fallbackCap.micWin;
+        const fallback = corrAndBuildProfile(
+          fallbackSignal,
+          chirpProbe.ref,
+          c,
+          minR,
+          maxR,
+          fallbackTau0,
+          lockStrength,
+          sr,
+          heatBins,
+        );
+        corrFinalReal = fallback.corrReal;
+        corrFinalImag = fallback.corrImag;
+        tau0Final = fallback.tau0;
+        profFinal = fallback.prof;
+        console.warn(`[doPing:multiplex] fallback->chirp triggered angle=${angleDeg} activeCarrierCount=${demux.debug.activeCarrierCount} conf=${muxConf.confidence.toFixed(3)}`);
+      }
+    }
   } else {
     const ref = probe.ref!;
     const cap = await pingAndCaptureSteered(ref, dt, gain, listenMs);

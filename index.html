@@ -44,6 +44,7 @@
             <option value="chirp">Chirp</option>
             <option value="mls">MLS (PRBS)</option>
             <option value="golay">Golay pair (A+B)</option>
+            <option value="multiplex">Multiplex (multi-carrier)</option>
           </select>
         </div>
 
@@ -215,6 +216,77 @@
           </div>
         </div>
         <canvas id="previewGolay" width="400" height="80" style="margin-top:6px"></canvas>
+      </div>
+
+      <div id="multiplexBox" style="display:none; margin-top:10px">
+        <details class="mode-desc" open>
+          <summary>About Multiplex (multi-carrier) mode</summary>
+          <p class="hint" style="margin:6px 0 0">
+            <b>Frequency-division probing</b> — transmits several orthogonal tones in one symbol and demultiplexes them with FFT/correlation.
+            This reduces sweep time by evaluating multiple spectral channels in parallel.
+          </p>
+          <p class="hint" style="margin:4px 0 0">
+            <b>Best for:</b> faster scan loops and adaptive per-device carrier masking after calibration.
+          </p>
+          <p class="hint" style="margin:4px 0 0">
+            <b>Trade-offs:</b> requires careful carrier spacing and quality weighting to avoid leakage and noisy subcarriers.
+          </p>
+        </details>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>Carriers (K)</label>
+            <input id="multiplexCarrierCount" type="number" step="1" min="1" max="16" value="6">
+          </div>
+          <div>
+            <label>fStart (Hz)</label>
+            <input id="multiplexFStart" type="number" step="10" value="2200">
+          </div>
+          <div>
+            <label>fEnd (Hz)</label>
+            <input id="multiplexFEnd" type="number" step="10" value="8800">
+          </div>
+          <div>
+            <label>Symbol (ms)</label>
+            <input id="multiplexSymbolMs" type="number" step="1" min="2" max="40" value="8">
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label>Guard (Hz)</label>
+            <input id="multiplexGuardHz" type="number" step="10" min="20" max="2000" value="180">
+          </div>
+          <div>
+            <label>Min spacing (Hz)</label>
+            <input id="multiplexMinSpacingHz" type="number" step="10" min="20" max="3000" value="220">
+          </div>
+          <div>
+            <label>Calibration candidates</label>
+            <input id="multiplexCalibrationCandidates" type="number" step="1" min="4" max="32" value="12">
+          </div>
+          <div>
+            <label>Fusion mode</label>
+            <select id="multiplexFusion">
+              <option value="snrWeighted" selected>SNR weighted</option>
+              <option value="median">Median</option>
+              <option value="trimmedMean">Trimmed mean</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
+              <input id="multiplexUseCalibrated" type="checkbox" checked>
+              Use calibrated carriers
+            </label>
+          </div>
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
+              <input id="multiplexFallbackToChirp" type="checkbox" checked>
+              Fallback to chirp on low confidence
+            </label>
+          </div>
+        </div>
+        <canvas id="previewMultiplex" width="400" height="80" style="margin-top:6px"></canvas>
       </div>
 
       <div class="row" style="margin-top:10px">

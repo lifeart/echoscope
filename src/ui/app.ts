@@ -24,7 +24,7 @@ function el(id: string): HTMLElement | null {
 }
 
 function applyRetinaCanvases(): boolean {
-  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry', 'previewChirp', 'previewMls', 'previewGolay'];
+  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry', 'previewChirp', 'previewMls', 'previewGolay', 'previewMultiplex'];
   let changed = false;
   for (const id of ids) {
     const canvas = el(id) as HTMLCanvasElement | null;
@@ -225,6 +225,20 @@ export function initApp(): void {
     drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
   });
 
+  // Heatmap display settings — redraw immediately on change
+  el('colormapSelect')?.addEventListener('change', () => {
+    readConfigFromDOM();
+    drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
+  });
+  el('heatmapDbScaleOn')?.addEventListener('change', () => {
+    readConfigFromDOM();
+    drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
+  });
+  el('heatmapDynamicRangeDb')?.addEventListener('input', () => {
+    readConfigFromDOM();
+    drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
+  });
+
   el('dirAxis')?.addEventListener('change', () => {
     readConfigFromDOM();
     updateDirectionReadout();
@@ -237,9 +251,20 @@ export function initApp(): void {
   });
 
   // Signal preview on param changes
-  const paramInputIds = ['f1', 'f2', 'T', 'mlsOrder', 'chipRate', 'golayOrder', 'golayChipRate', 'golayGapMs'];
+  const paramInputIds = [
+    'f1', 'f2', 'T',
+    'mlsOrder', 'chipRate',
+    'golayOrder', 'golayChipRate', 'golayGapMs',
+    'multiplexCarrierCount', 'multiplexFStart', 'multiplexFEnd',
+    'multiplexSymbolMs', 'multiplexGuardHz', 'multiplexMinSpacingHz',
+    'multiplexCalibrationCandidates',
+  ];
   for (const id of paramInputIds) {
     el(id)?.addEventListener('input', () => { readConfigFromDOM(); scheduleSignalPreview(); });
+  }
+  const paramSelectIds = ['multiplexFusion', 'multiplexUseCalibrated', 'multiplexFallbackToChirp'];
+  for (const id of paramSelectIds) {
+    el(id)?.addEventListener('change', () => { readConfigFromDOM(); scheduleSignalPreview(); });
   }
 
   // Computed config inputs — update derived labels live

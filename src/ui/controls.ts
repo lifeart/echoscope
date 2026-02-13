@@ -44,12 +44,37 @@ function checkVal(id: string): boolean {
 
 export function readConfigFromDOM(): void {
   const current = store.get().config;
+  const calibration = store.get().calibration;
   const mode = selectVal('mode');
   let probe: ProbeConfig;
   if (mode === 'mls') {
     probe = { type: 'mls', params: { order: inputVal('mlsOrder'), chipRate: inputVal('chipRate') } };
   } else if (mode === 'golay') {
     probe = { type: 'golay', params: { order: inputVal('golayOrder'), chipRate: inputVal('golayChipRate'), gapMs: inputVal('golayGapMs') } };
+  } else if (mode === 'multiplex') {
+    const fusionRaw = selectVal('multiplexFusion');
+    const fusion = (fusionRaw === 'snrWeighted' || fusionRaw === 'median' || fusionRaw === 'trimmedMean')
+      ? fusionRaw
+      : 'snrWeighted';
+    const useCalibrated = checkVal('multiplexUseCalibrated')
+      && !!calibration?.carrierCalibration
+      && calibration.carrierCalibration.activeCarrierHz.length > 0;
+    probe = {
+      type: 'multiplex',
+      params: {
+        carrierCount: Math.floor(clamp(inputVal('multiplexCarrierCount', 6), 1, 16)),
+        fStart: inputVal('multiplexFStart', 2200),
+        fEnd: inputVal('multiplexFEnd', 8800),
+        symbolMs: clamp(inputVal('multiplexSymbolMs', 8), 2, 40),
+        guardHz: clamp(inputVal('multiplexGuardHz', 180), 20, 2000),
+        minSpacingHz: clamp(inputVal('multiplexMinSpacingHz', 220), 20, 3000),
+        calibrationCandidates: Math.floor(clamp(inputVal('multiplexCalibrationCandidates', 12), 4, 32)),
+        fusion,
+        activeCarrierHz: useCalibrated ? calibration?.carrierCalibration?.activeCarrierHz.slice() : undefined,
+        carrierWeights: useCalibrated ? calibration?.carrierCalibration?.carrierWeights.slice() : undefined,
+        fallbackToChirp: checkVal('multiplexFallbackToChirp'),
+      },
+    };
   } else {
     probe = { type: 'chirp', params: { f1: inputVal('f1'), f2: inputVal('f2'), durationMs: inputVal('T') } };
   }
@@ -140,9 +165,11 @@ export function syncModeUI(): void {
   const chirpBox = el('chirpBox');
   const mlsBox = el('mlsBox');
   const golayBox = el('golayBox');
+  const multiplexBox = el('multiplexBox');
   if (chirpBox) chirpBox.style.display = m === 'chirp' ? '' : 'none';
   if (mlsBox) mlsBox.style.display = m === 'mls' ? '' : 'none';
   if (golayBox) golayBox.style.display = m === 'golay' ? '' : 'none';
+  if (multiplexBox) multiplexBox.style.display = m === 'multiplex' ? '' : 'none';
 }
 
 export function setButtonStates(audioReady: boolean, scanning: boolean): void {

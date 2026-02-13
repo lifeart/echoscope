@@ -13,6 +13,16 @@ export const FADE_SAMPLES = 192;
 export const DEFAULT_CHIRP = { f1: 2000, f2: 9000, durationMs: 7 } as const;
 export const DEFAULT_MLS = { order: 12, chipRate: 4000 } as const;
 export const DEFAULT_GOLAY = { order: 10, chipRate: 5000, gapMs: 12 } as const;
+export const DEFAULT_MULTIPLEX = {
+  carrierCount: 6,
+  fStart: 2200,
+  fEnd: 8800,
+  symbolMs: 8,
+  guardHz: 180,
+  minSpacingHz: 220,
+  calibrationCandidates: 12,
+  fusion: 'snrWeighted' as const,
+} as const;
 
 export const DEFAULT_SCAN = {
   step: 10,

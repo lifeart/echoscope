@@ -19,6 +19,8 @@ export function drawSignalPreview(): void {
       { data: probe.a, color: '#6fa8dc' },
       { data: probe.b, color: '#e69138' },
     ], sr);
+  } else if (probe.type === 'multiplex' && probe.ref) {
+    drawPreviewCanvas('previewMultiplex', [{ data: probe.ref, color: '#9ad27a' }], sr);
   } else if (probe.ref) {
     const id = probe.type === 'chirp' ? 'previewChirp' : 'previewMls';
     drawPreviewCanvas(id, [{ data: probe.ref, color: '#8dd0ff' }], sr);

@@ -17,6 +17,7 @@ import { computeEnvBaseline } from './env-baseline.js';
 import { estimateMicXY } from '../spatial/geometry.js';
 import { runBandCalibration, type RawPingCapture } from './band-runner.js';
 import { fuseBandResults, getSelectedBandResult } from './band-fusion.js';
+import { qualifyMultiplexCarriers } from './multiplex-carrier-selection.js';
 import { MULTIBAND_BANDS } from '../constants.js';
 import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo } from '../types.js';
 
@@ -924,6 +925,30 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     }
   }
 
+  let carrierCalibration = undefined;
+  if (config.probe.type === 'multiplex') {
+    try {
+      console.debug(`[calib] multiplex: qualifying carriers candidates=${config.probe.params.calibrationCandidates} target=${config.probe.params.carrierCount}`);
+      carrierCalibration = await qualifyMultiplexCarriers({
+        config: config.probe.params,
+        sampleRate: sr,
+        c,
+        minR,
+        maxR,
+        heatBins,
+        gain,
+        listenMs,
+        strengthGate: config.strengthGate,
+        confidenceGate: config.confidenceGate,
+        repeats: 3,
+        gapMs: Math.max(12, repeatGap * 0.25),
+      });
+      console.debug(`[calib] multiplex: selected=${carrierCalibration.activeCarrierHz.map(f => f.toFixed(0)).join(', ')}Hz`);
+    } catch (error) {
+      console.warn('[calib] multiplex carrier qualification failed:', error);
+    }
+  }
+
   const result: CalibrationResult = {
     valid: mbValid,
     quality: mbQuality,
@@ -940,6 +965,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     envBaselinePings,
     sanity,
     multiband: multibandInfo,
+    carrierCalibration,
   };
 
   console.debug(`[calib] result: valid=${result.valid} quality=${result.quality.toFixed(3)} mono=${result.monoLikely} rL=${result.distances.L.toFixed(4)}m rR=${result.distances.R.toFixed(4)}m sysDelay={L:${(result.systemDelay.L * 1000).toFixed(3)}ms R:${(result.systemDelay.R * 1000).toFixed(3)}ms common:${(result.systemDelay.common * 1000).toFixed(3)}ms}`);

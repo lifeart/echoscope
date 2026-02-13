@@ -112,6 +112,13 @@ export function renderCalibInfo(): void {
     }
   }
 
+  if (calib.carrierCalibration) {
+    const cc = calib.carrierCalibration;
+    lines.push('');
+    lines.push(`Multiplex carriers: selected=${cc.activeCarrierHz.length} minSpacing=${cc.minSpacingHz.toFixed(0)}Hz`);
+    lines.push(`  activeHz=[${cc.activeCarrierHz.map(f => f.toFixed(0)).join(', ')}]`);
+  }
+
   calibInfoEl.textContent = lines.join('\n');
 
   if (sanityTextEl && calib.sanity.have) {

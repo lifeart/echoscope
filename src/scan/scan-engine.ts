@@ -348,7 +348,7 @@ export async function doScan(): Promise<void> {
       }
       if (collected.length > 0) {
         // Use coherent accumulation for deterministic signals (Golay/MLS), incoherent for chirp
-        const isDeterministic = config.probe.type === 'golay' || config.probe.type === 'mls';
+        const isDeterministic = config.probe.type === 'golay' || config.probe.type === 'mls' || config.probe.type === 'multiplex';
         let profileBins: Float32Array;
         let bestBin: number;
 
