@@ -1,4 +1,4 @@
-import { selectBestCarrierSubset } from '../../src/calibration/multiplex-carrier-selection.js';
+import { buildCandidateGrid, selectBestCarrierSubset } from '../../src/calibration/multiplex-carrier-selection.js';
 
 describe('selectBestCarrierSubset', () => {
   it('selects top carriers with min-spacing constraint', () => {
@@ -26,5 +26,24 @@ describe('selectBestCarrierSubset', () => {
 
     expect(result.activeCarrierHz.length).toBeGreaterThanOrEqual(1);
     expect(result.candidates.some(c => c.selected)).toBe(true);
+  });
+});
+
+describe('buildCandidateGrid', () => {
+  it('clamps candidates to Nyquist-safe ceiling', () => {
+    const grid = buildCandidateGrid({
+      carrierCount: 6,
+      fStart: 2000,
+      fEnd: 12000,
+      symbolMs: 8,
+      guardHz: 180,
+      minSpacingHz: 220,
+      calibrationCandidates: 8,
+      fusion: 'snrWeighted',
+    }, 16000);
+
+    expect(grid.length).toBe(8);
+    expect(Math.max(...grid)).toBeLessThanOrEqual(16000 * 0.45 + 1e-6);
+    expect(Math.min(...grid)).toBeGreaterThanOrEqual(800);
   });
 });

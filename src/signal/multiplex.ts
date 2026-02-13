@@ -40,34 +40,46 @@ function pickCarriers(
     : null;
 
   const carriers: number[] = [];
+  const minSpacing = minOrthSpacing * 0.8;
+  const tryAddCarrier = (rawHz: number): void => {
+    const quantized = Math.round(rawHz / binHz) * binHz;
+    if (quantized < fLo || quantized > fHi) return;
+    if (carriers.some(existing => Math.abs(existing - quantized) < minSpacing)) return;
+    carriers.push(quantized);
+  };
+
   if (seeded) {
     for (const freq of seeded) {
-      const quantized = Math.round(clamp(freq, fLo, fHi) / binHz) * binHz;
-      if (quantized < fLo || quantized > fHi) continue;
-      if (carriers.some(existing => Math.abs(existing - quantized) < minOrthSpacing * 0.8)) continue;
-      carriers.push(quantized);
+      tryAddCarrier(clamp(freq, fLo, fHi));
     }
   }
 
-  if (carriers.length === 0) {
+  if (carriers.length < requestedCount) {
     if (requestedCount === 1) {
-      carriers.push(Math.round((0.5 * (fLo + fHi)) / binHz) * binHz);
+      tryAddCarrier(0.5 * (fLo + fHi));
     } else {
       const span = Math.max(0, fHi - fLo);
       const spacing = Math.max(minOrthSpacing, span / Math.max(1, requestedCount - 1));
       let f = fLo;
-      while (carriers.length < requestedCount && f <= fHi + 1e-6) {
-        const quantized = Math.round(f / binHz) * binHz;
-        if (quantized >= fLo && quantized <= fHi) {
-          if (!carriers.some(existing => Math.abs(existing - quantized) < minOrthSpacing * 0.8)) {
-            carriers.push(quantized);
-          }
-        }
+      let attempts = 0;
+      while (carriers.length < requestedCount && attempts < requestedCount * 8) {
+        tryAddCarrier(f);
         f += spacing;
+        attempts++;
+        if (f > fHi + 1e-6) f = fLo + (attempts * 0.37 % 1) * Math.max(binHz, span);
       }
-      if (carriers.length === 0) carriers.push(Math.round((0.5 * (fLo + fHi)) / binHz) * binHz);
+
+      if (carriers.length < requestedCount && span > 0) {
+        const sweepBins = Math.max(8, requestedCount * 3);
+        for (let i = 0; i < sweepBins && carriers.length < requestedCount; i++) {
+          const alpha = sweepBins <= 1 ? 0.5 : i / (sweepBins - 1);
+          tryAddCarrier(fLo + alpha * span);
+        }
+      }
     }
   }
+
+  if (carriers.length === 0) tryAddCarrier(0.5 * (fLo + fHi));
 
   carriers.sort((a, b) => a - b);
   return { carrierHz: carriers, nSamples };

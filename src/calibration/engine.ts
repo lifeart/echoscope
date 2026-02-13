@@ -18,8 +18,8 @@ import { estimateMicXY } from '../spatial/geometry.js';
 import { runBandCalibration, type RawPingCapture } from './band-runner.js';
 import { fuseBandResults, getSelectedBandResult } from './band-fusion.js';
 import { qualifyMultiplexCarriers } from './multiplex-carrier-selection.js';
-import { MULTIBAND_BANDS } from '../constants.js';
-import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo } from '../types.js';
+import { DEFAULT_MULTIPLEX, MULTIBAND_BANDS } from '../constants.js';
+import type { CalibrationResult, CalibrationSanity, GolayConfig, MultibandInfo, MultiplexConfig } from '../types.js';
 
 interface GolaySumResult {
   corr: Float32Array;
@@ -926,27 +926,33 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   }
 
   let carrierCalibration = undefined;
-  if (config.probe.type === 'multiplex') {
-    try {
-      console.debug(`[calib] multiplex: qualifying carriers candidates=${config.probe.params.calibrationCandidates} target=${config.probe.params.carrierCount}`);
-      carrierCalibration = await qualifyMultiplexCarriers({
-        config: config.probe.params,
-        sampleRate: sr,
-        c,
-        minR,
-        maxR,
-        heatBins,
-        gain,
-        listenMs,
-        strengthGate: config.strengthGate,
-        confidenceGate: config.confidenceGate,
-        repeats: 3,
-        gapMs: Math.max(12, repeatGap * 0.25),
-      });
-      console.debug(`[calib] multiplex: selected=${carrierCalibration.activeCarrierHz.map(f => f.toFixed(0)).join(', ')}Hz`);
-    } catch (error) {
-      console.warn('[calib] multiplex carrier qualification failed:', error);
-    }
+  const multiplexConfigForQualification: MultiplexConfig = config.probe.type === 'multiplex'
+    ? config.probe.params
+    : {
+      ...DEFAULT_MULTIPLEX,
+      fStart: config.probe.type === 'chirp' ? Math.min(config.probe.params.f1, config.probe.params.f2) : DEFAULT_MULTIPLEX.fStart,
+      fEnd: config.probe.type === 'chirp' ? Math.max(config.probe.params.f1, config.probe.params.f2) : DEFAULT_MULTIPLEX.fEnd,
+    };
+
+  try {
+    console.debug(`[calib] multiplex: qualifying carriers candidates=${multiplexConfigForQualification.calibrationCandidates} target=${multiplexConfigForQualification.carrierCount}`);
+    carrierCalibration = await qualifyMultiplexCarriers({
+      config: multiplexConfigForQualification,
+      sampleRate: sr,
+      c,
+      minR,
+      maxR,
+      heatBins,
+      gain,
+      listenMs,
+      strengthGate: config.strengthGate,
+      confidenceGate: config.confidenceGate,
+      repeats: 3,
+      gapMs: Math.max(12, repeatGap * 0.25),
+    });
+    console.debug(`[calib] multiplex: selected=${carrierCalibration.activeCarrierHz.map(f => f.toFixed(0)).join(', ')}Hz`);
+  } catch (error) {
+    console.warn('[calib] multiplex carrier qualification failed:', error);
   }
 
   const result: CalibrationResult = {

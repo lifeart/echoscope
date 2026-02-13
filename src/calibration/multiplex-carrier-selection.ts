@@ -6,6 +6,7 @@ import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { estimateBestFromProfile } from '../dsp/peak.js';
 import { computeProfileConfidence } from '../scan/confidence.js';
 import { pingAndCaptureSteered } from '../spatial/steering.js';
+import { MAX_FREQUENCY, MIN_FREQUENCY } from '../constants.js';
 import type { CarrierCalibrationCandidate, CarrierCalibrationResult, MultiplexConfig } from '../types.js';
 
 interface QualificationInput {
@@ -64,10 +65,12 @@ function energyNormalize(corr: Float32Array, refEnergy: number): void {
   for (let i = 0; i < corr.length; i++) corr[i] *= inv;
 }
 
-function candidateGrid(config: MultiplexConfig): number[] {
+export function buildCandidateGrid(config: MultiplexConfig, sampleRate: number): number[] {
   const count = Math.max(4, Math.floor(config.calibrationCandidates));
-  const lo = Math.min(config.fStart, config.fEnd);
-  const hi = Math.max(config.fStart, config.fEnd);
+  const nyquistSafe = Math.min(MAX_FREQUENCY, 0.45 * sampleRate);
+  const lo = clamp(Math.min(config.fStart, config.fEnd), MIN_FREQUENCY, nyquistSafe);
+  const hi = clamp(Math.max(config.fStart, config.fEnd), MIN_FREQUENCY, nyquistSafe);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo + 1e-9) return [lo];
   if (count <= 1) return [0.5 * (lo + hi)];
   const span = Math.max(0, hi - lo);
   const step = span / Math.max(1, count - 1);
@@ -178,7 +181,7 @@ export function selectBestCarrierSubset(
 export async function qualifyMultiplexCarriers(input: QualificationInput): Promise<CarrierCalibrationResult> {
   const repeats = Math.max(2, Math.min(6, Math.floor(input.repeats ?? 3)));
   const gapMs = Math.max(5, input.gapMs ?? 14);
-  const freqCandidates = candidateGrid(input.config);
+  const freqCandidates = buildCandidateGrid(input.config, input.sampleRate);
 
   const scored: CandidateScore[] = [];
   for (const freqHz of freqCandidates) {
