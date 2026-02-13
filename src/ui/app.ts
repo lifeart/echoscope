@@ -18,6 +18,7 @@ import { createHeatmap, updateHeatmapRow } from '../scan/heatmap-data.js';
 import { initLevelMeter } from '../viz/level-meter.js';
 import { drawSignalPreview, scheduleSignalPreview } from '../viz/signal-preview.js';
 import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
+import { setupPeerUI, syncPeerButtons } from './peer-ui.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -114,6 +115,7 @@ export function initApp(): void {
         }
       }
       setStatus('ready');
+      syncPeerButtons();
       initLevelMeter();
       drawSignalPreview();
     } catch (e: any) {
@@ -482,6 +484,9 @@ export function initApp(): void {
       }
     }
   });
+
+  // Peer network UI
+  setupPeerUI();
 
   // Resize
   window.addEventListener('resize', () => {

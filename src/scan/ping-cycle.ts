@@ -20,9 +20,24 @@ import { computeSteeringDelay } from '../spatial/steering.js';
 import { delayAndSum } from '../spatial/rx-beamformer.js';
 import { predictedTau0ForPing } from '../calibration/engine.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
-import type { PingDetailedResult, RangeProfile, ArrayGeometry } from '../types.js';
+import { peerManager } from '../network/peer-manager.js';
+import { mergeRemoteAudio } from '../network/distributed-array.js';
+import { broadcastCaptureRequest, waitForRemoteCaptures } from '../network/capture-collector.js';
+import type { PingDetailedResult, RangeProfile, ArrayGeometry, CaptureResponse, SyncedAudioChunk } from '../types.js';
 
 let clutterState: ClutterState = { model: null };
+let nextPingId = 1;
+
+function capturesToChunks(captures: CaptureResponse[]): SyncedAudioChunk[] {
+  const probeConfig = store.get().config.probe;
+  return captures.map(c => ({
+    peerId: c.peerId,
+    timestamp: c.timestamp,
+    sampleRate: c.sampleRate,
+    channels: c.channels,
+    probeConfig,
+  }));
+}
 
 export function resetClutter(): void {
   clutterState = { model: null };
@@ -125,18 +140,47 @@ async function captureGolaySteered(
   angleDeg: number,
   micArraySpacing: number,
 ) {
+  const config = store.get().config;
+  const hasPeers = peerManager.getPeerCount() > 0 && config.distributed.enabled;
+
+  // Golay A
+  const pingIdA = nextPingId++;
+  if (hasPeers) broadcastCaptureRequest(pingIdA, angleDeg, listenMs, 'golay');
+
+  const localTsA = performance.now() / 1000;
   const capA = await pingAndCaptureSteered(a, dt, gain, listenMs);
   const predTau0A = predictedTau0ForPing(capA.delayL, capA.delayR);
 
+  let micChannelsA = capA.micChannels;
+  if (hasPeers) {
+    const remotesA = await waitForRemoteCaptures(pingIdA, config.distributed.captureTimeoutMs);
+    if (remotesA.length > 0) {
+      micChannelsA = mergeRemoteAudio(capA.micChannels, sampleRate, capturesToChunks(remotesA), localTsA);
+    }
+  }
+
   await sleep(Math.max(0, gapMs));
 
+  // Golay B
+  const pingIdB = nextPingId++;
+  if (hasPeers) broadcastCaptureRequest(pingIdB, angleDeg, listenMs, 'golay');
+
+  const localTsB = performance.now() / 1000;
   const capB = await pingAndCaptureSteered(b, dt, gain, listenMs);
   const predTau0B = predictedTau0ForPing(capB.delayL, capB.delayR);
 
+  let micChannelsB = capB.micChannels;
+  if (hasPeers) {
+    const remotesB = await waitForRemoteCaptures(pingIdB, config.distributed.captureTimeoutMs);
+    if (remotesB.length > 0) {
+      micChannelsB = mergeRemoteAudio(capB.micChannels, sampleRate, capturesToChunks(remotesB), localTsB);
+    }
+  }
+
   // Apply RX beamforming if stereo mic array is configured
   const rxGeo = buildRxGeometry(micArraySpacing, c);
-  const micA = rxGeo ? delayAndSum(capA.micChannels, angleDeg, rxGeo, sampleRate) : capA.micWin;
-  const micB = rxGeo ? delayAndSum(capB.micChannels, angleDeg, rxGeo, sampleRate) : capB.micWin;
+  const micA = rxGeo ? delayAndSum(micChannelsA, angleDeg, rxGeo, sampleRate) : capA.micWin;
+  const micB = rxGeo ? delayAndSum(micChannelsB, angleDeg, rxGeo, sampleRate) : capB.micWin;
 
   // Sum raw correlations WITHOUT per-half normalization to preserve Golay sidelobe cancellation
   const corrA = fftCorrelateComplex(micA, a, sampleRate);
@@ -217,11 +261,28 @@ export async function doPingDetailed(
     tau0Final = golay.tau0;
     profFinal = golay.prof;
   } else if (probe.type === 'multiplex' && probe.ref && probe.refsByCarrier && probe.carrierHz) {
+    // Distributed: broadcast capture request before local ping
+    const muxPingId = nextPingId++;
+    const muxHasPeers = peerManager.getPeerCount() > 0 && config.distributed.enabled;
+    if (muxHasPeers) {
+      broadcastCaptureRequest(muxPingId, angleDeg, listenMs, probe.type);
+    }
+
+    const muxLocalTs = performance.now() / 1000;
     const cap = await pingAndCaptureSteered(probe.ref, dt, gain, listenMs);
     const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
 
+    // Merge remote audio if distributed
+    let muxMicChannels = cap.micChannels;
+    if (muxHasPeers) {
+      const muxRemotes = await waitForRemoteCaptures(muxPingId, config.distributed.captureTimeoutMs);
+      if (muxRemotes.length > 0) {
+        muxMicChannels = mergeRemoteAudio(cap.micChannels, sr, capturesToChunks(muxRemotes), muxLocalTs);
+      }
+    }
+
     const rxGeo = buildRxGeometry(config.micArraySpacing, c);
-    const micSignal = rxGeo ? delayAndSum(cap.micChannels, angleDeg, rxGeo, sr) : cap.micWin;
+    const micSignal = rxGeo ? delayAndSum(muxMicChannels, angleDeg, rxGeo, sr) : cap.micWin;
 
     const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
     const demux = demuxMultiplexProfile({
@@ -285,12 +346,30 @@ export async function doPingDetailed(
     }
   } else {
     const ref = probe.ref!;
+
+    // Distributed: broadcast capture request before local ping
+    const pingId = nextPingId++;
+    const hasPeers = peerManager.getPeerCount() > 0 && config.distributed.enabled;
+    if (hasPeers) {
+      broadcastCaptureRequest(pingId, angleDeg, listenMs, probe.type);
+    }
+
+    const localTs = performance.now() / 1000;
     const cap = await pingAndCaptureSteered(ref, dt, gain, listenMs);
     const predTau0 = predictedTau0ForPing(cap.delayL, cap.delayR);
 
+    // Merge remote audio if distributed
+    let micChannels = cap.micChannels;
+    if (hasPeers) {
+      const remoteCaptures = await waitForRemoteCaptures(pingId, config.distributed.captureTimeoutMs);
+      if (remoteCaptures.length > 0) {
+        micChannels = mergeRemoteAudio(cap.micChannels, sr, capturesToChunks(remoteCaptures), localTs);
+      }
+    }
+
     // Apply RX beamforming if stereo mic array is configured
     const rxGeo = buildRxGeometry(config.micArraySpacing, c);
-    const micSignal = rxGeo ? delayAndSum(cap.micChannels, angleDeg, rxGeo, sr) : cap.micWin;
+    const micSignal = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr) : cap.micWin;
 
     const res = corrAndBuildProfile(micSignal, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
     corrFinalReal = res.corrReal;

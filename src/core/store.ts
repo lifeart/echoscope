@@ -31,6 +31,7 @@ const _defaultListenMs = (2 * 4.0 / _defaultC) * 1000 + 50;
 
 const defaultConfig: AppConfig = {
   probe: { type: 'chirp', params: { f1: 2000, f2: 9000, durationMs: 7 } },
+  distributed: { enabled: false, captureTimeoutMs: 50 },
   steeringAngleDeg: 0,
   gain: 0.22,
   listenMs: _defaultListenMs,

@@ -565,6 +565,30 @@
         <div class="mono" id="deviceInfo" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
       </details>
 
+      <details id="peerSection" style="margin-top:12px;">
+        <summary style="font-size:13px">Network / Peers</summary>
+        <p class="hint">Connect two devices via WebRTC. One creates an offer, the other accepts.</p>
+
+        <div class="row" style="margin-top:8px">
+          <button id="btnPeerCreateOffer" disabled>Create Offer</button>
+          <button id="btnPeerAcceptOffer" disabled>Accept Offer</button>
+          <button id="btnPeerDisconnect" disabled>Disconnect</button>
+        </div>
+
+        <div id="peerSignalBox" style="display:none; margin-top:10px;">
+          <label id="peerSignalLabel">Signal:</label>
+          <textarea id="peerSignalText" class="mono" rows="3" style="width:100%; font-size:11px; background:#111; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; resize:vertical;"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button id="btnPeerCopySignal">Copy</button>
+            <button id="btnPeerApplySignal" style="display:none">Apply</button>
+          </div>
+        </div>
+
+        <div id="peerStatusBox" style="display:none; margin-top:10px;">
+          <div class="mono" id="peerStatus" style="border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a; font-size:12px;"></div>
+        </div>
+      </details>
+
       <div class="mono" id="log" style="margin-top:12px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a; min-height:130px;"></div>
     </section>
 

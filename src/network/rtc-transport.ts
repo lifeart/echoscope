@@ -1,49 +1,54 @@
 import type { PeerNode, ArrayGeometry } from '../types.js';
 
-export type MessageHandler = (data: ArrayBuffer) => void;
+export type MessageHandler = (peerId: string, data: ArrayBuffer) => void;
+export type PeerStateHandler = (peerId: string, state: RTCPeerConnectionState) => void;
+
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+const DEFAULT_GEOMETRY: ArrayGeometry = {
+  speakers: [{ x: -0.1, y: 0, z: 0 }, { x: 0.1, y: 0, z: 0 }],
+  microphones: [{ x: 0, y: 0.01, z: 0 }],
+  spacing: 0.2,
+  speedOfSound: 343,
+};
 
 export class RTCTransport {
   private peers = new Map<string, PeerNode>();
   private onMessageCallback: MessageHandler | null = null;
+  private onPeerStateCallback: PeerStateHandler | null = null;
 
   onMessage(callback: MessageHandler): void {
     this.onMessageCallback = callback;
   }
 
+  onPeerState(callback: PeerStateHandler): void {
+    this.onPeerStateCallback = callback;
+  }
+
   async createOffer(peerId: string): Promise<RTCSessionDescriptionInit> {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    this.attachConnectionStateHandler(pc, peerId);
 
     const dc = pc.createDataChannel('audio', { ordered: false, maxRetransmits: 0 });
     dc.binaryType = 'arraybuffer';
-    dc.onmessage = (ev) => this.onMessageCallback?.(ev.data);
+    dc.onmessage = (ev) => this.onMessageCallback?.(peerId, ev.data);
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
-    // Wait for ICE gathering to complete
-    await new Promise<void>((resolve) => {
-      if (pc.iceGatheringState === 'complete') { resolve(); return; }
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete') resolve();
-      };
-    });
-
-    const defaultGeometry: ArrayGeometry = {
-      speakers: [{ x: -0.1, y: 0, z: 0 }, { x: 0.1, y: 0, z: 0 }],
-      microphones: [{ x: 0, y: 0.01, z: 0 }],
-      spacing: 0.2,
-      speedOfSound: 343,
-    };
+    await this.waitForIceGathering(pc);
 
     this.peers.set(peerId, {
       id: peerId,
       connection: pc,
       dataChannel: dc,
       clockOffset: 0,
-      geometry: defaultGeometry,
+      geometry: { ...DEFAULT_GEOMETRY },
       lastHeartbeat: Date.now(),
+      state: 'connecting',
     });
 
     return pc.localDescription!;
@@ -53,42 +58,39 @@ export class RTCTransport {
     peerId: string,
     offer: RTCSessionDescriptionInit,
   ): Promise<RTCSessionDescriptionInit> {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-    let dataChannel: RTCDataChannel | null = null;
-    pc.ondatachannel = (ev) => {
-      dataChannel = ev.channel;
-      dataChannel.binaryType = 'arraybuffer';
-      dataChannel.onmessage = (msgEv) => this.onMessageCallback?.(msgEv.data);
-    };
+    this.attachConnectionStateHandler(pc, peerId);
+
+    const dcPromise = Promise.race([
+      new Promise<RTCDataChannel>((resolve) => {
+        pc.ondatachannel = (ev) => {
+          const channel = ev.channel;
+          channel.binaryType = 'arraybuffer';
+          channel.onmessage = (msgEv) => this.onMessageCallback?.(peerId, msgEv.data);
+          resolve(channel);
+        };
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Data channel not received within 10s')), 10000)
+      ),
+    ]);
 
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    await this.waitForIceGathering(pc);
 
-    await new Promise<void>((resolve) => {
-      if (pc.iceGatheringState === 'complete') { resolve(); return; }
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete') resolve();
-      };
-    });
-
-    const defaultGeometry: ArrayGeometry = {
-      speakers: [{ x: -0.1, y: 0, z: 0 }, { x: 0.1, y: 0, z: 0 }],
-      microphones: [{ x: 0, y: 0.01, z: 0 }],
-      spacing: 0.2,
-      speedOfSound: 343,
-    };
+    const dataChannel = await dcPromise;
 
     this.peers.set(peerId, {
       id: peerId,
       connection: pc,
-      dataChannel: dataChannel!,
+      dataChannel,
       clockOffset: 0,
-      geometry: defaultGeometry,
+      geometry: { ...DEFAULT_GEOMETRY },
       lastHeartbeat: Date.now(),
+      state: 'connecting',
     });
 
     return pc.localDescription!;
@@ -100,10 +102,11 @@ export class RTCTransport {
     await peer.connection.setRemoteDescription(answer);
   }
 
-  send(peerId: string, data: ArrayBuffer): void {
+  send(peerId: string, data: ArrayBuffer): boolean {
     const peer = this.peers.get(peerId);
-    if (!peer?.dataChannel || peer.dataChannel.readyState !== 'open') return;
+    if (!peer?.dataChannel || peer.dataChannel.readyState !== 'open') return false;
     peer.dataChannel.send(data);
+    return true;
   }
 
   broadcast(data: ArrayBuffer): void {
@@ -117,6 +120,7 @@ export class RTCTransport {
   disconnect(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (peer) {
+      peer.connection.onconnectionstatechange = null;
       peer.dataChannel?.close();
       peer.connection.close();
       this.peers.delete(peerId);
@@ -131,5 +135,33 @@ export class RTCTransport {
 
   getPeers(): Map<string, PeerNode> {
     return new Map(this.peers);
+  }
+
+  updatePeer(peerId: string, update: Partial<Pick<PeerNode, 'clockOffset' | 'geometry' | 'lastHeartbeat' | 'state'>>): void {
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+    if (update.clockOffset !== undefined) peer.clockOffset = update.clockOffset;
+    if (update.geometry !== undefined) peer.geometry = update.geometry;
+    if (update.lastHeartbeat !== undefined) peer.lastHeartbeat = update.lastHeartbeat;
+    if (update.state !== undefined) peer.state = update.state;
+  }
+
+  private waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const timer = setTimeout(() => resolve(), 10000);
+      pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete') {
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+    });
+  }
+
+  private attachConnectionStateHandler(pc: RTCPeerConnection, peerId: string): void {
+    pc.onconnectionstatechange = () => {
+      this.onPeerStateCallback?.(peerId, pc.connectionState);
+    };
   }
 }

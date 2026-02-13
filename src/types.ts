@@ -271,6 +271,8 @@ export interface Measurement {
 }
 
 // --- Network ---
+export type PeerConnectionState = 'connecting' | 'syncing' | 'ready' | 'stale' | 'disconnected';
+
 export interface PeerNode {
   id: string;
   connection: RTCPeerConnection;
@@ -278,6 +280,7 @@ export interface PeerNode {
   clockOffset: number;
   geometry: ArrayGeometry;
   lastHeartbeat: number;
+  state: PeerConnectionState;
 }
 
 export interface SyncedAudioChunk {
@@ -286,6 +289,26 @@ export interface SyncedAudioChunk {
   sampleRate: number;
   channels: Float32Array[];
   probeConfig: ProbeConfig;
+}
+
+export interface CaptureRequest {
+  pingId: number;
+  angleDeg: number;
+  listenMs: number;
+  probeType: string;
+}
+
+export interface CaptureResponse {
+  pingId: number;
+  peerId: string;
+  timestamp: number;
+  sampleRate: number;
+  channels: Float32Array[];
+}
+
+export interface DistributedConfig {
+  enabled: boolean;
+  captureTimeoutMs: number;
 }
 
 // --- Heatmap ---
@@ -381,6 +404,7 @@ export interface AppState {
 
 export interface AppConfig {
   probe: ProbeConfig;
+  distributed: DistributedConfig;
   steeringAngleDeg: number;
   gain: number;
   listenMs: number;
@@ -435,6 +459,8 @@ export interface AppEvents {
   'calibration:done': CalibrationResult;
   'target:updated': TargetState[];
   'peer:connected': { peerId: string };
+  'peer:disconnected': { peerId: string };
+  'peer:stale': { peerId: string };
   'peer:data': SyncedAudioChunk;
   'state:changed': { path: string; value: unknown };
   'audio:initialized': AudioState;
