@@ -1,4 +1,4 @@
-import { createHeatmap, updateHeatmapRow, smoothHeatmapDisplay } from '../../src/scan/heatmap-data.js';
+import { createHeatmap, updateHeatmapRow, smoothHeatmapDisplay, averageProfiles } from '../../src/scan/heatmap-data.js';
 
 describe('createHeatmap', () => {
   it('creates arrays with correct dimensions', () => {
@@ -81,6 +81,64 @@ describe('updateHeatmapRow', () => {
     updateHeatmapRow(hm, 0, new Float32Array(4), -1, 0);
     expect(hm.bestBin[0]).toBe(-1);
     expect(hm.bestVal[0]).toBe(0);
+  });
+});
+
+describe('averageProfiles', () => {
+  it('returns empty result for no profiles', () => {
+    const { averaged, bestBin, bestVal } = averageProfiles([]);
+    expect(averaged.length).toBe(0);
+    expect(bestBin).toBe(-1);
+    expect(bestVal).toBe(0);
+  });
+
+  it('returns single profile unchanged', () => {
+    const p = new Float32Array([0.1, 0.5, 0.9, 0.3]);
+    const { averaged, bestBin, bestVal } = averageProfiles([p]);
+    expect(averaged).toBe(p); // same reference, no copy
+    expect(bestBin).toBe(2);
+    expect(bestVal).toBeCloseTo(0.9);
+  });
+
+  it('averages two profiles element-wise', () => {
+    const p1 = new Float32Array([0.2, 0.8, 0.4]);
+    const p2 = new Float32Array([0.6, 0.4, 0.2]);
+    const { averaged, bestBin, bestVal } = averageProfiles([p1, p2]);
+    expect(averaged[0]).toBeCloseTo(0.4);
+    expect(averaged[1]).toBeCloseTo(0.6);
+    expect(averaged[2]).toBeCloseTo(0.3);
+    expect(bestBin).toBe(1);
+    expect(bestVal).toBeCloseTo(0.6);
+  });
+
+  it('averages four profiles and picks correct best', () => {
+    const p1 = new Float32Array([1.0, 0.0, 0.0]);
+    const p2 = new Float32Array([1.0, 0.0, 0.0]);
+    const p3 = new Float32Array([1.0, 0.0, 0.0]);
+    const p4 = new Float32Array([1.0, 0.0, 4.0]);
+    const { averaged, bestBin, bestVal } = averageProfiles([p1, p2, p3, p4]);
+    expect(averaged[0]).toBeCloseTo(1.0);
+    expect(averaged[2]).toBeCloseTo(1.0);
+    expect(bestBin).toBe(0); // tied at 1.0, first wins
+    expect(bestVal).toBeCloseTo(1.0);
+  });
+
+  it('reduces noise through averaging', () => {
+    // Signal at bin 5, noise everywhere else
+    const profiles: Float32Array[] = [];
+    for (let i = 0; i < 8; i++) {
+      const p = new Float32Array(10);
+      p[5] = 1.0; // consistent signal
+      for (let j = 0; j < 10; j++) {
+        if (j !== 5) p[j] = (i % 2 === 0) ? 0.3 : -0.3; // alternating noise
+      }
+      profiles.push(p);
+    }
+    const { averaged, bestBin } = averageProfiles(profiles);
+    expect(bestBin).toBe(5);
+    expect(averaged[5]).toBeCloseTo(1.0);
+    // Noise bins should cancel toward 0
+    expect(Math.abs(averaged[0])).toBeLessThan(0.01);
   });
 });
 

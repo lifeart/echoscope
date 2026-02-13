@@ -67,6 +67,7 @@ function applyLaptopScanPreset(): void {
     mode: lp.mode,
     scanStep: String(lp.scanStep),
     scanDwell: String(lp.scanDwell),
+    scanPasses: String(lp.scanPasses),
     listenMs: String(lp.listenMs),
     strengthGate: String(lp.strengthGate),
     scanClutterStrength: String(lp.clutterStrength),

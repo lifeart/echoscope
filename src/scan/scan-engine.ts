@@ -1,8 +1,8 @@
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import { sleep } from '../utils.js';
+import { clamp, sleep } from '../utils.js';
 import { doPing, resetClutter } from './ping-cycle.js';
-import { createHeatmap, updateHeatmapRow } from './heatmap-data.js';
+import { createHeatmap, updateHeatmapRow, averageProfiles } from './heatmap-data.js';
 
 export async function doScan(): Promise<void> {
   const config = store.get().config;
@@ -14,6 +14,7 @@ export async function doScan(): Promise<void> {
   const minR = config.minRange;
   const maxR = config.maxRange;
   const heatBins = config.heatBins;
+  const passes = clamp(config.scanPasses, 1, 8);
 
   const angles: number[] = [];
   for (let a = -60; a <= 60; a += step) angles.push(a);
@@ -25,12 +26,26 @@ export async function doScan(): Promise<void> {
   for (let i = 0; i < angles.length; i++) {
     if (!store.get().scanning) break;
     const a = angles[i];
-
     store.set('config.steeringAngleDeg', a);
-    bus.emit('scan:step', { angleDeg: a, index: i, total: angles.length });
 
-    const profile = await doPing(a, i);
-    updateHeatmapRow(heatmap, i, profile.bins, profile.bestBin, profile.bestStrength);
+    if (passes === 1) {
+      bus.emit('scan:step', { angleDeg: a, index: i, total: angles.length, pass: 0, totalPasses: 1 });
+      const profile = await doPing(a, i);
+      updateHeatmapRow(heatmap, i, profile.bins, profile.bestBin, profile.bestStrength);
+    } else {
+      const collected: Float32Array[] = [];
+      for (let p = 0; p < passes; p++) {
+        if (!store.get().scanning) break;
+        bus.emit('scan:step', { angleDeg: a, index: i, total: angles.length, pass: p, totalPasses: passes });
+        const profile = await doPing(a, i);
+        collected.push(profile.bins);
+        if (p < passes - 1) await sleep(dwell);
+      }
+      if (collected.length > 0) {
+        const { averaged, bestBin, bestVal } = averageProfiles(collected);
+        updateHeatmapRow(heatmap, i, averaged, bestBin, bestVal);
+      }
+    }
 
     await sleep(dwell);
   }

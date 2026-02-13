@@ -45,6 +45,7 @@ export const LAPTOP_PRESET_SCAN = {
   mode: 'golay' as const,
   scanStep: 3,
   scanDwell: 220,
+  scanPasses: 2,
   listenMs: 180,
   strengthGate: 0.0001,
   clutterStrength: 0.70,

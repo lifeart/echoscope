@@ -1,4 +1,5 @@
 import type { HeatmapData } from '../types.js';
+import { pickBestFromProfile } from '../dsp/peak.js';
 
 export function createHeatmap(angles: number[], bins: number): HeatmapData {
   const count = angles.length;
@@ -46,6 +47,29 @@ export function updateHeatmapRow(
     if (v > 1e-15) dNonZero++;
   }
   console.log(`[updateHeatmapRow] after: dataMax=${dMax.toExponential(3)} dataNonZero=${dNonZero}/${bins}`);
+}
+
+export function averageProfiles(
+  profiles: Float32Array[],
+): { averaged: Float32Array; bestBin: number; bestVal: number } {
+  if (profiles.length === 0) {
+    const empty = new Float32Array(0);
+    return { averaged: empty, bestBin: -1, bestVal: 0 };
+  }
+  if (profiles.length === 1) {
+    const best = pickBestFromProfile(profiles[0]);
+    return { averaged: profiles[0], bestBin: best.bin, bestVal: best.val };
+  }
+  const len = profiles[0].length;
+  const averaged = new Float32Array(len);
+  const n = profiles.length;
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (let p = 0; p < n; p++) sum += profiles[p][i];
+    averaged[i] = sum / n;
+  }
+  const best = pickBestFromProfile(averaged);
+  return { averaged, bestBin: best.bin, bestVal: best.val };
 }
 
 export function smoothHeatmapDisplay(heatmap: HeatmapData, alpha = 0.22): void {

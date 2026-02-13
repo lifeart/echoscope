@@ -285,6 +285,7 @@ export interface AppConfig {
   maxRange: number;
   scanStep: number;
   scanDwell: number;
+  scanPasses: number;
   strengthGate: number;
   qualityAlgo: QualityAlgo;
   directionAxis: 'horizontal' | 'vertical';
@@ -301,7 +302,7 @@ export interface AppConfig {
 export interface AppEvents {
   'ping:start': { angleDeg: number };
   'ping:complete': { angleDeg: number; profile: RangeProfile };
-  'scan:step': { angleDeg: number; index: number; total: number };
+  'scan:step': { angleDeg: number; index: number; total: number; pass: number; totalPasses: number };
   'scan:complete': void;
   'calibration:done': CalibrationResult;
   'target:updated': TargetState[];

@@ -41,6 +41,7 @@ export function readConfigFromDOM(): void {
     s.config.maxRange = inputVal('maxR');
     s.config.scanStep = inputVal('scanStep');
     s.config.scanDwell = inputVal('scanDwell');
+    s.config.scanPasses = clamp(inputVal('scanPasses', 1), 1, 8);
     s.config.strengthGate = clamp(inputVal('strengthGate'), 0, 1);
     s.config.qualityAlgo = selectVal('qualityAlgo') as any;
     s.config.directionAxis = selectVal('dirAxis') as any;

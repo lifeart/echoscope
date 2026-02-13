@@ -290,13 +290,17 @@ export function initApp(): void {
   });
 
   // ---- Scan progress bar ----
-  bus.on('scan:step', ({ angleDeg, index, total }) => {
+  bus.on('scan:step', ({ angleDeg, index, total, pass, totalPasses }) => {
     const progressEl = el('scanProgress');
     const textEl = el('scanProgressText');
     const fillEl = el('scanProgressFill');
     if (progressEl) progressEl.style.display = 'block';
-    if (textEl) textEl.textContent = `Scanning ${index + 1}/${total} (${angleDeg}\u00b0)`;
-    if (fillEl) fillEl.style.width = `${((index + 1) / total) * 100}%`;
+    const passLabel = totalPasses > 1 ? ` pass ${pass + 1}/${totalPasses}` : '';
+    if (textEl) textEl.textContent = `Scanning ${index + 1}/${total} (${angleDeg}\u00b0)${passLabel}`;
+    const progress = totalPasses > 1
+      ? (index * totalPasses + pass + 1) / (total * totalPasses)
+      : (index + 1) / total;
+    if (fillEl) fillEl.style.width = `${progress * 100}%`;
   });
 
   bus.on('scan:complete', () => {
