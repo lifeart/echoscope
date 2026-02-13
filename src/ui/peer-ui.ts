@@ -11,6 +11,18 @@ function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
+type QrTarget = 'host-offer' | 'device-answer';
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 let currentPeerId: string | null = null;
 let flowState: 'idle' | 'offer-created' | 'waiting-answer' | 'waiting-offer' | 'answer-created' | 'connected' = 'idle';
 let statusInterval: ReturnType<typeof setInterval> | null = null;
@@ -59,24 +71,71 @@ export function syncPeerButtons(): void {
   if (disconnectBtn) disconnectBtn.disabled = flowState === 'idle';
 }
 
-function showQrLabel(text: string): void {
-  const qrLabel = el('peerQrLabel');
-  const qrBox = el('peerQrBox');
+function getQrElements(target: QrTarget): {
+  qrBox: HTMLElement | null;
+  qrLabel: HTMLElement | null;
+  qrCanvas: HTMLCanvasElement | null;
+} {
+  if (target === 'host-offer') {
+    return {
+      qrBox: el('peerHostQrBox'),
+      qrLabel: el('peerHostQrLabel'),
+      qrCanvas: el('peerHostQrCanvas') as HTMLCanvasElement | null,
+    };
+  }
+  return {
+    qrBox: el('peerDeviceQrBox'),
+    qrLabel: el('peerDeviceQrLabel'),
+    qrCanvas: el('peerDeviceQrCanvas') as HTMLCanvasElement | null,
+  };
+}
+
+function showQrLabel(target: QrTarget, text: string): void {
+  const { qrLabel, qrBox } = getQrElements(target);
   if (qrLabel) qrLabel.textContent = text;
   if (qrBox) qrBox.classList.remove('hidden');
 }
 
-function hideQrLabel(): void {
-  const qrBox = el('peerQrBox');
+function hideQrLabel(target: QrTarget): void {
+  const { qrBox } = getQrElements(target);
   if (qrBox) qrBox.classList.add('hidden');
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function renderQrToTarget(target: QrTarget, data: string, successLabel: string): Promise<boolean> {
+  const { qrCanvas } = getQrElements(target);
+  if (!qrCanvas) {
+    showQrLabel(target, 'QR unavailable. Use Copy/Apply below.');
+    return false;
+  }
+
+  const { renderQrCode } = await import('./qr-code.js');
+  await withTimeout(renderQrCode(qrCanvas, data), 12000, 'QR generation timeout');
+  showQrLabel(target, successLabel);
+  return true;
 }
 
 async function handleCreateOffer(): Promise<void> {
   const createBtn = el('btnPeerCreateOffer') as HTMLButtonElement | null;
+  let debugSignalLen = 0;
+  let debugParamLen = 0;
+  let debugUrlLen = 0;
   try {
     // Show loading indicator
     if (createBtn) createBtn.textContent = 'Creating offer\u2026';
-    showQrLabel('Generating offer\u2026');
+    hideQrLabel('device-answer');
+    showQrLabel('host-offer', 'Generating offer\u2026');
     syncPeerButtons();
 
     const { peerId, offerText } = await peerManager.createOffer();
@@ -87,27 +146,26 @@ async function handleCreateOffer(): Promise<void> {
     log('[peer] Offer created. Copy it and send to the other device, then paste their answer.');
     syncPeerButtons();
 
-    // Generate QR code with compressed offer URL
+    // Generate QR code with compressed offer payload
     try {
-      showQrLabel('Generating QR\u2026');
-      const compressed = await compressSignal(offerText);
-      const url = buildOfferUrl(compressed);
-      const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
-      if (qrCanvas) {
-        const { renderQrCode } = await import('./qr-code.js');
-        await renderQrCode(qrCanvas, url);
-        showQrLabel('Scan this QR from your phone');
-      }
+      showQrLabel('host-offer', 'Generating QR\u2026');
+      debugSignalLen = offerText.length;
+      const offerParam = await withTimeout(compressSignal(offerText), 12000, 'Signal compression timeout');
+      debugParamLen = offerParam.length;
+      const url = buildOfferUrl(offerParam);
+      debugUrlLen = url.length;
+      await renderQrToTarget('host-offer', url, 'Scan this QR from your phone');
       // Show scan button for scanning answer back
       const scanBox = el('peerScanBox');
       if (scanBox) scanBox.classList.remove('hidden');
     } catch (qrErr: any) {
-      hideQrLabel();
-      log('[peer] QR generation failed (manual copy still works): ' + (qrErr?.message || qrErr));
+      const reason = formatError(qrErr);
+      showQrLabel('host-offer', `QR generation failed: ${reason}. Use Copy/Apply below.`);
+      log(`[peer:err] QR offer failed: ${reason} | signalLen=${debugSignalLen}, paramLen=${debugParamLen}, urlLen=${debugUrlLen}`);
     }
   } catch (e: any) {
     log('[peer:err] Create offer failed: ' + (e?.message || e));
-    hideQrLabel();
+    hideQrLabel('host-offer');
   } finally {
     if (createBtn) createBtn.textContent = 'Create Offer';
   }
@@ -243,12 +301,12 @@ async function handleStartScanAnswer(): Promise<void> {
     try {
       // Extract answer param from scanned URL
       const url = new URL(data);
-      const answerParam = url.searchParams.get('answer');
+      const answerParam = url.searchParams.get('a') ?? url.searchParams.get('answer');
       if (!answerParam) {
         log('[peer:err] Scanned QR does not contain an answer');
         return;
       }
-      const answerText = await decompressSignal(answerParam);
+      const answerText = await withTimeout(decompressSignal(answerParam), 12000, 'Signal decompression timeout');
       if (currentPeerId) {
         await peerManager.acceptAnswer(currentPeerId, answerText);
         log('[peer] Answer scanned and applied. Connecting...');
@@ -276,54 +334,52 @@ function handleStopScan(): void {
 }
 
 function hideQrBoxes(): void {
-  const qrBox = el('peerQrBox');
+  const hostQrBox = el('peerHostQrBox');
+  const deviceQrBox = el('peerDeviceQrBox');
   const scanBox = el('peerScanBox');
-  if (qrBox) qrBox.classList.add('hidden');
+  if (hostQrBox) hostQrBox.classList.add('hidden');
+  if (deviceQrBox) deviceQrBox.classList.add('hidden');
   if (scanBox) scanBox.classList.add('hidden');
   handleStopScan();
 }
 
 /** Called from app.ts when URL has ?offer= param (phone scanned desktop QR) */
 export async function handleUrlOffer(offerParam: string): Promise<void> {
+  let debugAnswerSignalLen = 0;
+  let debugAnswerParamLen = 0;
+  let debugAnswerUrlLen = 0;
   try {
     // Show immediate feedback while processing
-    showQrLabel('Connecting\u2026');
+    hideQrLabel('host-offer');
+    showQrLabel('device-answer', 'Connecting\u2026');
 
-    const offerText = await decompressSignal(offerParam);
+    const offerText = await withTimeout(decompressSignal(offerParam), 12000, 'Signal decompression timeout');
     const { peerId, answerText } = await peerManager.acceptOffer(offerText);
     currentPeerId = peerId;
     flowState = 'answer-created';
 
     // Show answer as QR for desktop to scan
-    const compressed = await compressSignal(answerText);
-    const answerUrl = buildAnswerUrl(compressed);
-    const qrCanvas = el('peerQrCanvas') as HTMLCanvasElement | null;
-    if (qrCanvas) {
-      const { renderQrCode } = await import('./qr-code.js');
-      await renderQrCode(qrCanvas, answerUrl);
-      showQrLabel('Show this QR to the other device');
-    }
+    debugAnswerSignalLen = answerText.length;
+    const answerParam = await withTimeout(compressSignal(answerText), 12000, 'Signal compression timeout');
+    debugAnswerParamLen = answerParam.length;
+    const answerUrl = buildAnswerUrl(answerParam);
+    debugAnswerUrlLen = answerUrl.length;
+    await renderQrToTarget('device-answer', answerUrl, 'Show this QR to the other device');
 
     // Also show text fallback in the details section
     showSignalBox('Answer (copy and send back):', answerText, false);
     log('[peer] Offer accepted via URL. Show the answer QR to the other device.');
     syncPeerButtons();
-
-    // Open diagnostics + peer section so text fallback is accessible
-    const peerSection = el('peerSection') as HTMLDetailsElement | null;
-    const diagnostics = el('diagnostics') as HTMLDetailsElement | null;
-    if (diagnostics) diagnostics.open = true;
-    if (peerSection) peerSection.open = true;
   } catch (e: any) {
-    hideQrLabel();
-    log('[peer:err] URL offer failed: ' + (e?.message || e));
+    hideQrLabel('device-answer');
+    log(`[peer:err] URL offer failed: ${formatError(e)} | answerSignalLen=${debugAnswerSignalLen}, answerParamLen=${debugAnswerParamLen}, answerUrlLen=${debugAnswerUrlLen}`);
   }
 }
 
 /** Called from app.ts when URL has ?answer= param */
 export async function handleUrlAnswer(answerParam: string): Promise<void> {
   try {
-    const answerText = await decompressSignal(answerParam);
+    const answerText = await withTimeout(decompressSignal(answerParam), 12000, 'Signal decompression timeout');
     if (currentPeerId) {
       await peerManager.acceptAnswer(currentPeerId, answerText);
       log('[peer] Answer applied via URL. Connecting...');

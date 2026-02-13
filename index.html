@@ -13,10 +13,10 @@
   <h1>Echolocation Lab — Stereo TX steering + matched filter (MBP + iPhone)</h1>
 </header>
 
-<!-- QR pairing display — top-level so it's immediately visible on phone -->
-<div id="peerQrBox" class="hidden" style="padding:20px;text-align:center;">
-  <canvas id="peerQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
-  <p id="peerQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
+<!-- Device answer QR — top-level so it's immediately visible on phone -->
+<div id="peerDeviceQrBox" class="hidden" style="padding:20px;text-align:center;">
+  <canvas id="peerDeviceQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
+  <p id="peerDeviceQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
 </div>
 
 <main>
@@ -608,6 +608,12 @@
           </div>
         </div>
         <p class="hint" style="margin-top:6px">Calibration is local-only per device. Run calibration on each device if needed.</p>
+
+        <!-- Host offer QR stays in WebRTC section (near pairing controls) -->
+        <div id="peerHostQrBox" class="hidden" style="margin-top:10px; text-align:center;">
+          <canvas id="peerHostQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
+          <p id="peerHostQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
+        </div>
 
         <div id="peerSignalBox" style="display:none; margin-top:10px;">
           <label id="peerSignalLabel">Signal:</label>

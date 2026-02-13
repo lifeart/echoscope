@@ -1,4 +1,5 @@
 import { compressSignal, decompressSignal } from '../../src/network/signal-compress.js';
+import { decodeSignal } from '../../src/network/signaling.js';
 
 describe('signal-compress', () => {
   it('round-trips a typical SDP string', async () => {
@@ -37,4 +38,40 @@ describe('signal-compress', () => {
     const restored = await decompressSignal(compressed);
     expect(restored).toBe(text);
   });
+
+  it('accepts raw base64 signaling payload in decompress path', async () => {
+    const signal = btoa(JSON.stringify({
+      type: 'offer',
+      sdp: 'v=0\r\na=ice-ufrag:abc\r\na=ice-pwd:def\r\n',
+    }));
+    const restored = await decompressSignal(signal);
+    expect(restored).toBe(signal);
+  });
+
+  it('compressed signaling payload is decodable by signaling parser', async () => {
+    const signal = btoa(JSON.stringify({
+      type: 'answer',
+      sdp: 'v=0\r\na=ice-ufrag:xyz\r\na=ice-pwd:qwe\r\n',
+    }));
+    const compressed = await compressSignal(signal);
+    const restored = await decompressSignal(compressed);
+    const decoded = decodeSignal(restored);
+    expect(decoded.type).toBe('answer');
+  });
+
+  it('supports base64url raw signaling payload fallback', async () => {
+    const signal = btoa(JSON.stringify({
+      type: 'offer',
+      sdp: 'v=0\r\na=ice-ufrag:abc\r\na=ice-pwd:def\r\n',
+    }));
+
+    const compressed = await compressSignal(signal);
+    expect(compressed.startsWith('b.')).toBe(true);
+    expect(compressed.slice(2)).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    const restored = await decompressSignal(compressed);
+    const decoded = decodeSignal(restored);
+    expect(decoded.type).toBe('offer');
+  });
+
 });

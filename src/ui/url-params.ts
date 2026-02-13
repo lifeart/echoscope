@@ -4,12 +4,12 @@
 
 export function getOfferFromUrl(): string | null {
   const params = new URLSearchParams(location.search);
-  return params.get('offer');
+  return params.get('o') ?? params.get('offer');
 }
 
 export function getAnswerFromUrl(): string | null {
   const params = new URLSearchParams(location.search);
-  return params.get('answer');
+  return params.get('a') ?? params.get('answer');
 }
 
 export function clearSignalFromUrl(): void {
@@ -42,10 +42,14 @@ function getLanOrigin(): string {
   return location.origin;
 }
 
-export function buildOfferUrl(compressedOffer: string): string {
-  return `${getLanOrigin()}${location.pathname}?offer=${compressedOffer}`;
+export function buildOfferUrl(encodedOffer: string): string {
+  const params = new URLSearchParams();
+  params.set('o', encodedOffer);
+  return `${getLanOrigin()}${location.pathname}?${params.toString()}`;
 }
 
-export function buildAnswerUrl(compressedAnswer: string): string {
-  return `${getLanOrigin()}${location.pathname}?answer=${compressedAnswer}`;
+export function buildAnswerUrl(encodedAnswer: string): string {
+  const params = new URLSearchParams();
+  params.set('a', encodedAnswer);
+  return `${getLanOrigin()}${location.pathname}?${params.toString()}`;
 }
