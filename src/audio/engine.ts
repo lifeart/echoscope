@@ -5,6 +5,51 @@ import { DEFAULT_BUFFER_SECONDS } from '../constants.js';
 
 let ringBuffer: RingBuffer | null = null;
 
+function describeMediaError(error: unknown): string {
+  if (error instanceof Error) {
+    const maybeName = (error as any).name ? `${(error as any).name}: ` : '';
+    return `${maybeName}${error.message}`;
+  }
+  return String(error);
+}
+
+async function requestMicrophoneStream(): Promise<MediaStream> {
+  if (!window.isSecureContext) {
+    throw new Error('Microphone requires secure context (HTTPS or localhost).');
+  }
+
+  const getUserMedia = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (!getUserMedia) {
+    throw new Error('navigator.mediaDevices.getUserMedia is unavailable in this browser/context.');
+  }
+
+  const attempts: Array<MediaTrackConstraints | boolean> = [
+    {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: { ideal: 2 },
+    },
+    {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+    true,
+  ];
+
+  const errors: string[] = [];
+  for (const audio of attempts) {
+    try {
+      return await getUserMedia({ audio });
+    } catch (error) {
+      errors.push(describeMediaError(error));
+    }
+  }
+
+  throw new Error(`Microphone permission/initialization failed. Attempts: ${errors.join(' | ')}`);
+}
+
 export function getRingBuffer(): RingBuffer | null {
   return ringBuffer;
 }
@@ -35,26 +80,7 @@ export async function initAudio(): Promise<void> {
   if (ac.state !== 'running') await ac.resume();
   const sampleRate = ac.sampleRate;
 
-  let micStream: MediaStream;
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 2,
-      },
-    });
-  } catch {
-    // Fallback: some iOS devices reject channelCount or other constraints
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
-  }
+  const micStream = await requestMicrophoneStream();
 
   const micSource = ac.createMediaStreamSource(micStream);
   const actualChannels = micSource.channelCount;
