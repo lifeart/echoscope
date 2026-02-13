@@ -2,6 +2,39 @@ import { store } from '../core/store.js';
 import { clearCanvas, getCanvasCtx } from './renderer.js';
 import { drawTooltip } from './tooltip.js';
 
+/* ---- annotation helpers ---- */
+export function findProfilePeak(
+  corr: Float32Array, sr: number, tau0: number,
+  minTau: number, maxTau: number, c: number,
+): { range: number; amplitude: number; index: number } | null {
+  let bestI = -1, bestAbs = -Infinity;
+  for (let i = 0; i < corr.length; i++) {
+    const tau = (i / sr) - tau0;
+    if (tau < minTau || tau > maxTau) continue;
+    const av = Math.abs(corr[i]);
+    if (av > bestAbs) { bestAbs = av; bestI = i; }
+  }
+  if (bestI < 0 || bestAbs <= 0) return null;
+  const tau = (bestI / sr) - tau0;
+  return { range: (c * tau) / 2, amplitude: bestAbs, index: bestI };
+}
+
+export function estimateProfileNoiseFloor(
+  corr: Float32Array, sr: number, tau0: number,
+  minTau: number, maxTau: number,
+): number {
+  const values: number[] = [];
+  for (let i = 0; i < corr.length; i++) {
+    const tau = (i / sr) - tau0;
+    if (tau < minTau || tau > maxTau) continue;
+    const av = Math.abs(corr[i]);
+    if (av > 0) values.push(av);
+  }
+  if (values.length === 0) return 0;
+  values.sort((a, b) => a - b);
+  return values[Math.floor(values.length / 2)];
+}
+
 /* ---- mouse state ---- */
 let mousePos: { x: number; y: number } | null = null;
 
@@ -126,6 +159,65 @@ export function drawProfile(
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
+
+  // --- Annotations ---
+  const peak = findProfilePeak(corr, sr, tau0, minTau, maxTau, c);
+  const noiseFloorVal = estimateProfileNoiseFloor(corr, sr, tau0, minTau, maxTau);
+  const config = store.get().config;
+
+  // Noise floor line (dashed yellow)
+  if (noiseFloorVal > 1e-12 && absMax > 1e-12) {
+    const noiseNorm = noiseFloorVal * scale * 0.5 + 0.5;
+    const noiseY = yBottom - noiseNorm * ySpan;
+    ctx.strokeStyle = 'rgba(255, 200, 50, 0.6)';
+    ctx.lineWidth = 1 * s;
+    ctx.setLineDash([4 * s, 3 * s]);
+    ctx.beginPath();
+    ctx.moveTo(xPad, noiseY);
+    ctx.lineTo(xRight, noiseY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255, 200, 50, 0.7)';
+    ctx.font = `${9 * s}px system-ui`;
+    ctx.textAlign = 'left';
+    ctx.fillText('noise floor', xRight - 60 * s, noiseY - 3 * s);
+  }
+
+  // Strength gate line (dashed red)
+  if (config.strengthGate > 1e-12 && config.strengthGate < absMax) {
+    const gateNorm = config.strengthGate * scale * 0.5 + 0.5;
+    const gateY = yBottom - gateNorm * ySpan;
+    ctx.strokeStyle = 'rgba(255, 80, 80, 0.5)';
+    ctx.lineWidth = 1 * s;
+    ctx.setLineDash([4 * s, 3 * s]);
+    ctx.beginPath();
+    ctx.moveTo(xPad, gateY);
+    ctx.lineTo(xRight, gateY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255, 80, 80, 0.6)';
+    ctx.font = `${9 * s}px system-ui`;
+    ctx.textAlign = 'left';
+    ctx.fillText('gate', xRight - 60 * s, gateY - 3 * s);
+  }
+
+  // Peak marker (red triangle + range label)
+  if (peak) {
+    const px = xPad + (peak.range - minR) / (maxR - minR) * xSpan;
+    const peakNorm = peak.amplitude * scale * 0.5 + 0.5;
+    const py = yBottom - peakNorm * ySpan;
+    ctx.fillStyle = 'rgba(255, 60, 60, 0.9)';
+    ctx.beginPath();
+    ctx.moveTo(px, py - 6 * s);
+    ctx.lineTo(px - 4 * s, py - 12 * s);
+    ctx.lineTo(px + 4 * s, py - 12 * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ff6666';
+    ctx.font = `${10 * s}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${peak.range.toFixed(2)}m`, px, py - 14 * s);
+  }
 
   // title
   ctx.fillStyle = '#bdbdbd';

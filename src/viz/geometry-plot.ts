@@ -2,6 +2,7 @@ import { clamp } from '../utils.js';
 import { store } from '../core/store.js';
 import { clearCanvas, canvasPixelScale } from './renderer.js';
 import { traceColorFromConfidence } from './colors.js';
+import { positionCovarianceUF, covarianceToEllipse, drawEllipse } from './uncertainty-ellipse.js';
 
 interface TrailPoint {
   u: number;
@@ -263,6 +264,29 @@ export function drawGeometry(minR: number, maxR: number): void {
     gctx.arc(tp.x, tp.y, (4.2 + 1.1 * freshness) * s, 0, Math.PI * 2);
     gctx.fill();
     gctx.globalAlpha = 1;
+
+    // Uncertainty ellipse
+    if (track.covariance && track.covariance.length >= 8) {
+      const covUF = positionCovarianceUF(track.position.range, track.position.angleDeg, track.covariance);
+
+      const originPx = toPx(0, 0);
+      const unitPx = toPx(1, 1);
+      const pxPerMeterU = Math.abs(unitPx.x - originPx.x);
+      const pxPerMeterF = Math.abs(originPx.y - unitPx.y);
+
+      // Scale covariance to pixel space, then decompose
+      const sigUUpx = covUF.sigUU * pxPerMeterU * pxPerMeterU;
+      const sigFFpx = covUF.sigFF * pxPerMeterF * pxPerMeterF;
+      const sigUFpx = covUF.sigUF * pxPerMeterU * pxPerMeterF;
+      const ellipsePx = covarianceToEllipse(sigUUpx, sigFFpx, sigUFpx, 2.146);
+
+      drawEllipse(gctx, {
+        cx: tp.x, cy: tp.y,
+        semiMajorPx: clamp(ellipsePx.semiMajor, 0, 200),
+        semiMinorPx: clamp(ellipsePx.semiMinor, 0, 200),
+        rotationRad: ellipsePx.rotationRad,
+      }, color, 1.5 * s);
+    }
 
     gctx.fillStyle = '#eaeaea';
     gctx.font = `${10 * s}px system-ui`;

@@ -20,3 +20,9 @@ export function toDecibels(value: number, reference = 1.0): number {
   if (value <= 0) return -Infinity;
   return 20 * Math.log10(value / reference);
 }
+
+export function linearToDbNormalized(amplitude: number, noiseFloor: number, dynamicRangeDb = 40): number {
+  if (amplitude <= 0 || noiseFloor <= 0) return 0;
+  const db = 20 * Math.log10(amplitude / noiseFloor);
+  return db <= 0 ? 0 : Math.min(1, db / dynamicRangeDb);
+}

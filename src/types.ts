@@ -246,6 +246,9 @@ export interface HeatmapData {
   bestVal: Float32Array;
 }
 
+// --- Colormap ---
+export type ColormapName = 'grayscale' | 'inferno' | 'viridis';
+
 // --- Quality ---
 export type QualityAlgo = 'auto' | 'fast' | 'balanced' | 'max';
 export type ScanAggregateMode = 'mean' | 'median' | 'trimmedMean';
@@ -354,6 +357,12 @@ export interface AppConfig {
     minConfidenceFloor: number;
   };
   virtualArray: VirtualArrayConfig;
+  colormap: ColormapName;
+  heatmapDbScale: boolean;
+  heatmapDynamicRangeDb: number;
+  crossAngleSmooth: { enabled: boolean; radius: number };
+  cfar: { guardCells: number; trainingCells: number; pfa: number; minThreshold: number };
+  coherentIntegrationDepth: number;
 }
 
 // --- Events ---

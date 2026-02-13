@@ -2,14 +2,16 @@ import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
 import { clamp, sleep } from '../utils.js';
 import { doPingDetailed, resetClutter } from './ping-cycle.js';
-import { createHeatmap, updateHeatmapRow, aggregateProfiles } from './heatmap-data.js';
+import { createHeatmap, updateHeatmapRow, aggregateProfiles, crossAngleSmooth } from './heatmap-data.js';
 import { buildSaftHeatmap } from './saft.js';
+import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
 import { computeProfileConfidence, smooth3 } from './confidence.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
 const perAngleProfileHistory = new Map<number, Float32Array[]>();
+const perAngleCoherentHistory = new Map<number, RawAngleFrame[]>();
 let lastStableDirectionAngle: number | null = null;
 
 function median(values: number[]): number {
@@ -158,6 +160,7 @@ export function applyAngularContinuity(
 
 export function resetScanStabilityState(): void {
   perAngleProfileHistory.clear();
+  perAngleCoherentHistory.clear();
   lastStableDirectionAngle = null;
 }
 
@@ -202,6 +205,42 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
     centerFreqHz: centerFreqSum * inv,
     quality: qualitySum * inv,
   };
+}
+
+function coherentIntegrateAndBuildProfile(
+  rawFrame: RawAngleFrame,
+  maxHistory: number,
+  c: number,
+  minR: number,
+  maxR: number,
+  heatBins: number,
+): { profile: Float32Array; tau0: number } {
+  const angleDeg = rawFrame.angleDeg;
+  const history = perAngleCoherentHistory.get(angleDeg) ?? [];
+  history.push(rawFrame);
+  while (history.length > maxHistory) history.shift();
+  perAngleCoherentHistory.set(angleDeg, history);
+
+  if (history.length <= 1) {
+    const prof = buildRangeProfileFromCorrelation(
+      rawFrame.corrReal, rawFrame.tau0, c, minR, maxR, rawFrame.sampleRate, heatBins,
+    );
+    return { profile: prof, tau0: rawFrame.tau0 };
+  }
+
+  // Average complex correlations
+  const averaged = coherentAverageRawFrames(history);
+  if (!averaged) {
+    const prof = buildRangeProfileFromCorrelation(
+      rawFrame.corrReal, rawFrame.tau0, c, minR, maxR, rawFrame.sampleRate, heatBins,
+    );
+    return { profile: prof, tau0: rawFrame.tau0 };
+  }
+
+  const prof = buildRangeProfileFromCorrelation(
+    averaged.corrReal, averaged.tau0, c, minR, maxR, averaged.sampleRate, heatBins,
+  );
+  return { profile: prof, tau0: averaged.tau0 };
 }
 
 export function applySaftHeatmapIfEnabled(
@@ -279,8 +318,19 @@ export async function doScan(): Promise<void> {
       const detailed = await doPingDetailed(a, i);
       const profile = detailed.profile;
       rawFrames.push(detailed.rawFrame);
-      const best = pickBestFromProfile(profile.bins);
-      const filtered = applyPerAngleOutlierHistory(a, profile.bins, best.bin, outlierHistoryN, config.continuityBins);
+
+      // Apply coherent temporal integration if depth > 1
+      let profileBins = profile.bins;
+      const coherentDepth = config.coherentIntegrationDepth ?? 1;
+      if (coherentDepth > 1) {
+        const integrated = coherentIntegrateAndBuildProfile(
+          detailed.rawFrame, coherentDepth, config.speedOfSound, minR, maxR, heatBins,
+        );
+        profileBins = integrated.profile;
+      }
+
+      const best = pickBestFromProfile(profileBins);
+      const filtered = applyPerAngleOutlierHistory(a, profileBins, best.bin, outlierHistoryN, config.continuityBins);
       updateHeatmapRow(heatmap, i, filtered.profile, filtered.bestBin, filtered.bestVal, {
         decayFactor: 0.90,
         temporalIirAlpha: config.temporalIirAlpha,
@@ -297,14 +347,40 @@ export async function doScan(): Promise<void> {
         if (p < passes - 1) await sleep(dwell);
       }
       if (collected.length > 0) {
-        const aggregated = aggregateProfiles(collected, {
-          mode: config.scanAggregateMode,
-          trimFraction: config.scanTrimFraction,
-        });
+        // Use coherent accumulation for deterministic signals (Golay/MLS), incoherent for chirp
+        const isDeterministic = config.probe.type === 'golay' || config.probe.type === 'mls';
+        let profileBins: Float32Array;
+        let bestBin: number;
+
+        if (isDeterministic && collectedRaw.length > 1) {
+          const averaged = coherentAverageRawFrames(collectedRaw);
+          if (averaged) {
+            profileBins = buildRangeProfileFromCorrelation(
+              averaged.corrReal, averaged.tau0, config.speedOfSound, minR, maxR, averaged.sampleRate, heatBins,
+            );
+            const best = pickBestFromProfile(profileBins);
+            bestBin = best.bin;
+          } else {
+            const aggregated = aggregateProfiles(collected, {
+              mode: config.scanAggregateMode,
+              trimFraction: config.scanTrimFraction,
+            });
+            profileBins = aggregated.averaged;
+            bestBin = aggregated.bestBin;
+          }
+        } else {
+          const aggregated = aggregateProfiles(collected, {
+            mode: config.scanAggregateMode,
+            trimFraction: config.scanTrimFraction,
+          });
+          profileBins = aggregated.averaged;
+          bestBin = aggregated.bestBin;
+        }
+
         const filtered = applyPerAngleOutlierHistory(
           a,
-          aggregated.averaged,
-          aggregated.bestBin,
+          profileBins,
+          bestBin,
           outlierHistoryN,
           config.continuityBins,
         );
@@ -331,6 +407,11 @@ export async function doScan(): Promise<void> {
 
   console.log(`[doScan] captured raw-angle frames=${rawFrames.length} of ${angles.length}`);
   applySaftHeatmapIfEnabled(heatmap, rawFrames, angles, minR, maxR, config);
+
+  // Cross-angle smoothing (median filter across adjacent angles)
+  if (config.crossAngleSmooth?.enabled) {
+    crossAngleSmooth(heatmap, config.crossAngleSmooth.radius ?? 1);
+  }
 
   const consensus = selectConsensusDirection(heatmap, {
     strengthGate: config.strengthGate,

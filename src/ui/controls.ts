@@ -1,13 +1,14 @@
 import { store } from '../core/store.js';
 import { clamp } from '../utils.js';
 import { speedOfSoundFromTemp } from '../constants.js';
-import type { ProbeConfig } from '../types.js';
+import type { ProbeConfig, ColormapName } from '../types.js';
 
 export interface DerivedConfig {
   speedOfSound: number;
   listenMs: number;
   minRange: number;
   scanDwell: number;
+  minGolayGapMs: number;
 }
 
 export function computeDerivedConfig(
@@ -20,7 +21,8 @@ export function computeDerivedConfig(
   const listenMs = (2 * safeMaxRange / speedOfSound) * 1000 + 50;
   const minRange = Math.max(0.3, spacing + 0.05);
   const scanDwell = listenMs;
-  return { speedOfSound, listenMs, minRange, scanDwell };
+  const minGolayGapMs = Math.ceil((2 * safeMaxRange / speedOfSound) * 1000) + 2;
+  return { speedOfSound, listenMs, minRange, scanDwell, minGolayGapMs };
 }
 
 function el(id: string): HTMLElement | null {
@@ -115,6 +117,9 @@ export function readConfigFromDOM(): void {
     s.config.virtualArray.halfWindow = Math.floor(clamp(inputVal('vaHalfWindow', 3), 0, 12));
     s.config.virtualArray.window = selectVal('vaWindow') === 'gaussian' ? 'gaussian' : 'hann';
     s.config.virtualArray.coherenceFloor = clamp(inputVal('vaCoherenceFloor', 0.25), 0, 1);
+    s.config.colormap = (selectVal('colormapSelect') || 'inferno') as ColormapName;
+    s.config.heatmapDbScale = checkVal('heatmapDbScaleOn');
+    s.config.heatmapDynamicRangeDb = inputVal('heatmapDynamicRangeDb', 40);
   });
 
   // Update computed-value display labels
@@ -126,6 +131,8 @@ export function readConfigFromDOM(): void {
   if (computedMinR) computedMinR.textContent = derived.minRange.toFixed(2);
   const computedScanDwell = el('computedScanDwell');
   if (computedScanDwell) computedScanDwell.textContent = derived.scanDwell.toFixed(0);
+  const computedMinGolayGap = el('computedMinGolayGap');
+  if (computedMinGolayGap) computedMinGolayGap.textContent = derived.minGolayGapMs.toFixed(0);
 }
 
 export function syncModeUI(): void {

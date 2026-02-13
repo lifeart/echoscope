@@ -138,6 +138,45 @@ export function aggregateProfiles(
   return { averaged, bestBin: best.bin, bestVal: best.val };
 }
 
+export function crossAngleSmooth(heatmap: HeatmapData, radius = 1): void {
+  const rows = heatmap.angles.length;
+  const bins = heatmap.bins;
+  if (rows < 3) return; // Not enough rows to smooth
+
+  const temp = new Float32Array(rows);
+  for (let b = 0; b < bins; b++) {
+    // Collect column values
+    for (let r = 0; r < rows; r++) {
+      temp[r] = heatmap.data[r * bins + b];
+    }
+    // Apply median filter per column
+    for (let r = 0; r < rows; r++) {
+      const lo = Math.max(0, r - radius);
+      const hi = Math.min(rows - 1, r + radius);
+      const window: number[] = [];
+      for (let nr = lo; nr <= hi; nr++) {
+        window.push(temp[nr]);
+      }
+      window.sort((a, b2) => a - b2);
+      const mid = Math.floor(window.length / 2);
+      heatmap.data[r * bins + b] = window.length % 2 === 0
+        ? 0.5 * (window[mid - 1] + window[mid])
+        : window[mid];
+    }
+  }
+
+  // Update bestBin/bestVal per row
+  for (let r = 0; r < rows; r++) {
+    const rowData = heatmap.data.subarray(r * bins, r * bins + bins);
+    const best = pickBestFromProfile(rowData);
+    heatmap.bestBin[r] = best.bin;
+    heatmap.bestVal[r] = best.val;
+  }
+
+  // Reset display to force re-smoothing
+  heatmap.display.fill(0);
+}
+
 export function smoothHeatmapDisplay(heatmap: HeatmapData, alpha = 0.22): void {
   const { data, display } = heatmap;
   let dMax = 0, dispMaxBefore = 0;

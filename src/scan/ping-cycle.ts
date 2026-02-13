@@ -9,6 +9,7 @@ import { applyQualityAlgorithms, resolveAutoQualityAlgo } from '../dsp/quality.j
 import type { QualityAlgoName } from '../dsp/quality.js';
 import { applyEnvBaseline } from '../dsp/clutter.js';
 import { suppressStaticReflections, type ClutterState } from '../dsp/clutter.js';
+import { caCfar } from '../dsp/cfar.js';
 import { computeProfileConfidence } from './confidence.js';
 import { createProbe } from '../signal/probe-factory.js';
 import { resumeIfSuspended, getSampleRate } from '../audio/engine.js';
@@ -194,8 +195,11 @@ export async function doPingDetailed(
   bus.emit('ping:start', { angleDeg });
 
   if (probe.type === 'golay' && probe.a && probe.b) {
+    const roundTripMs = (2 * maxR / c) * 1000;
+    const minGolayGapMs = Math.ceil(roundTripMs) + 2;
+    const effectiveGapMs = Math.max(probe.gapMs ?? 12, minGolayGapMs);
     const golay = await captureGolaySteered(
-      probe.a, probe.b, probe.gapMs ?? 12,
+      probe.a, probe.b, effectiveGapMs,
       dt, gain, listenMs, c, minR, maxR, lockStrength, sr, heatBins,
       angleDeg, config.micArraySpacing,
     );
@@ -249,9 +253,12 @@ export async function doPingDetailed(
 
   // Apply static clutter suppression during scanning
   if (updateHeatRowIndex !== null && config.clutterSuppression.enabled) {
+    // Compute preliminary confidence before clutter suppression for adaptive novelty
+    const preclutterBest = estimateBestFromProfile(profFinal, minR, maxR);
+    const preclutterConf = computeProfileConfidence(profFinal, preclutterBest.bin, preclutterBest.val);
     const result = suppressStaticReflections(profFinal, clutterState, config.clutterSuppression.strength, {
       backoff: config.subtractionBackoff,
-      selectiveUpdate: { enabled: true, noveltyRatio: 0.35 },
+      selectiveUpdate: { enabled: true, noveltyRatio: 0.35, adaptiveNovelty: true, confidence: preclutterConf.confidence },
     });
     profFinal = result.profile;
     clutterState = result.clutterState;
@@ -285,8 +292,10 @@ export async function doPingDetailed(
   let bestR = bestPost.range;
 
   const conf = computeProfileConfidence(profFinal, bestBin, bestVal);
-  const isWeak = bestVal < strengthGate || conf.confidence < config.confidenceGate;
-  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} confidence=${conf.confidence.toFixed(3)} confidenceGate=${config.confidenceGate.toFixed(3)} isWeak=${isWeak}`);
+  const cfarResult = caCfar(profFinal, config.cfar);
+  const cfarDetected = bestBin >= 0 && cfarResult.detections[bestBin] === 1;
+  const isWeak = !cfarDetected || conf.confidence < config.confidenceGate;
+  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} confidence=${conf.confidence.toFixed(3)} confidenceGate=${config.confidenceGate.toFixed(3)} cfarDetected=${cfarDetected} isWeak=${isWeak}`);
   if (isWeak) {
     bestBin = -1;
     bestVal = 0;

@@ -1,14 +1,41 @@
 import { clamp } from '../utils.js';
 import { store } from '../core/store.js';
 import { clearCanvas } from './renderer.js';
-import { traceColorFromConfidence } from './colors.js';
+import { traceColorFromConfidence, getColormapLUT } from './colors.js';
 import { smoothHeatmapDisplay } from '../scan/heatmap-data.js';
 import { drawTooltip } from './tooltip.js';
 import { canvasPixelScale } from './renderer.js';
+import { linearToDbNormalized } from '../dsp/normalize.js';
 
 /* ---- mouse state ---- */
 let heatMousePos: { x: number; y: number } | null = null;
 let cachedImageData: ImageData | null = null;
+
+/* ---- tile cache state ---- */
+let tileImageData: ImageData | null = null;
+let tileDisplaySnapshot: Float32Array | null = null;
+let tileDisplayMax = 0;
+let tilePlotDims: { pW: number; pH: number } | null = null;
+let tileColormap: string = '';
+let tileDbScale = false;
+let tileDynamicRange = 40;
+
+
+export function findDirtyColumns(data: Float32Array, cached: Float32Array | null, rows: number, cols: number): Set<number> {
+  if (!cached || data.length !== cached.length) {
+    return new Set(Array.from({ length: cols }, (_, i) => i));
+  }
+  const dirty = new Set<number>();
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      if (data[r * cols + c] !== cached[r * cols + c]) {
+        dirty.add(c);
+        break;
+      }
+    }
+  }
+  return dirty;
+}
 
 export function setHeatmapMouse(pos: { x: number; y: number } | null): void {
   heatMousePos = pos;
@@ -90,38 +117,100 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
     console.log(`[drawHeatmap] creating ImageData pW=${pW} pH=${pH} rows=${rows} cols=${cols}`);
 
-    const img = ctx.createImageData(pW, pH);
-    const data = img.data;
+    const curColormap = state.config.colormap ?? 'inferno';
+    const curDbScale = state.config.heatmapDbScale ?? false;
+    const curDynamicRange = state.config.heatmapDynamicRangeDb ?? 40;
+    const dimChanged = !tilePlotDims || tilePlotDims.pW !== pW || tilePlotDims.pH !== pH;
+    const maxChanged = Math.abs(displayMax - tileDisplayMax) / Math.max(1e-15, displayMax) > 0.01;
+    const renderParamsChanged = curColormap !== tileColormap
+      || curDbScale !== tileDbScale
+      || curDynamicRange !== tileDynamicRange;
+    const needFullRebuild = dimChanged || maxChanged || renderParamsChanged || !tileImageData;
 
-    let pixMin = 255, pixMax = 0, pixNonZero = 0;
-    for (let y = 0; y < pH; y++) {
-      const colPos = (1 - y / hDen) * colDen;
-      const c0 = Math.floor(colPos);
-      const c1 = Math.min(cols - 1, c0 + 1);
-      const fc = colPos - c0;
-      for (let x = 0; x < pW; x++) {
-        const rowPos = (x / wDen) * rowDen;
-        const r0 = Math.floor(rowPos);
-        const r1 = Math.min(rows - 1, r0 + 1);
-        const fr = rowPos - r0;
-
-        const v00 = heatmap.display[r0 * cols + c0];
-        const v01 = heatmap.display[r0 * cols + c1];
-        const v10 = heatmap.display[r1 * cols + c0];
-        const v11 = heatmap.display[r1 * cols + c1];
-        const v0 = v00 + (v01 - v00) * fc;
-        const v1 = v10 + (v11 - v10) * fc;
-        const v = (v0 + (v1 - v0) * fr) / displayMax;
-        const g = Math.floor(255 * clamp(v, 0, 1));
-        if (g < pixMin) pixMin = g;
-        if (g > pixMax) pixMax = g;
-        if (g > 0) pixNonZero++;
-        const idx = (y * pW + x) * 4;
-        data[idx] = g; data[idx + 1] = g; data[idx + 2] = g; data[idx + 3] = 255;
-      }
+    let dirtyColumns: Set<number>;
+    if (needFullRebuild) {
+      dirtyColumns = new Set(Array.from({ length: cols }, (_, i) => i));
+    } else {
+      dirtyColumns = findDirtyColumns(heatmap.display, tileDisplaySnapshot, rows, cols);
     }
-    console.log(`[drawHeatmap] pixel stats: min=${pixMin} max=${pixMax} nonZero=${pixNonZero}/${pW * pH} putImageData at (${xPad}, ${yPad})`);
-    ctx.putImageData(img, xPad, yPad);
+
+    if (dirtyColumns.size === 0 && tileImageData) {
+      ctx.putImageData(tileImageData, xPad, yPad);
+    } else {
+      const img = (tileImageData && !needFullRebuild) ? tileImageData : ctx.createImageData(pW, pH);
+      const data = img.data;
+
+      const lut = getColormapLUT(curColormap);
+      const useDbScale = curDbScale;
+      const dynamicRangeDb = curDynamicRange;
+
+      // Estimate noise floor for dB scaling (median of non-zero display values)
+      let noiseFloor = 0;
+      if (useDbScale) {
+        const nonZero: number[] = [];
+        for (let i = 0; i < heatmap.display.length; i++) {
+          if (heatmap.display[i] > 1e-15) nonZero.push(heatmap.display[i]);
+        }
+        if (nonZero.length > 0) {
+          nonZero.sort((a, b) => a - b);
+          noiseFloor = nonZero[Math.floor(nonZero.length / 2)];
+        }
+      }
+
+      // Build set of dirty y-pixels from dirty data columns
+      const dirtyYPixels = new Set<number>();
+      for (let y = 0; y < pH; y++) {
+        const colPos = (1 - y / hDen) * colDen;
+        const c0 = Math.floor(colPos);
+        const c1 = Math.min(cols - 1, c0 + 1);
+        if (dirtyColumns.has(c0) || dirtyColumns.has(c1)) dirtyYPixels.add(y);
+      }
+
+      let pixMin = 255, pixMax = 0, pixNonZero = 0;
+      for (let y = 0; y < pH; y++) {
+        if (!dirtyYPixels.has(y)) continue;
+        const colPos = (1 - y / hDen) * colDen;
+        const c0 = Math.floor(colPos);
+        const c1 = Math.min(cols - 1, c0 + 1);
+        const fc = colPos - c0;
+        for (let x = 0; x < pW; x++) {
+          const rowPos = (x / wDen) * rowDen;
+          const r0 = Math.floor(rowPos);
+          const r1 = Math.min(rows - 1, r0 + 1);
+          const fr = rowPos - r0;
+
+          const v00 = heatmap.display[r0 * cols + c0];
+          const v01 = heatmap.display[r0 * cols + c1];
+          const v10 = heatmap.display[r1 * cols + c0];
+          const v11 = heatmap.display[r1 * cols + c1];
+          const v0 = v00 + (v01 - v00) * fc;
+          const v1 = v10 + (v11 - v10) * fc;
+          const rawV = v0 + (v1 - v0) * fr;
+          const v = useDbScale ? linearToDbNormalized(rawV, noiseFloor, dynamicRangeDb) : rawV / displayMax;
+          const lutIdx = clamp(Math.floor(clamp(v, 0, 1) * 255), 0, 255) * 3;
+          const cr = lut[lutIdx];
+          if (cr < pixMin) pixMin = cr;
+          if (cr > pixMax) pixMax = cr;
+          if (cr > 0) pixNonZero++;
+          const idx = (y * pW + x) * 4;
+          data[idx] = lut[lutIdx]; data[idx + 1] = lut[lutIdx + 1]; data[idx + 2] = lut[lutIdx + 2]; data[idx + 3] = 255;
+        }
+      }
+      console.log(`[drawHeatmap] pixel stats: min=${pixMin} max=${pixMax} nonZero=${pixNonZero} dirty=${dirtyColumns.size}/${cols} putImageData at (${xPad}, ${yPad})`);
+      ctx.putImageData(img, xPad, yPad);
+
+      // Update tile cache
+      tileImageData = img;
+      tileDisplaySnapshot = Float32Array.from(heatmap.display);
+      tileDisplayMax = displayMax;
+      tilePlotDims = { pW, pH };
+      tileColormap = curColormap;
+      tileDbScale = curDbScale;
+      tileDynamicRange = curDynamicRange;
+    }
+  } else {
+    tileImageData = null;
+    tileDisplaySnapshot = null;
   }
 
   // X-axis ticks (angle, rotated 45°)

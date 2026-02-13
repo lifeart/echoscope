@@ -31,16 +31,31 @@ export function buildRangeProfileFromCorrelation(
     if (av > corrAbsMaxAll) { corrAbsMaxAll = av; corrAbsMaxIdx = i; }
   }
 
+  // Triangular bin splatting: distribute each sample's energy across two neighboring bins
+  const counts = new Float32Array(heatBins);
+
   for (let i = 0; i < corr.length; i++) {
     const tau = (i / sampleRate) - tau0;
     if (tau < minTau || tau > maxTau) continue;
     inRange++;
     const R = (c * tau) / 2;
     const binPos = ((R - minR) / (maxR - minR)) * (heatBins - 1);
-    const bin = clamp(Math.floor(binPos), 0, heatBins - 1);
+    const bin0 = clamp(Math.floor(binPos), 0, heatBins - 1);
+    const bin1 = Math.min(bin0 + 1, heatBins - 1);
+    const frac = binPos - bin0;
     const v = Math.abs(corr[i]);
     if (v > corrAbsMax) corrAbsMax = v;
-    if (v > prof[bin]) prof[bin] = v;
+    prof[bin0] += v * (1 - frac);
+    counts[bin0] += (1 - frac);
+    if (bin0 !== bin1) {
+      prof[bin1] += v * frac;
+      counts[bin1] += frac;
+    }
+  }
+
+  // Average accumulated values
+  for (let b = 0; b < heatBins; b++) {
+    if (counts[b] > 0) prof[b] /= counts[b];
   }
 
   let profMax = 0, profNonZero = 0;

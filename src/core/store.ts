@@ -74,6 +74,12 @@ const defaultConfig: AppConfig = {
     coherenceFloor: 0.25,
     maxTauShiftSamples: 192,
   },
+  colormap: 'inferno',
+  heatmapDbScale: false,
+  heatmapDynamicRangeDb: 40,
+  crossAngleSmooth: { enabled: true, radius: 1 },
+  cfar: { guardCells: 2, trainingCells: 8, pfa: 1e-3, minThreshold: 1e-6 },
+  coherentIntegrationDepth: 1,
 };
 
 function createInitialState(): AppState {

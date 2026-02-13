@@ -20,6 +20,9 @@ export interface ClutterSuppressOptions {
   selectiveUpdate?: {
     enabled: boolean;
     noveltyRatio: number;
+    adaptiveNovelty?: boolean;
+    confidence?: number;
+    noveltyRatioRange?: [number, number];
   };
 }
 
@@ -77,6 +80,14 @@ export function suppressStaticReflections(
     clutterState = { model: new Float32Array(profile.length) };
   }
 
+  // Compute effective novelty ratio (adaptive or fixed)
+  let effectiveNoveltyRatio = selectiveUpdate.noveltyRatio;
+  if (selectiveUpdate.adaptiveNovelty && Number.isFinite(selectiveUpdate.confidence)) {
+    const conf = Math.max(0, Math.min(1, selectiveUpdate.confidence!));
+    const [lo, hi] = selectiveUpdate.noveltyRatioRange ?? [0.15, 0.50];
+    effectiveNoveltyRatio = hi - conf * (hi - lo); // high conf → low ratio → more bins flagged as novel
+  }
+
   const out = new Float32Array(profile.length);
   const newModel = new Float32Array(profile.length);
   for (let i = 0; i < profile.length; i++) {
@@ -85,7 +96,7 @@ export function suppressStaticReflections(
     const cleaned = raw - strength * bg;
     out[i] = cleaned > 0 ? cleaned : 0;
 
-    const noveltyLikely = selectiveUpdate.enabled && out[i] > raw * selectiveUpdate.noveltyRatio;
+    const noveltyLikely = selectiveUpdate.enabled && out[i] > raw * effectiveNoveltyRatio;
     const alpha = noveltyLikely ? modelAlpha * 0.15 : modelAlpha;
     newModel[i] = bg + alpha * (raw - bg);
   }

@@ -77,4 +77,31 @@ describe('computeDerivedConfig', () => {
     expect(d.listenMs).toBeGreaterThan(0);
     expect(d.minRange).toBeGreaterThanOrEqual(0.3);
   });
+
+  // minGolayGapMs
+  it('minGolayGapMs = ceil(2*4/346.45*1000)+2 = 26 for default config', () => {
+    const d = computeDerivedConfig(25, 4.0, 0.2);
+    // speedOfSound = 331.3 + 0.606 * 25 = 346.45
+    // ceil(2 * 4 / 346.45 * 1000) + 2 = ceil(23.098) + 2 = 24 + 2 = 26
+    expect(d.minGolayGapMs).toBe(26);
+  });
+
+  it('minGolayGapMs returns 2ms minimum when maxRange=0', () => {
+    const d = computeDerivedConfig(25, 0, 0.2);
+    // safeMaxRange = max(0, 0) = 0, ceil(0) + 2 = 2
+    expect(d.minGolayGapMs).toBe(2);
+  });
+
+  it('minGolayGapMs scales with maxRange (10m > 4m)', () => {
+    const d4 = computeDerivedConfig(25, 4.0, 0.2);
+    const d10 = computeDerivedConfig(25, 10.0, 0.2);
+    expect(d10.minGolayGapMs).toBeGreaterThan(d4.minGolayGapMs);
+  });
+
+  it('minGolayGapMs increases at lower temperatures', () => {
+    // Lower temperature → slower speed of sound → longer round trip → larger gap
+    const cold = computeDerivedConfig(18, 4.0, 0.2);
+    const hot = computeDerivedConfig(42, 4.0, 0.2);
+    expect(cold.minGolayGapMs).toBeGreaterThanOrEqual(hot.minGolayGapMs);
+  });
 });

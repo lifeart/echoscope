@@ -1,4 +1,5 @@
 import type { ArrayGeometry } from '../types.js';
+import { getPolyphaseTable, polyphaseInterpolate } from './polyphase-table.js';
 
 /**
  * Delay-and-sum beamformer for multichannel RX data.
@@ -44,19 +45,12 @@ export function delayAndSum(
     delays[ch] -= minDelay;
   }
 
-  // Apply delays and sum (linear interpolation)
+  // Apply delays and sum (polyphase interpolation for higher quality)
+  const table = getPolyphaseTable();
   for (let ch = 0; ch < nChannels; ch++) {
-    const delay = delays[ch];
-    const intDelay = Math.floor(delay);
-    const frac = delay - intDelay;
-
-    for (let i = 0; i < nSamples; i++) {
-      const idx = i - intDelay;
-      if (idx < 0 || idx >= nSamples - 1) continue;
-      // Linear interpolation
-      const val = channels[ch][idx] * (1 - frac) + channels[ch][idx + 1] * frac;
-      output[i] += val;
-    }
+    const temp = new Float32Array(nSamples);
+    polyphaseInterpolate(channels[ch], delays[ch], table, temp);
+    for (let i = 0; i < nSamples; i++) output[i] += temp[i];
   }
 
   // Normalize by channel count
