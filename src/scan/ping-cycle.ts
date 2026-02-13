@@ -9,6 +9,13 @@ import { applyQualityAlgorithms, resolveAutoQualityAlgo } from '../dsp/quality.j
 import type { QualityAlgoName } from '../dsp/quality.js';
 import { applyEnvBaseline } from '../dsp/clutter.js';
 import { suppressStaticReflections, type ClutterState } from '../dsp/clutter.js';
+import {
+  ensureNoiseKalmanState,
+  guardBackoff,
+  subtractNoiseFloor,
+  updateNoiseKalman,
+  type NoiseKalmanState,
+} from '../dsp/noise-floor-kalman.js';
 import { applyDisplayReflectionBlanking } from '../dsp/display-reflection-blanking.js';
 import { caCfar } from '../dsp/cfar.js';
 import { demuxMultiplexProfile } from '../dsp/multiplex-demux.js';
@@ -26,6 +33,7 @@ import { broadcastCaptureRequest, waitForRemoteCaptures } from '../network/captu
 import type { PingDetailedResult, RangeProfile, ArrayGeometry, CaptureResponse, SyncedAudioChunk } from '../types.js';
 
 let clutterState: ClutterState = { model: null };
+let noiseKalmanState: NoiseKalmanState | null = null;
 let nextPingId = 1;
 
 function capturesToChunks(captures: CaptureResponse[]): SyncedAudioChunk[] {
@@ -41,6 +49,7 @@ function capturesToChunks(captures: CaptureResponse[]): SyncedAudioChunk[] {
 
 export function resetClutter(): void {
   clutterState = { model: null };
+  noiseKalmanState = null;
 }
 
 export function buildRxGeometry(micArraySpacing: number, speedOfSound: number): ArrayGeometry | null {
@@ -416,6 +425,46 @@ export async function doPingDetailed(
       console.warn('[doPing] envBaseline zeroed out entire profile — falling back to raw profile');
       profFinal = beforeBaseline;
     }
+  }
+
+  // Apply per-bin noise-floor Kalman during scanning
+  if (updateHeatRowIndex !== null && config.noiseKalman.enabled) {
+    noiseKalmanState = ensureNoiseKalmanState(
+      noiseKalmanState,
+      profFinal.length,
+      config.noiseKalman.minFloor,
+    );
+
+    const preKalmanBest = estimateBestFromProfile(profFinal, minR, maxR);
+    const preKalmanConf = computeProfileConfidence(profFinal, preKalmanBest.bin, preKalmanBest.val);
+    const freeze = config.noiseKalman.freezeOnHighConfidence
+      && preKalmanConf.confidence >= config.noiseKalman.highConfidenceGate;
+
+    const kalmanUpdate = updateNoiseKalman(noiseKalmanState, profFinal, {
+      q: config.noiseKalman.processNoiseQ,
+      r: config.noiseKalman.measurementNoiseR,
+      freeze,
+      minFloor: config.noiseKalman.minFloor,
+      maxFloor: config.noiseKalman.maxFloor,
+    });
+
+    const kalmanSubtracted = subtractNoiseFloor(
+      profFinal,
+      noiseKalmanState,
+      config.noiseKalman.subtractStrength,
+      config.noiseKalman.minFloor,
+      config.noiseKalman.maxFloor,
+    );
+
+    const kalmanBackoff = guardBackoff(profFinal, kalmanSubtracted, config.subtractionBackoff);
+    profFinal = kalmanBackoff.profile;
+
+    let nkMax = 0, nkNZ = 0;
+    for (let i = 0; i < profFinal.length; i++) {
+      if (profFinal[i] > nkMax) nkMax = profFinal[i];
+      if (profFinal[i] > 1e-15) nkNZ++;
+    }
+    console.log(`[doPing:noiseKalman] freeze=${freeze} updBins=${kalmanUpdate.updatedBins} meanK=${kalmanUpdate.meanGain.toFixed(4)} backoff=${kalmanBackoff.backoffLevel.toFixed(3)} max=${nkMax.toExponential(3)} nonZero=${nkNZ}/${profFinal.length}`);
   }
 
   // Apply static clutter suppression during scanning

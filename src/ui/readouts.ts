@@ -95,7 +95,12 @@ export function renderCalibInfo(): void {
   lines.push(`tauSysL\u2248${(calib.systemDelay.L * 1e3).toFixed(2)}ms, tauSysR\u2248${(calib.systemDelay.R * 1e3).toFixed(2)}ms`);
   lines.push(`rL\u2248${calib.distances.L.toFixed(3)}m, rR\u2248${calib.distances.R.toFixed(3)}m`);
   lines.push(`mic(x,y)\u2248(${calib.micPosition.x.toFixed(3)}, ${calib.micPosition.y.toFixed(3)})m, deltaConsistency\u2248${calib.geometryError.toFixed(4)}`);
-  lines.push(`env baseline = ${(calib.envBaseline && calib.envBaselinePings > 0) ? `YES (${calib.envBaselinePings} pings)` : 'no'}`);
+  if (calib.envBaseline && calib.envBaselinePings > 0) {
+    const filteredTag = calib.envBaselineFiltered ? 'filtered' : 'raw';
+    lines.push(`env baseline = YES (${calib.envBaselinePings} pings, active=${filteredTag})`);
+  } else {
+    lines.push('env baseline = no');
+  }
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
   const micSp = state.config.micArraySpacing;
   const chCount = state.audio.channelCount;

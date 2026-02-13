@@ -16,6 +16,7 @@ import { drawCalibSanityPlot, drawSanityPlaceholder } from '../viz/sanity-plot.j
 import { resizeCanvasForDPR } from '../viz/renderer.js';
 import { createHeatmap, updateHeatmapRow } from '../scan/heatmap-data.js';
 import { initLevelMeter } from '../viz/level-meter.js';
+import { initMicSpectrogram } from '../viz/mic-spectrogram.js';
 import { drawSignalPreview, scheduleSignalPreview } from '../viz/signal-preview.js';
 import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
 import { setupPeerUI, syncPeerButtons, handleUrlOffer, handleUrlAnswer } from './peer-ui.js';
@@ -26,7 +27,7 @@ function el(id: string): HTMLElement | null {
 }
 
 function applyRetinaCanvases(): boolean {
-  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry', 'previewChirp', 'previewMls', 'previewGolay', 'previewMultiplex'];
+  const ids = ['profile', 'heatmap', 'calibPlot', 'geometry', 'micSpectrogram', 'previewChirp', 'previewMls', 'previewGolay', 'previewMultiplex'];
   let changed = false;
   for (const id of ids) {
     const canvas = el(id) as HTMLCanvasElement | null;
@@ -121,6 +122,7 @@ export function initApp(): void {
       setStatus('ready');
       syncPeerButtons();
       initLevelMeter();
+      initMicSpectrogram();
       drawSignalPreview();
     } catch (e: any) {
       setStatus('error');
@@ -285,6 +287,7 @@ export function initApp(): void {
   }
 
   const liveConfigControlIds = [
+    'spectrogramEnabled', 'spectrogramFftSize', 'spectrogramHopSize', 'spectrogramMinDb', 'spectrogramMaxDb', 'spectrogramFps',
     'micArraySpacing', 'gain',
     'scanStep', 'scanPasses',
     'distributedEnabled', 'distributedCaptureTimeoutMs',
@@ -293,6 +296,8 @@ export function initApp(): void {
     'qualityAlgo', 'scanAggregateMode', 'scanTrimFraction',
     'temporalIirAlpha', 'outlierHistoryN', 'continuityBins',
     'adaptiveQualityOn', 'adaptiveQualityHysteresisMs',
+    'noiseKalmanEnabled', 'noiseKalmanQ', 'noiseKalmanR', 'noiseKalmanStrength',
+    'noiseKalmanFreezeHighConf', 'noiseKalmanHighConfGate', 'noiseKalmanMinFloor', 'noiseKalmanMaxFloor', 'noiseKalmanUseInCalibration',
     'subtractionBackoffOn', 'subtractionCollapseThreshold', 'subtractionPeakDropThreshold',
     'calRepeats', 'calRepeatGapMs', 'extraCalPings', 'envBaselineStrength', 'useEnvBaseline', 'useMultiband',
     'vaEnabled', 'vaHalfWindow', 'vaWindow', 'vaCoherenceFloor',
@@ -403,7 +408,7 @@ export function initApp(): void {
     });
   }
 
-  const vizDetailIds = ['profileDetails', 'heatmapDetails', 'geometryDetails'];
+  const vizDetailIds = ['profileDetails', 'heatmapDetails', 'geometryDetails', 'micSpectrogramDetails'];
   for (const detailId of vizDetailIds) {
     const detailsEl = el(detailId) as HTMLDetailsElement | null;
     if (!detailsEl) continue;

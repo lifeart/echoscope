@@ -8,6 +8,12 @@ import { measureRoundTripLatency } from '../audio/latency.js';
 import { findPeakAbs } from '../dsp/peak.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { applyQualityAlgorithms } from '../dsp/quality.js';
+import {
+  createNoiseKalmanState,
+  guardBackoff,
+  subtractNoiseFloor,
+  updateNoiseKalman,
+} from '../dsp/noise-floor-kalman.js';
 import { genGolayChipped } from '../signal/golay.js';
 import { pingAndCaptureOneSide, pingAndCaptureSteered } from '../spatial/steering.js';
 import { getSampleRate } from '../audio/engine.js';
@@ -786,10 +792,18 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   };
 
   // Env baseline
+  let envBaselineRaw: Float32Array | null = null;
+  let envBaselineFiltered: Float32Array | null = null;
   let envBaseline: Float32Array | null = null;
   let envBaselinePings = 0;
   if (extraCalPings > 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
     const profiles: Float32Array[] = [];
+    const filteredProfiles: Float32Array[] = [];
+    const useNoiseKalmanInCalibration = config.noiseKalman.enabled && config.noiseKalman.useInCalibration;
+    let noiseKalmanState = useNoiseKalmanInCalibration
+      ? createNoiseKalmanState(heatBins, config.noiseKalman.minFloor)
+      : null;
+
     for (let i = 0; i < extraCalPings; i++) {
       // Capture at theta=0 using steered stereo Golay (both speakers active)
       const cA = await pingAndCaptureSteered(a, 0, gain, listenMs);
@@ -800,11 +814,31 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       let prof = buildRangeProfileFromCorrelation(envRes.corr, envTau0, c, minR, maxR, sr, heatBins);
       prof = applyQualityAlgorithms(prof, 'balanced');
       profiles.push(prof);
+
+      if (noiseKalmanState && noiseKalmanState.x.length === prof.length) {
+        updateNoiseKalman(noiseKalmanState, prof, {
+          q: config.noiseKalman.processNoiseQ,
+          r: config.noiseKalman.measurementNoiseR,
+          minFloor: config.noiseKalman.minFloor,
+          maxFloor: config.noiseKalman.maxFloor,
+        });
+        const kalmanSubtracted = subtractNoiseFloor(
+          prof,
+          noiseKalmanState,
+          config.noiseKalman.subtractStrength,
+          config.noiseKalman.minFloor,
+          config.noiseKalman.maxFloor,
+        );
+        filteredProfiles.push(guardBackoff(prof, kalmanSubtracted, config.subtractionBackoff).profile);
+      }
+
       await sleep(Math.max(20, repeatGap * 0.4));
     }
-    envBaseline = computeEnvBaseline(profiles, heatBins);
+    envBaselineRaw = computeEnvBaseline(profiles, heatBins);
+    envBaselineFiltered = filteredProfiles.length > 0 ? computeEnvBaseline(filteredProfiles, heatBins) : null;
+    envBaseline = envBaselineFiltered ?? envBaselineRaw;
     envBaselinePings = profiles.length;
-    console.debug(`[calib] env baseline: ${envBaselinePings} pings captured (steered at 0deg), envTau0=${(0.5 * (medTauL + medTauR) * 1000).toFixed(4)}ms`);
+    console.debug(`[calib] env baseline: ${envBaselinePings} pings captured (steered at 0deg), filtered=${envBaselineFiltered ? 'yes' : 'no'}, envTau0=${(0.5 * (medTauL + medTauR) * 1000).toFixed(4)}ms`);
   }
 
   // Mark calibration invalid when measurements are clearly unreliable.
@@ -972,6 +1006,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     micPosition: mbMicPosition,
     systemDelay: mbSystemDelay,
     geometryError: mbGeometryError,
+    envBaselineRaw,
+    envBaselineFiltered,
     envBaseline,
     envBaselinePings,
     sanity,

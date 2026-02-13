@@ -42,6 +42,13 @@ Before scanning, run the built-in calibration to:
 
 Calibration uses Golay pairs across multiple frequency bands to account for frequency-dependent room acoustics.
 
+## Noise Stabilization & Mic Spectrogram
+
+- **Microphone spectrogram**: real-time STFT waterfall view of incoming mic audio (configurable FFT/hop/dB range/FPS).
+- **Noise-floor Kalman (per-bin)**: adaptive background floor estimation with optional freeze on high-confidence detections.
+- **Pipeline order (scan)**: env baseline subtraction → noise-floor Kalman subtraction → static clutter suppression → confidence/CFAR gating.
+- **Calibration baseline modes**: keeps both raw and Kalman-filtered baseline variants, with feature flags for safe rollout.
+
 ## Device Support
 
 Built-in geometry presets for:

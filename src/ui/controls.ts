@@ -59,6 +59,12 @@ export function syncDOMFromConfig(): void {
   setVal('mode', config.probe.type);
   setVal('devicePreset', config.devicePreset);
   setChecked('presetApplyScan', config.presetApplyScan);
+  setChecked('spectrogramEnabled', config.spectrogram.enabled);
+  setVal('spectrogramFftSize', `${config.spectrogram.fftSize}`);
+  setVal('spectrogramHopSize', `${config.spectrogram.hopSize}`);
+  setVal('spectrogramMinDb', `${config.spectrogram.minDb}`);
+  setVal('spectrogramMaxDb', `${config.spectrogram.maxDb}`);
+  setVal('spectrogramFps', `${config.spectrogram.fps}`);
   setVal('angle', `${config.steeringAngleDeg}`);
   const angleValEl = el('angleVal');
   if (angleValEl) angleValEl.textContent = `${config.steeringAngleDeg}`;
@@ -144,6 +150,16 @@ export function syncDOMFromConfig(): void {
   setChecked('useEnvBaseline', config.envBaseline.enabled);
   setVal('envBaselineStrength', `${config.envBaseline.strength}`);
   setVal('extraCalPings', `${config.envBaseline.pings}`);
+
+  setChecked('noiseKalmanEnabled', config.noiseKalman.enabled);
+  setVal('noiseKalmanQ', `${config.noiseKalman.processNoiseQ}`);
+  setVal('noiseKalmanR', `${config.noiseKalman.measurementNoiseR}`);
+  setVal('noiseKalmanStrength', `${config.noiseKalman.subtractStrength}`);
+  setChecked('noiseKalmanFreezeHighConf', config.noiseKalman.freezeOnHighConfidence);
+  setVal('noiseKalmanHighConfGate', `${config.noiseKalman.highConfidenceGate}`);
+  setVal('noiseKalmanMinFloor', `${config.noiseKalman.minFloor}`);
+  setVal('noiseKalmanMaxFloor', `${config.noiseKalman.maxFloor}`);
+  setChecked('noiseKalmanUseInCalibration', config.noiseKalman.useInCalibration);
 
   setChecked('vaEnabled', config.virtualArray.enabled);
   setVal('vaHalfWindow', `${config.virtualArray.halfWindow}`);
@@ -234,6 +250,12 @@ export function readConfigFromDOM(): void {
 
   store.update(s => {
     s.config.probe = probe;
+    s.config.spectrogram.enabled = checkVal('spectrogramEnabled');
+    s.config.spectrogram.fftSize = Math.floor(clamp(inputVal('spectrogramFftSize', current.spectrogram.fftSize), 128, 2048));
+    s.config.spectrogram.hopSize = Math.floor(clamp(inputVal('spectrogramHopSize', current.spectrogram.hopSize), 1, 2048));
+    s.config.spectrogram.minDb = clamp(inputVal('spectrogramMinDb', current.spectrogram.minDb), -140, 0);
+    s.config.spectrogram.maxDb = clamp(inputVal('spectrogramMaxDb', current.spectrogram.maxDb), -120, 20);
+    s.config.spectrogram.fps = Math.floor(clamp(inputVal('spectrogramFps', current.spectrogram.fps), 5, 60));
     s.config.steeringAngleDeg = inputVal('angle');
     s.config.spacing = spacing;
     s.config.micArraySpacing = inputVal('micArraySpacing', 0);
@@ -279,6 +301,17 @@ export function readConfigFromDOM(): void {
     s.config.envBaseline.enabled = checkVal('useEnvBaseline');
     s.config.envBaseline.strength = inputVal('envBaselineStrength');
     s.config.envBaseline.pings = inputVal('extraCalPings');
+    s.config.noiseKalman.enabled = checkVal('noiseKalmanEnabled');
+    s.config.noiseKalman.processNoiseQ = clamp(inputVal('noiseKalmanQ', current.noiseKalman.processNoiseQ), 1e-8, 1);
+    s.config.noiseKalman.measurementNoiseR = clamp(inputVal('noiseKalmanR', current.noiseKalman.measurementNoiseR), 1e-8, 2);
+    s.config.noiseKalman.subtractStrength = clamp(inputVal('noiseKalmanStrength', current.noiseKalman.subtractStrength), 0, 1.5);
+    s.config.noiseKalman.freezeOnHighConfidence = checkVal('noiseKalmanFreezeHighConf');
+    s.config.noiseKalman.highConfidenceGate = clamp(inputVal('noiseKalmanHighConfGate', current.noiseKalman.highConfidenceGate), 0, 1);
+    const nkMin = clamp(inputVal('noiseKalmanMinFloor', current.noiseKalman.minFloor), 0, 2);
+    const nkMaxInput = clamp(inputVal('noiseKalmanMaxFloor', current.noiseKalman.maxFloor), 0, 3);
+    s.config.noiseKalman.minFloor = nkMin;
+    s.config.noiseKalman.maxFloor = Math.max(nkMin, nkMaxInput);
+    s.config.noiseKalman.useInCalibration = checkVal('noiseKalmanUseInCalibration');
     s.config.subtractionBackoff.enabled = subtractionBackoffEl ? subtractionBackoffEl.checked : current.subtractionBackoff.enabled;
     s.config.subtractionBackoff.collapseThreshold = clamp(inputVal('subtractionCollapseThreshold', current.subtractionBackoff.collapseThreshold), 0.01, 1);
     s.config.subtractionBackoff.peakDropThreshold = clamp(inputVal('subtractionPeakDropThreshold', current.subtractionBackoff.peakDropThreshold), 0.01, 1);

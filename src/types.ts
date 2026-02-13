@@ -201,6 +201,8 @@ export interface CalibrationResult {
   micPosition: { x: number; y: number };
   systemDelay: { common: number; L: number; R: number };
   geometryError: number;
+  envBaselineRaw: Float32Array | null;
+  envBaselineFiltered: Float32Array | null;
   envBaseline: Float32Array | null;
   envBaselinePings: number;
   sanity: CalibrationSanity;
@@ -354,6 +356,27 @@ export interface DisplayReflectionBlankingConfig {
   edgeSoftness: number;
 }
 
+export interface SpectrogramConfig {
+  enabled: boolean;
+  fftSize: number;
+  hopSize: number;
+  minDb: number;
+  maxDb: number;
+  fps: number;
+}
+
+export interface NoiseKalmanConfig {
+  enabled: boolean;
+  processNoiseQ: number;
+  measurementNoiseR: number;
+  subtractStrength: number;
+  freezeOnHighConfidence: boolean;
+  highConfidenceGate: number;
+  minFloor: number;
+  maxFloor: number;
+  useInCalibration: boolean;
+}
+
 // --- Geometry Wizard ---
 export interface GeomHandle {
   u: number;
@@ -406,6 +429,7 @@ export interface AppState {
 export interface AppConfig {
   probe: ProbeConfig;
   distributed: DistributedConfig;
+  spectrogram: SpectrogramConfig;
   steeringAngleDeg: number;
   gain: number;
   listenMs: number;
@@ -427,6 +451,7 @@ export interface AppConfig {
   clutterSuppression: { enabled: boolean; strength: number };
   displayReflectionBlanking: DisplayReflectionBlankingConfig;
   envBaseline: { enabled: boolean; strength: number; pings: number };
+  noiseKalman: NoiseKalmanConfig;
   subtractionBackoff: SubtractionBackoffConfig;
   calibration: { repeats: number; gapMs: number; useCalib: boolean; multiband: boolean };
   devicePreset: string;
