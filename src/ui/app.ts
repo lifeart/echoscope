@@ -256,6 +256,51 @@ export function initApp(): void {
     });
   }
 
+  const trackVizDefaults = {
+    trailMaxPoints: 22,
+    fadeMissCount: 8,
+    trailMinAlpha: 0.08,
+    trailMaxAlpha: 0.55,
+    minConfidenceFloor: 0.0001,
+  };
+  const trackVizRecommended = {
+    trailMaxPoints: 28,
+    fadeMissCount: 10,
+    trailMinAlpha: 0.05,
+    trailMaxAlpha: 0.45,
+    minConfidenceFloor: 0.001,
+  };
+
+  function applyTrackVizPreset(preset: {
+    trailMaxPoints: number;
+    fadeMissCount: number;
+    trailMinAlpha: number;
+    trailMaxAlpha: number;
+    minConfidenceFloor: number;
+  }): void {
+    const setNum = (id: string, value: number) => {
+      const input = el(id) as HTMLInputElement | null;
+      if (input) input.value = `${value}`;
+    };
+
+    setNum('trackTrailMaxPoints', preset.trailMaxPoints);
+    setNum('trackFadeMissCount', preset.fadeMissCount);
+    setNum('trackTrailMinAlpha', preset.trailMinAlpha);
+    setNum('trackTrailMaxAlpha', preset.trailMaxAlpha);
+    setNum('trackMinConfidenceFloor', preset.minConfidenceFloor);
+
+    readConfigFromDOM();
+    drawGeometry(store.get().config.minRange, store.get().config.maxRange);
+  }
+
+  el('btnTrackVizReset')?.addEventListener('click', () => {
+    applyTrackVizPreset(trackVizDefaults);
+  });
+
+  el('btnTrackVizRecommended')?.addEventListener('click', () => {
+    applyTrackVizPreset(trackVizRecommended);
+  });
+
   // ---- Mouse crosshair wiring ----
   const profileCanvas = el('profile') as HTMLCanvasElement | null;
   if (profileCanvas) {

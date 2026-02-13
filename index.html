@@ -95,29 +95,6 @@
           <input id="gain" type="number" step="0.01" min="0" max="1" value="0.22">
         </div>
       </div>
-        <div class="row" style="margin-top:10px">
-          <div>
-            <label title="Max points retained per track trail in geometry view.">Track trail points</label>
-            <input id="trackTrailMaxPoints" type="number" step="1" min="4" max="80" value="22">
-          </div>
-          <div>
-            <label title="Tracks with missCount >= this value are hidden from geometry view.">Track fade misses</label>
-            <input id="trackFadeMissCount" type="number" step="1" min="1" max="60" value="8">
-          </div>
-          <div>
-            <label title="Minimum trail alpha for oldest segments.">Trail alpha min</label>
-            <input id="trackTrailMinAlpha" type="number" step="0.01" min="0" max="1" value="0.08">
-          </div>
-          <div>
-            <label title="Maximum trail alpha for newest segments.">Trail alpha max</label>
-            <input id="trackTrailMaxAlpha" type="number" step="0.01" min="0" max="1" value="0.55">
-          </div>
-          <div>
-            <label title="Minimum tracker confidence required to draw track markers.">Track confidence floor</label>
-            <input id="trackMinConfidenceFloor" type="number" step="0.0001" min="0" max="1" value="0.0001">
-          </div>
-        </div>
-
       <div id="chirpBox" style="margin-top:10px">
         <details class="mode-desc" open>
           <summary>About Chirp mode</summary>
@@ -362,25 +339,30 @@
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label title="Max points retained per track trail in geometry view.">Track trail points</label>
+          <label title="How many historical positions are kept per track trail. Higher values show longer motion history but can clutter the geometry view. Typical range: 16–32.">Track trail points</label>
           <input id="trackTrailMaxPoints" type="number" step="1" min="4" max="80" value="22">
         </div>
         <div>
-          <label title="Tracks with missCount >= this value are hidden from geometry view.">Track fade misses</label>
+          <label title="Maximum consecutive missed tracker updates before a track is hidden. Lower values remove stale tracks faster; higher values keep tracks visible longer through dropouts.">Track fade misses</label>
           <input id="trackFadeMissCount" type="number" step="1" min="1" max="60" value="8">
         </div>
         <div>
-          <label title="Minimum trail alpha for oldest segments.">Trail alpha min</label>
+          <label title="Opacity of the oldest trail segments (0 = invisible, 1 = fully opaque). Lower values create smoother fading tails and reduce visual clutter.">Trail alpha min</label>
           <input id="trackTrailMinAlpha" type="number" step="0.01" min="0" max="1" value="0.08">
         </div>
         <div>
-          <label title="Maximum trail alpha for newest segments.">Trail alpha max</label>
+          <label title="Opacity of the newest trail segments. Higher values emphasize recent motion; keep >= Trail alpha min for a valid fade gradient.">Trail alpha max</label>
           <input id="trackTrailMaxAlpha" type="number" step="0.01" min="0" max="1" value="0.55">
         </div>
         <div>
-          <label title="Minimum tracker confidence required to draw track markers.">Track confidence floor</label>
+          <label title="Minimum tracker confidence required to draw a track marker/trail. Increase to hide noisy low-confidence tracks; decrease to see weaker tentative tracks.">Track confidence floor</label>
           <input id="trackMinConfidenceFloor" type="number" step="0.0001" min="0" max="1" value="0.0001">
         </div>
+      </div>
+
+      <div class="row" style="margin-top:6px; justify-content:flex-end; gap:8px;">
+        <button id="btnTrackVizReset" type="button" title="Restore baseline/default trail visualization settings.">Reset trail settings</button>
+        <button id="btnTrackVizRecommended" type="button" title="Apply a balanced preset optimized for readability in typical scan sessions.">Apply recommended</button>
       </div>
 
       <details style="margin-top:10px">
