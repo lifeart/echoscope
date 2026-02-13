@@ -127,6 +127,8 @@ export function initApp(): void {
       readConfigFromDOM();
       setButtonStates(true, true);
       await doScan();
+      drawHeatmap(store.get().config.minRange, store.get().config.maxRange);
+      drawGeometry(store.get().config.minRange, store.get().config.maxRange);
       updateBestReadout();
       updateDirectionReadout();
       setButtonStates(true, false);

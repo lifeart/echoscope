@@ -3,7 +3,8 @@ import { bus } from '../core/event-bus.js';
 import { clamp, sleep } from '../utils.js';
 import { doPingDetailed, resetClutter } from './ping-cycle.js';
 import { createHeatmap, updateHeatmapRow, averageProfiles } from './heatmap-data.js';
-import type { RawAngleFrame } from '../types.js';
+import { buildSaftHeatmap } from './saft.js';
+import type { AppConfig, RawAngleFrame } from '../types.js';
 
 function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null {
   if (frames.length === 0) return null;
@@ -46,6 +47,50 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
     centerFreqHz: centerFreqSum * inv,
     quality: qualitySum * inv,
   };
+}
+
+export function applySaftHeatmapIfEnabled(
+  heatmap: ReturnType<typeof createHeatmap>,
+  rawFrames: RawAngleFrame[],
+  angles: number[],
+  minRange: number,
+  maxRange: number,
+  cfg: Pick<AppConfig, 'virtualArray' | 'spacing' | 'speedOfSound'>,
+): boolean {
+  const va = cfg.virtualArray;
+  const halfWindow = Math.max(0, Math.floor(va.halfWindow));
+  const minRequiredRows = Math.max(3, 2 * halfWindow + 1);
+
+  if (!va.enabled) return false;
+  if (rawFrames.length !== angles.length) {
+    console.log(`[doScan:saft] skipped (rawFrames=${rawFrames.length}, angles=${angles.length})`);
+    return false;
+  }
+  if (angles.length < minRequiredRows) {
+    console.log(`[doScan:saft] skipped (angles=${angles.length} < required=${minRequiredRows})`);
+    return false;
+  }
+
+  const t0 = Date.now();
+  const saft = buildSaftHeatmap({
+    rawFrames,
+    scanAngles: angles,
+    minRange,
+    maxRange,
+    bins: heatmap.bins,
+    spacing: cfg.spacing,
+    speedOfSound: cfg.speedOfSound,
+    config: va,
+  });
+
+  heatmap.data.set(saft.data);
+  heatmap.display.fill(0);
+  heatmap.bestBin.set(saft.bestBin);
+  heatmap.bestVal.set(saft.bestVal);
+
+  const elapsedMs = Date.now() - t0;
+  console.log(`[doScan:saft] applied rows=${angles.length} bins=${heatmap.bins} halfWindow=${halfWindow} in ${elapsedMs}ms`);
+  return true;
 }
 
 export async function doScan(): Promise<void> {
@@ -102,6 +147,7 @@ export async function doScan(): Promise<void> {
   }
 
   console.log(`[doScan] captured raw-angle frames=${rawFrames.length} of ${angles.length}`);
+  applySaftHeatmapIfEnabled(heatmap, rawFrames, angles, minR, maxR, config);
 
   // Find best target across scan
   const strengthGate = config.strengthGate;

@@ -54,6 +54,10 @@ export function readConfigFromDOM(): void {
     s.config.calibration.gapMs = inputVal('calRepeatGapMs');
     s.config.calibration.useCalib = checkVal('useCalib');
     s.config.calibration.multiband = checkVal('useMultiband');
+    s.config.virtualArray.enabled = checkVal('vaEnabled');
+    s.config.virtualArray.halfWindow = Math.floor(clamp(inputVal('vaHalfWindow', 3), 0, 12));
+    s.config.virtualArray.window = selectVal('vaWindow') === 'gaussian' ? 'gaussian' : 'hann';
+    s.config.virtualArray.coherenceFloor = clamp(inputVal('vaCoherenceFloor', 0.25), 0, 1);
   });
 }
 

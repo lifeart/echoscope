@@ -275,6 +275,30 @@
       </div>
 
       <div class="row" style="margin-top:10px">
+        <div>
+          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Coherently combine neighboring steering angles to synthesize a larger aperture.">
+            <input id="vaEnabled" type="checkbox">
+            Virtual array (SAFT/DAS)
+          </label>
+        </div>
+        <div>
+          <label title="Half-window in angle rows for coherent aperture sum (0 = disabled behavior).">SAFT half-window</label>
+          <input id="vaHalfWindow" type="number" step="1" min="0" max="12" value="3">
+        </div>
+        <div>
+          <label title="Aperture taper used during coherent summation.">SAFT window</label>
+          <select id="vaWindow">
+            <option value="hann" selected>Hann</option>
+            <option value="gaussian">Gaussian</option>
+          </select>
+        </div>
+        <div>
+          <label title="Below this coherence, blend toward incoherent magnitude for stability.">SAFT coherence floor</label>
+          <input id="vaCoherenceFloor" type="number" step="0.05" min="0" max="1" value="0.25">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
         <div class="pill"><span id="bestReadout">Best: —</span></div>
         <div class="pill"><span id="dirReadout">Direction: —</span></div>
         <div class="pill" id="pingStats" style="display:none"></div>
