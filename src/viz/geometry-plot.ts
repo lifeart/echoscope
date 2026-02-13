@@ -41,8 +41,15 @@ function getGeometryFrame(model: GeomModel, minR: number, maxR: number, canvas: 
   const maxRange = (Number.isFinite(maxR) && maxR > 0.2) ? maxR : 4.0;
   const yMax = Math.max(maxRange * 1.10, (Number.isFinite(minR) ? minR : 0.3) + 0.4);
 
-  let uLimit = Math.max(Math.abs(model.spL.u), Math.abs(model.spR.u), Math.abs(model.mic.u), 0.22) * 1.35;
-  if (Number.isFinite(state.lastTarget.angle) && Number.isFinite(state.lastTarget.range)) {
+  const baseULimit = Math.max(Math.abs(model.spL.u), Math.abs(model.spR.u), Math.abs(model.mic.u), 0.22) * 1.35;
+  let uLimit = baseULimit;
+
+  if (state.scanning) {
+    // During scanning, use stable scale based on full scan extent (±60°)
+    // so speakers don't appear to jump as the target moves across angles
+    const maxScanExtent = maxRange * Math.sin(60 * Math.PI / 180);
+    uLimit = Math.max(uLimit, maxScanExtent * 1.25);
+  } else if (Number.isFinite(state.lastTarget.angle) && Number.isFinite(state.lastTarget.range)) {
     const tu = state.lastTarget.range * Math.sin(state.lastTarget.angle * Math.PI / 180);
     uLimit = Math.max(uLimit, Math.abs(tu) * 1.25);
   }
