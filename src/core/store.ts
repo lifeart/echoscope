@@ -1,5 +1,5 @@
 import type { AppState, AppConfig } from '../types.js';
-import { DEFAULT_HEAT_BINS, SPEED_OF_SOUND } from '../constants.js';
+import { DEFAULT_HEAT_BINS, SPEED_OF_SOUND, speedOfSoundFromTemp } from '../constants.js';
 
 type Listener = (value: unknown) => void;
 
@@ -25,15 +25,19 @@ function setByPath(obj: unknown, path: string, value: unknown): void {
   }
 }
 
+// Derive consistent defaults from temperature=25, maxRange=4, spacing=0.20
+const _defaultC = speedOfSoundFromTemp(25);
+const _defaultListenMs = (2 * 4.0 / _defaultC) * 1000 + 50;
+
 const defaultConfig: AppConfig = {
   probe: { type: 'chirp', params: { f1: 2000, f2: 9000, durationMs: 7 } },
   steeringAngleDeg: 0,
   gain: 0.22,
-  listenMs: 140,
+  listenMs: _defaultListenMs,
   minRange: 0.3,
   maxRange: 4.0,
   scanStep: 10,
-  scanDwell: 140,
+  scanDwell: _defaultListenMs,
   scanPasses: 1,
   strengthGate: 0.0001,
   confidenceGate: 0.38,
@@ -52,6 +56,7 @@ const defaultConfig: AppConfig = {
   devicePreset: 'custom',
   heatBins: DEFAULT_HEAT_BINS,
   speedOfSound: SPEED_OF_SOUND,
+  temperature: 25,
   spacing: 0.20,
   micArraySpacing: 0,
   virtualArray: {

@@ -1,4 +1,8 @@
-export const SPEED_OF_SOUND = 343; // m/s at ~20°C
+export function speedOfSoundFromTemp(tempC: number): number {
+  return 331.3 + 0.606 * tempC;
+}
+
+export const SPEED_OF_SOUND = speedOfSoundFromTemp(25); // m/s at 25°C
 export const DEFAULT_SAMPLE_RATE = 48000;
 export const DEFAULT_BUFFER_SECONDS = 2.2;
 export const DEFAULT_HEAT_BINS = 240;
@@ -45,9 +49,7 @@ export const DEVICE_PRESETS: Record<string, DevicePreset> = {
 export const LAPTOP_PRESET_SCAN = {
   mode: 'golay' as const,
   scanStep: 3,
-  scanDwell: 220,
   scanPasses: 2,
-  listenMs: 180,
   strengthGate: 0.0001,
   clutterStrength: 0.70,
   qualityAlgo: 'auto' as const,

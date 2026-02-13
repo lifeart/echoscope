@@ -184,6 +184,7 @@ export function initApp(): void {
   el('devicePreset')?.addEventListener('change', () => {
     const key = (el('devicePreset') as HTMLSelectElement).value;
     applyDevicePreset(key);
+    readConfigFromDOM(); // recompute derived values (minRange, scanDwell) after spacing change
     ensureGeometryWizardHandlesInitialized(true);
     drawGeometry(store.get().config.minRange, store.get().config.maxRange);
   });
@@ -235,6 +236,12 @@ export function initApp(): void {
   const paramInputIds = ['f1', 'f2', 'T', 'mlsOrder', 'chipRate', 'golayOrder', 'golayChipRate', 'golayGapMs'];
   for (const id of paramInputIds) {
     el(id)?.addEventListener('input', () => { readConfigFromDOM(); scheduleSignalPreview(); });
+  }
+
+  // Computed config inputs — update derived labels live
+  const configInputIds = ['temperature', 'maxR', 'spacing'];
+  for (const id of configInputIds) {
+    el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
   }
 
   // ---- Mouse crosshair wiring ----

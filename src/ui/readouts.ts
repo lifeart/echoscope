@@ -88,7 +88,7 @@ export function renderCalibInfo(): void {
 
   lines.push(`quality = ${calib.quality.toFixed(2)} (lock strength), angleReliable = ${calib.angleReliable ? 'YES' : 'no'}`);
   lines.push(`mono output likely = ${calib.monoLikely ? 'YES' : 'no'}`);
-  lines.push(`d=${state.config.spacing.toFixed(3)}m, c=${state.config.speedOfSound.toFixed(1)}m/s`);
+  lines.push(`d=${state.config.spacing.toFixed(3)}m, T=${state.config.temperature}\u00b0C, c=${state.config.speedOfSound.toFixed(1)}m/s`);
   lines.push(`tauMeasL=${(calib.tauMeasured.L * 1e3).toFixed(2)}ms (MAD=${(calib.tauMAD.L * 1e3).toFixed(2)}ms), peakL\u2248${calib.peaks.L.toFixed(3)}`);
   lines.push(`tauMeasR=${(calib.tauMeasured.R * 1e3).toFixed(2)}ms (MAD=${(calib.tauMAD.R * 1e3).toFixed(2)}ms), peakR\u2248${calib.peaks.R.toFixed(3)}`);
   lines.push(`tauSysCommon\u2248${(calib.systemDelay.common * 1e3).toFixed(2)}ms`);

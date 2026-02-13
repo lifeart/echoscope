@@ -343,6 +343,7 @@ export interface AppConfig {
   devicePreset: string;
   heatBins: number;
   speedOfSound: number;
+  temperature: number;
   spacing: number;
   micArraySpacing: number;
   virtualArray: VirtualArrayConfig;

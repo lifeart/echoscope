@@ -1,6 +1,27 @@
 import { store } from '../core/store.js';
 import { clamp } from '../utils.js';
+import { speedOfSoundFromTemp } from '../constants.js';
 import type { ProbeConfig } from '../types.js';
+
+export interface DerivedConfig {
+  speedOfSound: number;
+  listenMs: number;
+  minRange: number;
+  scanDwell: number;
+}
+
+export function computeDerivedConfig(
+  temperature: number,
+  maxRange: number,
+  spacing: number,
+): DerivedConfig {
+  const speedOfSound = speedOfSoundFromTemp(temperature);
+  const safeMaxRange = Math.max(0, maxRange);
+  const listenMs = (2 * safeMaxRange / speedOfSound) * 1000 + 50;
+  const minRange = Math.max(0.3, spacing + 0.05);
+  const scanDwell = listenMs;
+  return { speedOfSound, listenMs, minRange, scanDwell };
+}
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -38,18 +59,24 @@ export function readConfigFromDOM(): void {
   const adaptiveQualityEl = el('adaptiveQualityOn') as HTMLInputElement | null;
   const subtractionBackoffEl = el('subtractionBackoffOn') as HTMLInputElement | null;
 
+  const temperature = inputVal('temperature', 25);
+  const maxR = inputVal('maxR', 4.0);
+  const spacing = inputVal('spacing', 0.20);
+  const derived = computeDerivedConfig(temperature, maxR, spacing);
+
   store.update(s => {
     s.config.probe = probe;
     s.config.steeringAngleDeg = inputVal('angle');
-    s.config.spacing = inputVal('spacing');
+    s.config.spacing = spacing;
     s.config.micArraySpacing = inputVal('micArraySpacing', 0);
-    s.config.speedOfSound = inputVal('c');
+    s.config.temperature = temperature;
+    s.config.speedOfSound = derived.speedOfSound;
     s.config.gain = inputVal('gain');
-    s.config.listenMs = inputVal('listenMs');
-    s.config.minRange = inputVal('minR');
-    s.config.maxRange = inputVal('maxR');
+    s.config.listenMs = derived.listenMs;
+    s.config.minRange = derived.minRange;
+    s.config.maxRange = maxR;
     s.config.scanStep = inputVal('scanStep');
-    s.config.scanDwell = inputVal('scanDwell');
+    s.config.scanDwell = derived.scanDwell;
     s.config.scanPasses = clamp(inputVal('scanPasses', 1), 1, 8);
     s.config.strengthGate = clamp(inputVal('strengthGate'), 0, 1);
     s.config.confidenceGate = clamp(inputVal('confidenceGate', current.confidenceGate), 0, 1);
@@ -79,6 +106,16 @@ export function readConfigFromDOM(): void {
     s.config.virtualArray.window = selectVal('vaWindow') === 'gaussian' ? 'gaussian' : 'hann';
     s.config.virtualArray.coherenceFloor = clamp(inputVal('vaCoherenceFloor', 0.25), 0, 1);
   });
+
+  // Update computed-value display labels
+  const computedC = el('computedC');
+  if (computedC) computedC.textContent = derived.speedOfSound.toFixed(1);
+  const computedListenMs = el('computedListenMs');
+  if (computedListenMs) computedListenMs.textContent = derived.listenMs.toFixed(0);
+  const computedMinR = el('computedMinR');
+  if (computedMinR) computedMinR.textContent = derived.minRange.toFixed(2);
+  const computedScanDwell = el('computedScanDwell');
+  if (computedScanDwell) computedScanDwell.textContent = derived.scanDwell.toFixed(0);
 }
 
 export function syncModeUI(): void {

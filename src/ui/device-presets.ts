@@ -71,9 +71,7 @@ function applyLaptopScanPreset(): void {
   const sets: Record<string, string> = {
     mode: lp.mode,
     scanStep: String(lp.scanStep),
-    scanDwell: String(lp.scanDwell),
     scanPasses: String(lp.scanPasses),
-    listenMs: String(lp.listenMs),
     strengthGate: String(lp.strengthGate),
     scanClutterStrength: String(lp.clutterStrength),
     qualityAlgo: lp.qualityAlgo,
@@ -94,5 +92,5 @@ function applyLaptopScanPreset(): void {
   const showTrace = document.getElementById('showTrace') as HTMLInputElement | null;
   if (showTrace) showTrace.checked = true;
 
-  log(`[preset] laptop mode applied: golay, step=${lp.scanStep}\u00b0, dwell=${lp.scanDwell}ms, listen=${lp.listenMs}ms, gate=${lp.strengthGate}, clutter=${lp.clutterStrength}, quality=${lp.qualityAlgo}`);
+  log(`[preset] laptop mode applied: golay, step=${lp.scanStep}\u00b0, passes=${lp.scanPasses}, gate=${lp.strengthGate}, clutter=${lp.clutterStrength}, quality=${lp.qualityAlgo}`);
 }

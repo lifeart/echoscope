@@ -86,8 +86,9 @@
           <input id="micArraySpacing" type="number" step="0.001" min="0" value="0">
         </div>
         <div>
-          <label title="Speed of sound in air (~343 m/s at 20°C). Range 200–400. Affects all range calculations.">Speed of sound c (m/s)</label>
-          <input id="c" type="number" step="1" min="200" max="400" value="343">
+          <label title="Air temperature (°C). Computes speed of sound: c = 331.3 + 0.606 × T.">Temperature (°C)</label>
+          <input id="temperature" type="number" step="1" min="18" max="42" value="25">
+          <span class="small">c = <span id="computedC">346.5</span> m/s</span>
         </div>
         <div>
           <label title="Volume for transmitted pings. Keep low to avoid feedback.">Output gain</label>
@@ -219,16 +220,11 @@
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label title="Capture duration per ping. Longer catches farther echoes. Extended internally by probe duration.">Listen window (ms)</label>
-          <input id="listenMs" type="number" step="5" value="140">
-        </div>
-        <div>
-          <label title="Profile display minimum boundary. Should be >= speaker-mic distance.">Min range (m)</label>
-          <input id="minR" type="number" step="0.1" value="0.3">
-        </div>
-        <div>
-          <label title="Profile display maximum boundary.">Max range (m)</label>
+          <label title="Maximum detection range.">Max range (m)</label>
           <input id="maxR" type="number" step="0.1" value="4.0">
+        </div>
+        <div>
+          <span class="small">Listen: <span id="computedListenMs">73</span> ms | Min range: <span id="computedMinR">0.30</span> m</span>
         </div>
       </div>
 
@@ -240,51 +236,8 @@
           <input id="scanStep" type="number" step="1" value="10">
         </div>
         <div>
-          <label title="Pause per angle. Longer = better SNR.">Scan dwell (ms)</label>
-          <input id="scanDwell" type="number" step="10" value="140">
-        </div>
-        <div>
           <label title="Pings per angle averaged together. More = better SNR (~3dB per doubling). 1–8.">Scan passes</label>
           <input id="scanPasses" type="number" step="1" min="1" max="8" value="1">
-        </div>
-        <div>
-          <label title="Min correlation strength to report target. 0–1. Lower = more sensitive but noisier.">Min strength gate</label>
-          <input id="strengthGate" type="number" step="0.0001" min="0" max="1" value="0.0001">
-        </div>
-        <div>
-          <label title="Primary confidence gate (PSR + sharpness + sidelobe checks).">Confidence gate</label>
-          <input id="confidenceGate" type="number" step="0.01" min="0" max="1" value="0.38">
-        </div>
-        <div>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
-            <input id="scanClutterOn" type="checkbox" checked>
-            Suppress static reflections
-          </label>
-        </div>
-        <div>
-          <label title="Subtracts repeating clutter across scans. Strength 0–1.2.">Static suppression</label>
-          <input id="scanClutterStrength" type="number" step="0.05" min="0" max="1.2" value="0.65">
-        </div>
-        <div>
-          <label title="Fast: raw. Balanced: median+smooth. Max: +floor suppress. Auto: adapts.">Quality algorithm</label>
-          <select id="qualityAlgo">
-            <option value="auto">Auto</option>
-            <option value="fast">Fast</option>
-            <option value="balanced" selected>Balanced</option>
-            <option value="max">Max quality</option>
-          </select>
-        </div>
-        <div>
-          <label title="How multiping combines repeated pings per angle.">Pass aggregation</label>
-          <select id="scanAggregateMode">
-            <option value="mean">Mean</option>
-            <option value="median">Median</option>
-            <option value="trimmedMean" selected>Trimmed mean</option>
-          </select>
-        </div>
-        <div>
-          <label title="Trim fraction per side for trimmed mean.">Trim fraction</label>
-          <input id="scanTrimFraction" type="number" step="0.05" min="0" max="0.45" value="0.20">
         </div>
         <div>
           <label title="Whether angle is horizontal (L/R) or vertical (T/B).">Direction axis</label>
@@ -293,73 +246,124 @@
             <option value="vertical">Vertical (T/B)</option>
           </select>
         </div>
-      </div>
-
-      <div class="row" style="margin-top:10px">
         <div>
-          <label title="Temporal data integration alpha for heatmap.data updates.">Temporal IIR alpha</label>
-          <input id="temporalIirAlpha" type="number" step="0.02" min="0.01" max="1" value="0.18">
-        </div>
-        <div>
-          <label title="Per-angle profile history length for outlier rejection.">Outlier history (N)</label>
-          <input id="outlierHistoryN" type="number" step="1" min="3" max="9" value="7">
-        </div>
-        <div>
-          <label title="Allowed neighboring peak-bin mismatch for consensus/continuity.">Continuity bins</label>
-          <input id="continuityBins" type="number" step="1" min="1" max="64" value="8">
-        </div>
-        <div>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Enable adaptive auto-quality with hysteresis.">
-            <input id="adaptiveQualityOn" type="checkbox" checked>
-            Adaptive auto quality
-          </label>
-        </div>
-        <div>
-          <label title="Minimum time between auto-quality mode switches.">Auto hysteresis (ms)</label>
-          <input id="adaptiveQualityHysteresisMs" type="number" step="50" min="250" max="10000" value="1200">
+          <span class="small">Scan dwell: <span id="computedScanDwell">73</span> ms</span>
         </div>
       </div>
 
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Back off subtraction when profile collapses too much.">
-            <input id="subtractionBackoffOn" type="checkbox" checked>
-            Subtraction self-limiting
-          </label>
+      <details style="margin-top:10px">
+        <summary style="font-size:13px">Advanced scan settings</summary>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label title="Min correlation strength to report target. 0–1. Lower = more sensitive but noisier.">Min strength gate</label>
+            <input id="strengthGate" type="number" step="0.0001" min="0" max="1" value="0.0001">
+          </div>
+          <div>
+            <label title="Primary confidence gate (PSR + sharpness + sidelobe checks).">Confidence gate</label>
+            <input id="confidenceGate" type="number" step="0.01" min="0" max="1" value="0.38">
+          </div>
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
+              <input id="scanClutterOn" type="checkbox" checked>
+              Suppress static reflections
+            </label>
+          </div>
+          <div>
+            <label title="Subtracts repeating clutter across scans. Strength 0–1.2.">Static suppression</label>
+            <input id="scanClutterStrength" type="number" step="0.05" min="0" max="1.2" value="0.65">
+          </div>
+          <div>
+            <label title="Fast: raw. Balanced: median+smooth. Max: +floor suppress. Auto: adapts.">Quality algorithm</label>
+            <select id="qualityAlgo">
+              <option value="auto">Auto</option>
+              <option value="fast">Fast</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="max">Max quality</option>
+            </select>
+          </div>
+          <div>
+            <label title="How multiping combines repeated pings per angle.">Pass aggregation</label>
+            <select id="scanAggregateMode">
+              <option value="mean">Mean</option>
+              <option value="median">Median</option>
+              <option value="trimmedMean" selected>Trimmed mean</option>
+            </select>
+          </div>
+          <div>
+            <label title="Trim fraction per side for trimmed mean.">Trim fraction</label>
+            <input id="scanTrimFraction" type="number" step="0.05" min="0" max="0.45" value="0.20">
+          </div>
         </div>
-        <div>
-          <label title="If after/before energy drops below this ratio, reduce subtraction.">Collapse threshold</label>
-          <input id="subtractionCollapseThreshold" type="number" step="0.02" min="0.01" max="1" value="0.24">
-        </div>
-        <div>
-          <label title="If peak retention ratio drops below this, reduce subtraction.">Peak retention threshold</label>
-          <input id="subtractionPeakDropThreshold" type="number" step="0.02" min="0.01" max="1" value="0.30">
-        </div>
-      </div>
 
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Coherently combine neighboring steering angles to synthesize a larger aperture.">
-            <input id="vaEnabled" type="checkbox">
-            Virtual array (SAFT/DAS)
-          </label>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label title="Temporal data integration alpha for heatmap.data updates.">Temporal IIR alpha</label>
+            <input id="temporalIirAlpha" type="number" step="0.02" min="0.01" max="1" value="0.18">
+          </div>
+          <div>
+            <label title="Per-angle profile history length for outlier rejection.">Outlier history (N)</label>
+            <input id="outlierHistoryN" type="number" step="1" min="3" max="9" value="7">
+          </div>
+          <div>
+            <label title="Allowed neighboring peak-bin mismatch for consensus/continuity.">Continuity bins</label>
+            <input id="continuityBins" type="number" step="1" min="1" max="64" value="8">
+          </div>
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Enable adaptive auto-quality with hysteresis.">
+              <input id="adaptiveQualityOn" type="checkbox" checked>
+              Adaptive auto quality
+            </label>
+          </div>
+          <div>
+            <label title="Minimum time between auto-quality mode switches.">Auto hysteresis (ms)</label>
+            <input id="adaptiveQualityHysteresisMs" type="number" step="50" min="250" max="10000" value="1200">
+          </div>
         </div>
-        <div>
-          <label title="Half-window in angle rows for coherent aperture sum (0 = disabled behavior).">SAFT half-window</label>
-          <input id="vaHalfWindow" type="number" step="1" min="0" max="12" value="3">
+
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Back off subtraction when profile collapses too much.">
+              <input id="subtractionBackoffOn" type="checkbox" checked>
+              Subtraction self-limiting
+            </label>
+          </div>
+          <div>
+            <label title="If after/before energy drops below this ratio, reduce subtraction.">Collapse threshold</label>
+            <input id="subtractionCollapseThreshold" type="number" step="0.02" min="0.01" max="1" value="0.24">
+          </div>
+          <div>
+            <label title="If peak retention ratio drops below this, reduce subtraction.">Peak retention threshold</label>
+            <input id="subtractionPeakDropThreshold" type="number" step="0.02" min="0.01" max="1" value="0.30">
+          </div>
         </div>
-        <div>
-          <label title="Aperture taper used during coherent summation.">SAFT window</label>
-          <select id="vaWindow">
-            <option value="hann" selected>Hann</option>
-            <option value="gaussian">Gaussian</option>
-          </select>
+      </details>
+
+      <details style="margin-top:10px">
+        <summary style="font-size:13px">Virtual array (SAFT/DAS)</summary>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;" title="Coherently combine neighboring steering angles to synthesize a larger aperture.">
+              <input id="vaEnabled" type="checkbox">
+              Enable SAFT/DAS
+            </label>
+          </div>
+          <div>
+            <label title="Half-window in angle rows for coherent aperture sum (0 = disabled behavior).">SAFT half-window</label>
+            <input id="vaHalfWindow" type="number" step="1" min="0" max="12" value="3">
+          </div>
+          <div>
+            <label title="Aperture taper used during coherent summation.">SAFT window</label>
+            <select id="vaWindow">
+              <option value="hann" selected>Hann</option>
+              <option value="gaussian">Gaussian</option>
+            </select>
+          </div>
+          <div>
+            <label title="Below this coherence, blend toward incoherent magnitude for stability.">SAFT coherence floor</label>
+            <input id="vaCoherenceFloor" type="number" step="0.05" min="0" max="1" value="0.25">
+          </div>
         </div>
-        <div>
-          <label title="Below this coherence, blend toward incoherent magnitude for stability.">SAFT coherence floor</label>
-          <input id="vaCoherenceFloor" type="number" step="0.05" min="0" max="1" value="0.25">
-        </div>
-      </div>
+      </details>
 
       <div class="row" style="margin-top:10px">
         <div class="pill"><span id="bestReadout">Best: —</span></div>
@@ -389,30 +393,33 @@
         </label>
       </div>
 
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label title="Independent L/R measurement pairs. 1–9. More = more robust.">Calibration repeats (N)</label>
-          <input id="calRepeats" type="number" step="1" min="1" max="9" value="3">
+      <details style="margin-top:10px">
+        <summary style="font-size:13px">Advanced calibration settings</summary>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label title="Independent L/R measurement pairs. 1–9. More = more robust.">Calibration repeats (N)</label>
+            <input id="calRepeats" type="number" step="1" min="1" max="9" value="3">
+          </div>
+          <div>
+            <label title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>
+            <input id="calRepeatGapMs" type="number" step="10" min="30" value="120">
+          </div>
+          <div>
+            <label title="Additional pings for environmental baseline. 0–12.">Extra env pings</label>
+            <input id="extraCalPings" type="number" step="1" min="0" max="12" value="4">
+          </div>
+          <div>
+            <label title="Subtraction strength for ambient clutter. 0–1.2.">Env baseline subtract</label>
+            <input id="envBaselineStrength" type="number" step="0.05" min="0" max="1.2" value="0.55">
+          </div>
+          <div>
+            <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
+              <input id="useEnvBaseline" type="checkbox" checked>
+              Use env baseline
+            </label>
+          </div>
         </div>
-        <div>
-          <label title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>
-          <input id="calRepeatGapMs" type="number" step="10" min="30" value="120">
-        </div>
-        <div>
-          <label title="Additional pings for environmental baseline. 0–12.">Extra env pings</label>
-          <input id="extraCalPings" type="number" step="1" min="0" max="12" value="4">
-        </div>
-        <div>
-          <label title="Subtraction strength for ambient clutter. 0–1.2.">Env baseline subtract</label>
-          <input id="envBaselineStrength" type="number" step="0.05" min="0" max="1.2" value="0.55">
-        </div>
-        <div>
-          <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
-            <input id="useEnvBaseline" type="checkbox" checked>
-            Use env baseline
-          </label>
-        </div>
-      </div>
+      </details>
 
       <details id="sanityDetails" style="margin-top:12px;">
         <summary>Calibration sanity view</summary>
