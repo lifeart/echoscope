@@ -338,21 +338,49 @@
 
     <section class="card">
       <div class="row" style="justify-content:space-between">
-        <div class="small">Top: Range profile. Bottom: Angle × Range heatmap + optional best-target trace overlay.</div>
         <div class="small" id="status">Status: idle</div>
       </div>
 
-      <div style="margin-top:10px">
+      <details open style="margin-top:10px">
+        <summary style="font-size:13px">Range profile</summary>
+        <p class="hint" style="margin:4px 0 8px">
+          Cross-correlation of the captured microphone signal against the transmitted probe, mapped to distance.
+          The <b>X-axis</b> is range in meters (from Min range to Max range).
+          The <b>Y-axis</b> is correlation amplitude (auto-scaled to fit).
+          Each <b>spike</b> in the waveform corresponds to an echo returning from an object at that distance.
+          Taller spikes = stronger reflections. Appears after each <b>Ping</b> or during a <b>Scan</b>.
+        </p>
         <canvas id="profile" width="1000" height="260"></canvas>
-      </div>
+      </details>
 
-      <div style="margin-top:10px">
+      <details open style="margin-top:10px">
+        <summary style="font-size:13px">Angle x Range heatmap</summary>
+        <p class="hint" style="margin:4px 0 8px">
+          2D sonar image built during a <b>Scan</b>. Each row is one steering angle's range profile.
+          The <b>X-axis</b> is range (distance in meters).
+          The <b>Y-axis</b> is steering angle (-60° to +60°).
+          Pixel <b>brightness</b> = echo strength (brighter = stronger reflection at that angle and distance).
+          An object shows up as a bright spot at its (angle, range) position.
+          The optional colored <b>trace overlay</b> connects the strongest echo at each angle, showing the target trajectory
+          (color indicates confidence: red = low, green = high).
+        </p>
         <canvas id="heatmap" width="1000" height="520"></canvas>
-      </div>
+      </details>
 
-      <div style="margin-top:10px">
+      <details open style="margin-top:10px">
+        <summary style="font-size:13px">Geometry view</summary>
+        <p class="hint" style="margin:4px 0 8px">
+          Top-down physical layout of the device and detected targets.
+          <b>Blue dots</b> = left and right speakers, connected by a baseline line.
+          <b>Orange dot</b> = microphone (gray if uncalibrated).
+          <b>Dashed blue ray</b> = current steering direction (beam angle).
+          <b>Colored dot</b> = detected target position, mapped from its measured angle and range into 2D space
+          (color indicates detection confidence).
+          Labels show speaker spacing and calibration status.
+          Enable <b>Geometry wizard</b> below to drag speakers and mic to match your device layout.
+        </p>
         <canvas id="geometry" width="1000" height="280"></canvas>
-      </div>
+      </details>
 
       <div class="row" style="margin-top:8px">
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
@@ -363,10 +391,6 @@
         <button id="btnGeomApply" type="button">Apply geometry</button>
         <span class="small" id="geomWizardStatus">Enable wizard to drag speakers/mic on geometry view.</span>
       </div>
-
-      <p class="hint">
-        Geometry view shows speaker baseline, calibrated mic position, steering ray, and current detected target.
-      </p>
 
       <p class="hint">
         If audio goes silent after switching apps/locking screen: return and tap <b>Init Audio</b> to resume.
