@@ -3,6 +3,44 @@ import { store } from '../core/store.js';
 import { clearCanvas, canvasPixelScale } from './renderer.js';
 import { traceColorFromConfidence } from './colors.js';
 
+interface TrailPoint {
+  u: number;
+  f: number;
+}
+
+const trackTrails = new Map<number, TrailPoint[]>();
+const TRAIL_MAX_POINTS = 18;
+
+function trackToUF(track: { position: { range: number; angleDeg: number } }, baselineCenterU: number): TrailPoint | null {
+  const { range, angleDeg } = track.position;
+  if (!(Number.isFinite(range) && range >= 0 && Number.isFinite(angleDeg))) return null;
+  const u = baselineCenterU + range * Math.sin(angleDeg * Math.PI / 180);
+  const f = Math.max(0, range * Math.cos(angleDeg * Math.PI / 180));
+  return { u, f };
+}
+
+function updateTrackTrails(targets: Array<{ id: number; position: { range: number; angleDeg: number } }>, baselineCenterU: number): void {
+  const activeIds = new Set<number>();
+
+  for (const track of targets) {
+    const p = trackToUF(track, baselineCenterU);
+    if (!p) continue;
+
+    activeIds.add(track.id);
+    const trail = trackTrails.get(track.id) ?? [];
+    const prev = trail[trail.length - 1];
+    if (!prev || Math.hypot(prev.u - p.u, prev.f - p.f) > 1e-3) trail.push(p);
+    while (trail.length > TRAIL_MAX_POINTS) trail.shift();
+    trackTrails.set(track.id, trail);
+  }
+
+  const staleIds: number[] = [];
+  for (const id of trackTrails.keys()) {
+    if (!activeIds.has(id)) staleIds.push(id);
+  }
+  for (const id of staleIds) trackTrails.delete(id);
+}
+
 interface GeomModel {
   spL: { u: number; f: number };
   spR: { u: number; f: number };
@@ -165,10 +203,45 @@ export function drawGeometry(minR: number, maxR: number): void {
   gctx.stroke();
   gctx.setLineDash([]);
 
-  // Target
+  updateTrackTrails(state.targets, baselineCenterU);
+
+  for (const track of state.targets) {
+    const p = trackToUF(track, baselineCenterU);
+    if (!p) continue;
+
+    const tp = toPx(p.u, p.f);
+    const conf = clamp(track.confidence, 0, 1);
+    const color = traceColorFromConfidence(conf);
+    const trail = trackTrails.get(track.id);
+
+    if (trail && trail.length > 1) {
+      gctx.globalAlpha = 0.45;
+      gctx.strokeStyle = color;
+      gctx.lineWidth = 1.4 * s;
+      gctx.beginPath();
+      const first = toPx(trail[0].u, trail[0].f);
+      gctx.moveTo(first.x, first.y);
+      for (let i = 1; i < trail.length; i++) {
+        const t = toPx(trail[i].u, trail[i].f);
+        gctx.lineTo(t.x, t.y);
+      }
+      gctx.stroke();
+      gctx.globalAlpha = 1;
+    }
+
+    gctx.fillStyle = color;
+    gctx.beginPath();
+    gctx.arc(tp.x, tp.y, 5 * s, 0, Math.PI * 2);
+    gctx.fill();
+
+    gctx.fillStyle = '#eaeaea';
+    gctx.font = `${10 * s}px system-ui`;
+    gctx.fillText(`T${track.id}`, tp.x + 7 * s, tp.y - 8 * s);
+  }
+
   const gate = state.config.strengthGate;
   const target = state.lastTarget;
-  if (Number.isFinite(target.angle) && Number.isFinite(target.range) && target.strength > gate) {
+  if (state.targets.length === 0 && Number.isFinite(target.angle) && Number.isFinite(target.range) && target.strength > gate) {
     const targetU = baselineCenterU + target.range * Math.sin(target.angle * Math.PI / 180);
     const targetF = Math.max(0, target.range * Math.cos(target.angle * Math.PI / 180));
     const tp = toPx(targetU, targetF);
@@ -186,7 +259,7 @@ export function drawGeometry(minR: number, maxR: number): void {
   gctx.fillStyle = '#bdbdbd';
   gctx.font = `${12 * s}px system-ui`;
   gctx.fillText(`Geometry view (${axisLabel}-axis steering: ${axisDirs[0]} \u2194 ${axisDirs[1]})`, 12 * s, 16 * s);
-  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
+  gctx.fillText(`Spacing d=${spacingNow.toFixed(2)}m | Calib=${state.calibration?.valid ? 'on' : 'off'} | Tracks=${state.targets.length}${wizard.active ? ' | wizard=edit' : ''}`, 12 * s, h - 8 * s);
 }
 
 // Export geometry frame helpers for the geometry wizard
