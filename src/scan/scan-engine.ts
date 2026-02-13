@@ -6,6 +6,7 @@ import { createHeatmap, updateHeatmapRow, aggregateProfiles } from './heatmap-da
 import { buildSaftHeatmap } from './saft.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
 import { computeProfileConfidence, smooth3 } from './confidence.js';
+import { updateTrackingFromMeasurement } from '../tracking/engine.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
 const perAngleProfileHistory = new Map<number, Float32Array[]>();
@@ -340,11 +341,15 @@ export async function doScan(): Promise<void> {
 
   let bestStrength = 0;
   let bestBin = -1;
+  let bestRange = NaN;
   if (bestRow >= 0) {
     const profile = rowProfileView(heatmap, bestRow);
     const inferredBest = pickBestFromProfile(profile);
     bestStrength = Math.max(heatmap.bestVal[bestRow], inferredBest.val);
     bestBin = heatmap.bestBin[bestRow] >= 0 ? heatmap.bestBin[bestRow] : inferredBest.bin;
+    if (bestBin >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
+      bestRange = minR + (bestBin / Math.max(1, heatBins - 1)) * (maxR - minR);
+    }
   }
 
   store.update(s => {
@@ -354,9 +359,8 @@ export async function doScan(): Promise<void> {
 
       const b = bestBin;
       if (b >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
-        const rDet = minR + (b / Math.max(1, heatBins - 1)) * (maxR - minR);
         s.lastTarget.angle = angles[bestRow];
-        s.lastTarget.range = rDet;
+        s.lastTarget.range = bestRange;
         s.lastTarget.strength = bestStrength;
       }
     } else {
@@ -370,6 +374,18 @@ export async function doScan(): Promise<void> {
     s.scanning = false;
     s.status = 'ready';
   });
+
+  const scanTs = Date.now();
+  if (bestRow >= 0 && bestStrength > config.strengthGate && Number.isFinite(bestRange)) {
+    updateTrackingFromMeasurement({
+      range: bestRange,
+      angleDeg: angles[bestRow],
+      strength: bestStrength,
+      timestamp: scanTs,
+    }, scanTs);
+  } else {
+    updateTrackingFromMeasurement(null, scanTs);
+  }
 
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
 

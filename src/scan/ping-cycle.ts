@@ -16,6 +16,7 @@ import { pingAndCaptureSteered } from '../spatial/steering.js';
 import { computeSteeringDelay } from '../spatial/steering.js';
 import { delayAndSum } from '../spatial/rx-beamformer.js';
 import { predictedTau0ForPing } from '../calibration/engine.js';
+import { updateTrackingFromMeasurement } from '../tracking/engine.js';
 import type { PingDetailedResult, RangeProfile, ArrayGeometry } from '../types.js';
 
 let clutterState: ClutterState = { model: null };
@@ -324,6 +325,19 @@ export async function doPingDetailed(
       }
     }
   });
+
+  if (updateHeatRowIndex === null) {
+    if (!isWeak && Number.isFinite(bestR)) {
+      updateTrackingFromMeasurement({
+        range: bestR,
+        angleDeg,
+        strength: bestVal,
+        timestamp: nowMs,
+      }, nowMs);
+    } else {
+      updateTrackingFromMeasurement(null, nowMs);
+    }
+  }
 
   // Debug: log profile stats before emitting
   let profMin = Infinity, profMax = -Infinity, profNonZero = 0;
