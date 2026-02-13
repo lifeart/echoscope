@@ -209,6 +209,7 @@ export async function doPing(
   let bestR = bestPost.range;
 
   const isWeak = bestVal < strengthGate;
+  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} isWeak=${isWeak}`);
   if (isWeak) {
     bestBin = -1;
     bestVal = 0;

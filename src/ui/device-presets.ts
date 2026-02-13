@@ -87,5 +87,5 @@ function applyLaptopScanPreset(): void {
   const showTrace = document.getElementById('showTrace') as HTMLInputElement | null;
   if (showTrace) showTrace.checked = true;
 
-  log('[preset] laptop mode applied: golay, step=3\u00b0, dwell=220ms, listen=180ms, gate=0.003, static suppression=0.70, quality=auto, env pings=6');
+  log(`[preset] laptop mode applied: golay, step=${lp.scanStep}\u00b0, dwell=${lp.scanDwell}ms, listen=${lp.listenMs}ms, gate=${lp.strengthGate}, clutter=${lp.clutterStrength}, quality=${lp.qualityAlgo}`);
 }
