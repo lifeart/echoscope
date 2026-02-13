@@ -81,18 +81,57 @@ export function apertureWeight(distance: number, halfWindow: number, mode: SaftC
   return Math.exp(-0.5 * x * x);
 }
 
-function getFrameForRow(rowIndex: number, rawFrames: RawAngleFrame[], scanAngles: number[]): RawAngleFrame | null {
-  if (rowIndex >= 0 && rowIndex < rawFrames.length) {
-    const byIndex = rawFrames[rowIndex];
-    const angle = scanAngles[rowIndex];
-    if (Math.abs(byIndex.angleDeg - angle) < 1e-9) return byIndex;
+function resolveAngleTolerance(scanAngles: number[]): number {
+  if (scanAngles.length < 2) return 0.25;
+
+  let minStep = Infinity;
+  for (let i = 1; i < scanAngles.length; i++) {
+    const step = Math.abs(scanAngles[i] - scanAngles[i - 1]);
+    if (step > 1e-9 && step < minStep) minStep = step;
   }
 
-  const targetAngle = scanAngles[rowIndex];
-  for (let i = 0; i < rawFrames.length; i++) {
-    if (Math.abs(rawFrames[i].angleDeg - targetAngle) < 1e-9) return rawFrames[i];
+  if (!Number.isFinite(minStep)) return 0.25;
+  return Math.max(1e-4, 0.45 * minStep);
+}
+
+function buildRowFrameLookup(rawFrames: RawAngleFrame[], scanAngles: number[]): Array<RawAngleFrame | null> {
+  const lookup: Array<RawAngleFrame | null> = new Array(scanAngles.length).fill(null);
+  const tol = resolveAngleTolerance(scanAngles);
+
+  for (let row = 0; row < scanAngles.length; row++) {
+    const targetAngle = scanAngles[row];
+    let best: RawAngleFrame | null = null;
+    let bestDiff = Infinity;
+
+    const byIndex = rawFrames[row];
+    if (byIndex) {
+      const diff = Math.abs(byIndex.angleDeg - targetAngle);
+      if (diff <= tol) {
+        lookup[row] = byIndex;
+        continue;
+      }
+      best = byIndex;
+      bestDiff = diff;
+    }
+
+    for (let i = 0; i < rawFrames.length; i++) {
+      const frame = rawFrames[i];
+      const diff = Math.abs(frame.angleDeg - targetAngle);
+      if (diff < bestDiff) {
+        best = frame;
+        bestDiff = diff;
+      }
+    }
+
+    lookup[row] = bestDiff <= tol ? best : null;
   }
-  return null;
+
+  return lookup;
+}
+
+function getFrameForRow(rowIndex: number, rawFrames: RawAngleFrame[], scanAngles: number[]): RawAngleFrame | null {
+  if (rowIndex < 0 || rowIndex >= scanAngles.length) return null;
+  return buildRowFrameLookup(rawFrames, scanAngles)[rowIndex];
 }
 
 function resolvePhaseCenterHz(cfg: SaftConfig, frame: RawAngleFrame): number {
@@ -109,6 +148,7 @@ export function coherentSumCell(
   config: SaftConfig,
   spacing: number,
   speedOfSound: number,
+  rowFrameLookup?: Array<RawAngleFrame | null>,
 ): { intensity: number; coherence: number } {
   if (targetRowIndex < 0 || targetRowIndex >= scanAngles.length) return { intensity: 0, coherence: 0 };
   if (!(Number.isFinite(rangeMeters) && rangeMeters > 0)) return { intensity: 0, coherence: 0 };
@@ -125,7 +165,7 @@ export function coherentSumCell(
   const targetAngle = scanAngles[targetRowIndex];
 
   for (let row = start; row <= end; row++) {
-    const frame = getFrameForRow(row, rawFrames, scanAngles);
+    const frame = rowFrameLookup ? rowFrameLookup[row] : getFrameForRow(row, rawFrames, scanAngles);
     if (!frame) continue;
 
     const sourceAngle = scanAngles[row];
@@ -145,8 +185,10 @@ export function coherentSumCell(
     const rotatedReal = sampled.real * c - sampled.imag * s;
     const rotatedImag = sampled.real * s + sampled.imag * c;
 
-    const weight = apertureWeight(Math.abs(row - targetRowIndex), effectiveHalfWindow, config.window);
-    if (weight <= 0) continue;
+    const baseWeight = apertureWeight(Math.abs(row - targetRowIndex), effectiveHalfWindow, config.window);
+    if (baseWeight <= 0) continue;
+    const quality = Number.isFinite(frame.quality) ? clamp(frame.quality, 0, 1) : 1;
+    const weight = baseWeight * (0.25 + 0.75 * quality);
 
     sumReal += weight * rotatedReal;
     sumImag += weight * rotatedImag;
@@ -195,6 +237,7 @@ export function buildSaftHeatmap(input: SaftBuildInput): SaftHeatmapResult {
   const effectiveConfig: SaftConfig = input.config.enabled
     ? input.config
     : { ...input.config, halfWindow: 0 };
+  const rowFrameLookup = buildRowFrameLookup(input.rawFrames, input.scanAngles);
 
   const rangeSpan = input.maxRange - input.minRange;
   const rangeDen = Math.max(1, bins - 1);
@@ -213,6 +256,7 @@ export function buildSaftHeatmap(input: SaftBuildInput): SaftHeatmapResult {
         effectiveConfig,
         input.spacing,
         input.speedOfSound,
+        rowFrameLookup,
       );
 
       const idx = row * bins + b;

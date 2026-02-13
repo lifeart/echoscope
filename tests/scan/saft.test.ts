@@ -190,4 +190,96 @@ describe('saft core', () => {
     expect(saftWidth).toBeGreaterThan(0);
     expect(saftWidth).toBeLessThanOrEqual(0.5 * baselineWidth);
   });
+
+  it('matches frames with slight angle jitter via tolerant lookup', () => {
+    const angles = [-10, 0, 10];
+    const range = 0.02;
+    const spacing = 0.2;
+    const c = 343;
+    const len = 32;
+
+    const frames: RawAngleFrame[] = angles.map((a) => ({
+      angleDeg: a + 1e-3,
+      sampleRate: 48000,
+      tau0: 0,
+      corrReal: new Float32Array(len).fill(1),
+      corrImag: new Float32Array(len),
+      centerFreqHz: 4000,
+      quality: 1,
+    }));
+
+    const out = coherentSumCell(
+      1,
+      range,
+      frames,
+      angles,
+      makeConfig({ halfWindow: 2, coherenceFloor: 0 }),
+      spacing,
+      c,
+    );
+
+    expect(out.intensity).toBeGreaterThan(0.1);
+    expect(out.coherence).toBeGreaterThan(0.1);
+  });
+
+  it('down-weights low-quality conflicting rows during coherent accumulation', () => {
+    const angles = [-10, 0, 10];
+    const targetRow = 1;
+    const targetAngle = angles[targetRow];
+    const range = 0.02;
+    const spacing = 0.2;
+    const c = 343;
+    const fc = 4000;
+    const len = 32;
+
+    function makeFrame(sourceAngle: number, desiredRotatedReal: number, quality: number): RawAngleFrame {
+      const shift = computeExpectedTauShift(targetAngle, sourceAngle, range, spacing, c);
+      const phase = -2 * Math.PI * fc * shift;
+      const sampleReal = desiredRotatedReal * Math.cos(phase);
+      const sampleImag = -desiredRotatedReal * Math.sin(phase);
+      return {
+        angleDeg: sourceAngle,
+        sampleRate: 48000,
+        tau0: 0,
+        corrReal: new Float32Array(len).fill(sampleReal),
+        corrImag: new Float32Array(len).fill(sampleImag),
+        centerFreqHz: fc,
+        quality,
+      };
+    }
+
+    const baseFrames: RawAngleFrame[] = [
+      makeFrame(-10, 1, 1),
+      makeFrame(0, 1, 1),
+      makeFrame(10, -1, 1),
+    ];
+
+    const lowQualityFrames: RawAngleFrame[] = [
+      baseFrames[0],
+      baseFrames[1],
+      { ...baseFrames[2], quality: 0 },
+    ];
+
+    const fullQualityOut = coherentSumCell(
+      targetRow,
+      range,
+      baseFrames,
+      angles,
+      makeConfig({ halfWindow: 2, window: 'hann', phaseCenterHz: fc, coherenceFloor: 0 }),
+      spacing,
+      c,
+    );
+
+    const lowQualityOut = coherentSumCell(
+      targetRow,
+      range,
+      lowQualityFrames,
+      angles,
+      makeConfig({ halfWindow: 2, window: 'hann', phaseCenterHz: fc, coherenceFloor: 0 }),
+      spacing,
+      c,
+    );
+
+    expect(lowQualityOut.intensity).toBeGreaterThan(fullQualityOut.intensity);
+  });
 });
