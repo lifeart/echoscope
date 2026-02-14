@@ -427,6 +427,7 @@ export async function doPingDetailed(
         corrFinalImag = fallback.corrImag;
         tau0Final = fallback.tau0;
         profFinal = fallback.prof;
+        txEvidence = fallback.txEvidence;
         console.warn(`[doPing:multiplex] fallback->chirp triggered angle=${angleDeg} activeCarrierCount=${demux.debug.activeCarrierCount} conf=${muxConf.confidence.toFixed(3)}`);
       }
     }

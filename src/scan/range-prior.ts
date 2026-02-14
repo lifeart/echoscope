@@ -1,4 +1,5 @@
 import type { TargetState } from '../types.js';
+import { clamp } from '../utils.js';
 
 export type RangePriorSource = 'track' | 'last-target' | 'mid-range';
 
@@ -17,12 +18,6 @@ export interface RangePeakCandidate {
 export interface MapPeakSelection extends RangePeakCandidate {
   score: number;
   zScore: number;
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
-  return v;
 }
 
 function selectBestTrack(targets: TargetState[]): TargetState | null {
@@ -65,7 +60,7 @@ export function buildRangePrior(
       : span * 0.14;
     return {
       center: clamp(track.position.range, minRange, maxRange),
-      sigma: clamp(kalmanSigma, 0.10, 1.2),
+      sigma: clamp(kalmanSigma, 0.10, 1.2 + 0.3 * track.missCount),
       source: 'track',
     };
   }

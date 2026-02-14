@@ -33,13 +33,12 @@ interface TrackCandidate {
   windowStart: number;
 }
 
-let nextTrackId = 1;
-
 export class MultiTargetTracker {
   private tracks: TargetState[] = [];
   private candidates: TrackCandidate[] = [];
   private config: MultiTargetConfig;
   private frameCount = 0;
+  private nextTrackId = 1;
 
   constructor(config: MultiTargetConfig = DEFAULT_MT_CONFIG) {
     this.config = config;
@@ -118,7 +117,7 @@ export class MultiTargetTracker {
     for (const cand of promoted) {
       if (this.tracks.length >= this.config.maxTracks) break;
       const lastMeas = cand.measurements[cand.measurements.length - 1];
-      const track = createTarget(nextTrackId++, lastMeas);
+      const track = createTarget(this.nextTrackId++, lastMeas);
       this.tracks.push(track);
     }
 
@@ -127,7 +126,7 @@ export class MultiTargetTracker {
 
     // Reset ID counter when all tracks are dropped to prevent unbounded growth
     if (this.tracks.length === 0 && this.candidates.length === 0) {
-      nextTrackId = 1;
+      this.nextTrackId = 1;
     }
 
     return this.getTracks();
@@ -137,6 +136,6 @@ export class MultiTargetTracker {
     this.tracks = [];
     this.candidates = [];
     this.frameCount = 0;
-    nextTrackId = 1;
+    this.nextTrackId = 1;
   }
 }

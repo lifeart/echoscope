@@ -42,7 +42,10 @@ function identity4x4(): Float64Array {
 // Invert 2x2 matrix [a b; c d]
 function inv2x2(a: number, b: number, c: number, d: number): [number, number, number, number] {
   const det = a * d - b * c;
-  if (Math.abs(det) < 1e-15) return [1, 0, 0, 1]; // fallback to identity
+  if (Math.abs(det) < 1e-15) {
+    console.warn('[kalman] inv2x2: near-singular innovation covariance, falling back to identity');
+    return [1, 0, 0, 1];
+  }
   const inv = 1 / det;
   return [d * inv, -b * inv, -c * inv, a * inv];
 }
@@ -99,7 +102,7 @@ export function predict(target: TargetState, dt: number, config: KalmanConfig = 
   F[0 * 4 + 2] = dtSafe; // range += rangeRate * dt
   F[1 * 4 + 3] = dtSafe; // angle += angleRate * dt
 
-  // Process noise Q — continuous white-noise jerk model
+  // Process noise Q — piecewise-constant white-noise acceleration model
   // Q block for [pos, vel] = q * [[dt³/3, dt²/2],[dt²/2, dt]]
   const Q = new Float64Array(16);
   const qr = config.processNoiseRange;
