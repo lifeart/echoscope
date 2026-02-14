@@ -8,6 +8,7 @@ export function buildRangeProfileFromCorrelation(
   maxR: number,
   sampleRate: number,
   heatBins: number,
+  debugLog = true,
 ): Float32Array {
   if (heatBins <= 0) return new Float32Array(0);
   const prof = new Float32Array(heatBins);
@@ -64,7 +65,9 @@ export function buildRangeProfileFromCorrelation(
     if (prof[b] > 1e-15) profNonZero++;
   }
 
-  console.log(`[buildProfile] tau0=${tau0.toFixed(6)} minTau=${minTau.toFixed(6)} maxTau=${maxTau.toFixed(6)} iRange=[${iMinExpected}..${iMaxExpected}] corrLen=${corr.length} samplesInRange=${inRange} corrAbsMaxInRange=${corrAbsMax.toExponential(3)} corrAbsMaxAll=${corrAbsMaxAll.toExponential(3)} corrAbsMaxIdx=${corrAbsMaxIdx} profMax=${profMax.toExponential(3)} profNonZero=${profNonZero}/${heatBins}`);
+  if (debugLog) {
+    console.log(`[buildProfile] tau0=${tau0.toFixed(6)} minTau=${minTau.toFixed(6)} maxTau=${maxTau.toFixed(6)} iRange=[${iMinExpected}..${iMaxExpected}] corrLen=${corr.length} samplesInRange=${inRange} corrAbsMaxInRange=${corrAbsMax.toExponential(3)} corrAbsMaxAll=${corrAbsMaxAll.toExponential(3)} corrAbsMaxIdx=${corrAbsMaxIdx} profMax=${profMax.toExponential(3)} profNonZero=${profNonZero}/${heatBins}`);
+  }
 
   return prof;
 }

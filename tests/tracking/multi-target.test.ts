@@ -54,4 +54,17 @@ describe('MultiTargetTracker', () => {
 
     expect(tracker.getTracks().length).toBe(0);
   });
+
+  it('initiates track with moderate range jitter', () => {
+    const tracker = new MultiTargetTracker();
+
+    const meas1: Measurement = { range: 0.3, angleDeg: 0, strength: 0.8, timestamp: 0 };
+    const meas2: Measurement = { range: 1.12, angleDeg: 0, strength: 0.7, timestamp: 0.1 };
+
+    let tracks = tracker.step([meas1], 0.1);
+    expect(tracks.length).toBe(0);
+
+    tracks = tracker.step([meas2], 0.1);
+    expect(tracks.length).toBe(1);
+  });
 });

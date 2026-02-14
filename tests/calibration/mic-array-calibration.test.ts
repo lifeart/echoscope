@@ -112,4 +112,28 @@ describe('buildMicArrayCalibrationFromRepeats', () => {
     const nextCh1 = out!.channels.find(ch => ch.channelIndex === 1)!;
     expect(nextCh1.relativeDelaySec).toBeCloseTo(prevCh1.relativeDelaySec, 8);
   });
+
+  it('keeps channel valid with one deviant repeat when timing is stable', () => {
+    const out = buildMicArrayCalibrationFromRepeats({
+      ...baseParams,
+      repeatsByChannel: [
+        [
+          mkRepeat(0.00120, 0.00190, 0.32),
+          mkRepeat(0.00150, 0.00158, 0.32),
+          mkRepeat(0.00154, 0.00088, 0.32),
+        ],
+        [
+          mkRepeat(0.00121, 0.00191, 0.32),
+          mkRepeat(0.00149, 0.00157, 0.32),
+          mkRepeat(0.00153, 0.00089, 0.32),
+        ],
+      ],
+      nowMs: 500,
+    });
+
+    expect(out).toBeDefined();
+    expect(out!.channels.length).toBe(2);
+    expect(out!.channels[0].valid).toBe(true);
+    expect(out!.channels[1].valid).toBe(true);
+  });
 });

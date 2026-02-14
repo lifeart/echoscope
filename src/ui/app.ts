@@ -171,6 +171,7 @@ export function initApp(): void {
     try {
       readConfigFromDOM();
       await calibrateRefinedWithSanity();
+      syncDOMFromConfig();
       renderCalibInfo();
       const calib = store.get().calibration;
       if (calib?.sanity.have && calib.sanity.curveL && calib.sanity.curveR) {
@@ -291,7 +292,7 @@ export function initApp(): void {
     'micArraySpacing', 'gain',
     'scanStep', 'scanPasses',
     'distributedEnabled', 'distributedCaptureTimeoutMs',
-    'strengthGate', 'confidenceGate',
+    'strengthGate', 'confidenceGate', 'cfarPfa',
     'scanClutterOn', 'scanClutterStrength',
     'qualityAlgo', 'scanAggregateMode', 'scanTrimFraction',
     'temporalIirAlpha', 'outlierHistoryN', 'continuityBins',

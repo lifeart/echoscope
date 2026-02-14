@@ -1,12 +1,23 @@
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import { clamp, sleep } from '../utils.js';
+import { clamp, sleep, signalEnergy, energyNormalize } from '../utils.js';
 import { doPingDetailed, resetClutter } from './ping-cycle.js';
 import { createHeatmap, updateHeatmapRow, aggregateProfiles, crossAngleSmooth } from './heatmap-data.js';
 import { buildSaftHeatmap } from './saft.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
+import { fftCorrelateComplex } from '../dsp/fft-correlate.js';
+import { estimateCorrelationEvidence } from '../dsp/correlation-evidence.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
+import { applyQualityAlgorithms } from '../dsp/quality.js';
+import { caCfar } from '../dsp/cfar.js';
+import { findDirectPathTau } from '../calibration/direct-path.js';
+import { predictedTau0ForPing } from '../calibration/engine.js';
 import { computeProfileConfidence, smooth3 } from './confidence.js';
+import { createProbe } from '../signal/probe-factory.js';
+import { getSampleRate } from '../audio/engine.js';
+import { pingAndCaptureOneSide } from '../spatial/steering.js';
+import { buildRangePrior } from './range-prior.js';
+import { buildJointHeatmapFromLR } from './joint-lr.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
@@ -14,12 +25,19 @@ const perAngleProfileHistory = new Map<number, Float32Array[]>();
 const perAngleCoherentHistory = new Map<number, RawAngleFrame[]>();
 let lastStableDirectionAngle: number | null = null;
 
+interface JointAnglePrior {
+  expectedAngleDeg: number | undefined;
+  sigmaDeg: number;
+  source: 'none' | 'history' | 'track' | 'blended';
+  trackConfidence: number;
+}
+
 function median(values: number[]): number {
   if (values.length === 0) return 0;
-  values.sort((a, b) => a - b);
-  const mid = Math.floor(values.length / 2);
-  if (values.length % 2 === 0) return 0.5 * (values[mid - 1] + values[mid]);
-  return values[mid];
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
+  return sorted[mid];
 }
 
 function medianProfile(profiles: Float32Array[]): Float32Array {
@@ -164,6 +182,162 @@ export function resetScanStabilityState(): void {
   lastStableDirectionAngle = null;
 }
 
+function resetScanFrameHistory(): void {
+  perAngleProfileHistory.clear();
+  perAngleCoherentHistory.clear();
+}
+
+function resolveJointAnglePrior(
+  targets: ReturnType<typeof store.get>['targets'],
+  historyAngleDeg: number | null,
+): JointAnglePrior {
+  const historyAngle = Number.isFinite(historyAngleDeg ?? NaN) ? (historyAngleDeg as number) : undefined;
+
+  let bestTrackAngle: number | undefined;
+  let bestTrackConfidence = 0;
+  let bestTrackMiss = 0;
+  for (const target of targets) {
+    const angle = target.position?.angleDeg;
+    if (!Number.isFinite(angle)) continue;
+    const conf = clamp(target.confidence, 0, 1);
+    const missPenalty = clamp(target.missCount / 8, 0, 1);
+    const score = conf * (1 - 0.55 * missPenalty);
+    if (score > bestTrackConfidence) {
+      bestTrackConfidence = score;
+      bestTrackAngle = angle;
+      bestTrackMiss = target.missCount;
+    }
+  }
+
+  if (bestTrackAngle == null && historyAngle == null) {
+    return { expectedAngleDeg: undefined, sigmaDeg: 30, source: 'none', trackConfidence: 0 };
+  }
+
+  if (bestTrackAngle == null) {
+    return { expectedAngleDeg: historyAngle, sigmaDeg: 24, source: 'history', trackConfidence: 0 };
+  }
+
+  const conf = clamp(bestTrackConfidence, 0, 1);
+  const missPenalty = clamp(bestTrackMiss / 6, 0, 1);
+  const sigmaTrack = clamp(28 - conf * 14 + missPenalty * 8, 10, 34);
+
+  if (historyAngle == null) {
+    return {
+      expectedAngleDeg: bestTrackAngle,
+      sigmaDeg: sigmaTrack,
+      source: 'track',
+      trackConfidence: conf,
+    };
+  }
+
+  const trackWeight = clamp(0.45 + 0.45 * conf - 0.20 * missPenalty, 0.20, 0.90);
+  const expectedAngleDeg = bestTrackAngle * trackWeight + historyAngle * (1 - trackWeight);
+  const sigmaDeg = clamp(sigmaTrack * (1 - 0.10 * trackWeight), 10, 30);
+  return {
+    expectedAngleDeg,
+    sigmaDeg,
+    source: 'blended',
+    trackConfidence: conf,
+  };
+}
+
+async function captureOneSideRangeProfile(
+  side: 'L' | 'R',
+  ref: Float32Array,
+  gain: number,
+  listenMs: number,
+  minR: number,
+  maxR: number,
+  c: number,
+  heatBins: number,
+  lockStrength: number,
+  sampleRate: number,
+): Promise<Float32Array> {
+  const capture = await pingAndCaptureOneSide(ref, side, gain, listenMs);
+  const corr = fftCorrelateComplex(capture.micWin, ref, sampleRate).correlation;
+  const txEvidence = estimateCorrelationEvidence(corr, capture.micWin, ref, {
+    minPeakNorm: 0.012,
+    minProminence: 1.25,
+    strongPeakNorm: 0.026,
+  });
+  const txWeakPass = txEvidence.peakNorm >= 0.009 && txEvidence.prominence >= 1.12;
+  if (!txEvidence.pass && !txWeakPass) {
+    console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txPass=${txEvidence.pass} -> zero profile`);
+    return new Float32Array(heatBins);
+  }
+  energyNormalize(corr, signalEnergy(ref));
+
+  const predictedTau = predictedTau0ForPing(capture.delay, capture.delay);
+  const tau0 = findDirectPathTau(corr, predictedTau, lockStrength, sampleRate);
+  let profile = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR, sampleRate, heatBins);
+
+  const algo = store.get().config.qualityAlgo;
+  profile = applyQualityAlgorithms(profile, algo === 'auto' ? 'balanced' : algo);
+  return profile;
+}
+
+async function captureOneSideRangeProfileGolay(
+  side: 'L' | 'R',
+  a: Float32Array,
+  b: Float32Array,
+  gapMs: number,
+  gain: number,
+  listenMs: number,
+  minR: number,
+  maxR: number,
+  c: number,
+  heatBins: number,
+  lockStrength: number,
+  sampleRate: number,
+): Promise<Float32Array> {
+  const capA = await pingAndCaptureOneSide(a, side, gain, listenMs);
+  if (gapMs > 0) await sleep(gapMs);
+  const capB = await pingAndCaptureOneSide(b, side, gain, listenMs);
+
+  const corrA = fftCorrelateComplex(capA.micWin, a, sampleRate).correlation;
+  const corrB = fftCorrelateComplex(capB.micWin, b, sampleRate).correlation;
+  const txEvidenceA = estimateCorrelationEvidence(corrA, capA.micWin, a, {
+    minPeakNorm: 0.010,
+    minProminence: 1.20,
+    strongPeakNorm: 0.022,
+  });
+  const txEvidenceB = estimateCorrelationEvidence(corrB, capB.micWin, b, {
+    minPeakNorm: 0.010,
+    minProminence: 1.20,
+    strongPeakNorm: 0.022,
+  });
+  const txPassA = txEvidenceA.pass || (txEvidenceA.peakNorm >= 0.008 && txEvidenceA.prominence >= 1.10);
+  const txPassB = txEvidenceB.pass || (txEvidenceB.peakNorm >= 0.008 && txEvidenceB.prominence >= 1.10);
+  if (!txPassA && !txPassB) {
+    console.log(`[scan:golayEvidence] side=${side} txA=${txPassA} txB=${txPassB} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} -> zero profile`);
+    return new Float32Array(heatBins);
+  }
+  const len = Math.min(corrA.length, corrB.length);
+  const corr = new Float32Array(len);
+  for (let i = 0; i < len; i++) corr[i] = corrA[i] + corrB[i];
+  energyNormalize(corr, signalEnergy(a) + signalEnergy(b));
+
+  const predictedTau = predictedTau0ForPing(capA.delay, capA.delay);
+  const tau0 = findDirectPathTau(corr, predictedTau, lockStrength, sampleRate);
+  let profile = buildRangeProfileFromCorrelation(corr, tau0, c, minR, maxR, sampleRate, heatBins);
+
+  const algo = store.get().config.qualityAlgo;
+  profile = applyQualityAlgorithms(profile, algo === 'auto' ? 'balanced' : algo);
+  return profile;
+}
+
+function selectBestRowByScores(scores: Float32Array): number {
+  let bestRow = -1;
+  let bestScore = 0;
+  for (let i = 0; i < scores.length; i++) {
+    if (scores[i] > bestScore) {
+      bestScore = scores[i];
+      bestRow = i;
+    }
+  }
+  return bestRow;
+}
+
 function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null {
   if (frames.length === 0) return null;
   if (frames.length === 1) return frames[0];
@@ -287,7 +461,7 @@ export function applySaftHeatmapIfEnabled(
   return true;
 }
 
-export async function doScan(): Promise<void> {
+async function doScanTxSteeringLegacy(): Promise<void> {
   const config = store.get().config;
   store.set('scanning', true);
   store.set('status', 'scanning');
@@ -306,6 +480,12 @@ export async function doScan(): Promise<void> {
   const heatmap = createHeatmap(angles, heatBins);
   const rawFrames: RawAngleFrame[] = [];
   store.set('heatmap', heatmap);
+  // Reset lastTarget so per-angle best-so-far tracking starts fresh
+  store.update(s => {
+    s.lastTarget.angle = NaN;
+    s.lastTarget.range = NaN;
+    s.lastTarget.strength = 0;
+  });
   resetClutter();
 
   for (let i = 0; i < angles.length; i++) {
@@ -470,6 +650,247 @@ export async function doScan(): Promise<void> {
 
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
 
+  bus.emit('scan:complete', undefined as unknown as void);
+}
+
+export async function doScan(): Promise<void> {
+  resetScanFrameHistory();
+  const config = store.get().config;
+
+  const sampleRate = getSampleRate();
+  const probe = createProbe(config.probe, sampleRate);
+
+  if (probe.type === 'golay') {
+    if (!probe.a || !probe.b) {
+      await doScanTxSteeringLegacy();
+      return;
+    }
+  } else if (!probe.ref) {
+    await doScanTxSteeringLegacy();
+    return;
+  }
+
+  store.set('scanning', true);
+  store.set('status', 'scanning');
+
+  const step = Math.max(1, config.scanStep);
+  const dwell = Math.max(30, config.scanDwell);
+  const minR = config.minRange;
+  const maxR = config.maxRange;
+  const heatBins = config.heatBins;
+  const passes = clamp(config.scanPasses, 1, 8);
+  const c = config.speedOfSound;
+  const gain = config.gain;
+  const listenMs = config.listenMs;
+  const lockStrength = (store.get().calibration?.valid && config.calibration.useCalib)
+    ? store.get().calibration!.quality
+    : 0;
+
+  const angles: number[] = [];
+  for (let a = -60; a <= 60; a += step) angles.push(a);
+
+  const heatmap = createHeatmap(angles, heatBins);
+  store.set('heatmap', heatmap);
+  resetClutter();
+
+  const leftProfiles: Float32Array[] = [];
+  const rightProfiles: Float32Array[] = [];
+  const probeLen = probe.ref
+    ? probe.ref.length
+    : Math.max(probe.a?.length ?? 0, probe.b?.length ?? 0);
+  const waveMs = (probeLen / Math.max(1, sampleRate)) * 1000;
+  const maxEchoMs = (2 * maxR / Math.max(1e-6, c)) * 1000;
+  const sideGapMs = Math.max(40, Math.ceil(waveMs + maxEchoMs + 8));
+  const golayGapMs = probe.type === 'golay' ? Math.max(0, probe.gapMs ?? 12) : 0;
+
+  for (let p = 0; p < passes; p++) {
+    if (!store.get().scanning) break;
+
+    bus.emit('scan:step', {
+      angleDeg: 0,
+      index: p * 2,
+      total: passes * 2,
+      pass: p,
+      totalPasses: passes,
+    });
+    const left = probe.type === 'golay'
+      ? await captureOneSideRangeProfileGolay(
+        'L',
+        probe.a!,
+        probe.b!,
+        golayGapMs,
+        gain,
+        listenMs,
+        minR,
+        maxR,
+        c,
+        heatBins,
+        lockStrength,
+        sampleRate,
+      )
+      : await captureOneSideRangeProfile(
+        'L', probe.ref!, gain, listenMs, minR, maxR, c, heatBins, lockStrength, sampleRate,
+      );
+    leftProfiles.push(left);
+
+    if (!store.get().scanning) break;
+    await sleep(sideGapMs);
+
+    bus.emit('scan:step', {
+      angleDeg: 0,
+      index: p * 2 + 1,
+      total: passes * 2,
+      pass: p,
+      totalPasses: passes,
+    });
+    const right = probe.type === 'golay'
+      ? await captureOneSideRangeProfileGolay(
+        'R',
+        probe.a!,
+        probe.b!,
+        golayGapMs,
+        gain,
+        listenMs,
+        minR,
+        maxR,
+        c,
+        heatBins,
+        lockStrength,
+        sampleRate,
+      )
+      : await captureOneSideRangeProfile(
+        'R', probe.ref!, gain, listenMs, minR, maxR, c, heatBins, lockStrength, sampleRate,
+      );
+    rightProfiles.push(right);
+
+    if (p < passes - 1) await sleep(dwell);
+  }
+
+  if (!store.get().scanning) {
+    const state = store.get();
+    store.set('status', state.audio.context ? 'ready' : 'idle');
+    bus.emit('scan:complete', undefined as unknown as void);
+    return;
+  }
+
+  if (leftProfiles.length === 0 || rightProfiles.length === 0) {
+    store.set('scanning', false);
+    store.set('status', 'ready');
+    bus.emit('scan:complete', undefined as unknown as void);
+    return;
+  }
+
+  const aggregatedL = aggregateProfiles(leftProfiles, {
+    mode: config.scanAggregateMode,
+    trimFraction: config.scanTrimFraction,
+  }).averaged;
+  const aggregatedR = aggregateProfiles(rightProfiles, {
+    mode: config.scanAggregateMode,
+    trimFraction: config.scanTrimFraction,
+  }).averaged;
+
+  const stateBeforeJoint = store.get();
+  const prior = buildRangePrior(
+    stateBeforeJoint.targets,
+    stateBeforeJoint.lastTarget.range,
+    minR,
+    maxR,
+  );
+  const anglePrior = resolveJointAnglePrior(stateBeforeJoint.targets, lastStableDirectionAngle);
+
+  const joint = buildJointHeatmapFromLR({
+    profileL: aggregatedL,
+    profileR: aggregatedR,
+    anglesDeg: angles,
+    minRange: minR,
+    maxRange: maxR,
+    speakerSpacingM: config.spacing,
+    priorRangeM: prior?.center,
+    priorSigmaM: prior?.sigma,
+    prevAngleDeg: anglePrior.expectedAngleDeg,
+    angleSigmaDeg: anglePrior.sigmaDeg,
+    edgeMaskBins: Math.max(3, Math.floor(heatBins * 0.03)),
+  });
+
+  heatmap.data.set(joint.data);
+  heatmap.display.fill(0);
+  heatmap.bestBin.set(joint.bestBin);
+  heatmap.bestVal.set(joint.bestVal);
+
+  if (config.crossAngleSmooth?.enabled) {
+    crossAngleSmooth(heatmap, config.crossAngleSmooth.radius ?? 1);
+  }
+
+  // Apply CFAR + confidence gating per row to reject false-alarm rows.
+  // The legacy TX-steering path gets this through doPingDetailed; the L/R
+  // path skipped it entirely, making it more prone to false positives.
+  const rowScores = new Float32Array(angles.length);
+  for (let i = 0; i < angles.length; i++) {
+    const profile = rowProfileView(heatmap, i);
+    const bestBinI = heatmap.bestBin[i] >= 0 ? heatmap.bestBin[i] : pickBestFromProfile(profile).bin;
+    const bestValI = heatmap.bestVal[i] > 0 ? heatmap.bestVal[i] : pickBestFromProfile(profile).val;
+    if (bestBinI < 0 || bestValI <= config.strengthGate) continue;
+
+    const confMetrics = computeProfileConfidence(profile, bestBinI, bestValI);
+    if (confMetrics.confidence < config.confidenceGate) continue;
+
+    const cfarRes = caCfar(profile, config.cfar);
+    const cfarOk = cfarRes.detections[bestBinI] === 1;
+    if (!cfarOk) continue;
+
+    rowScores[i] = bestValI * confMetrics.confidence;
+  }
+  const rowCandidate = selectBestRowByScores(rowScores);
+  const bestRow = applyAngularContinuity(rowCandidate, angles, rowScores);
+
+  let bestStrength = 0;
+  let bestBin = -1;
+  let bestRange = NaN;
+  if (bestRow >= 0) {
+    const profile = rowProfileView(heatmap, bestRow);
+    const inferredBest = pickBestFromProfile(profile);
+    bestStrength = Math.max(heatmap.bestVal[bestRow], inferredBest.val);
+    bestBin = heatmap.bestBin[bestRow] >= 0 ? heatmap.bestBin[bestRow] : inferredBest.bin;
+    if (bestBin >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
+      bestRange = minR + (bestBin / Math.max(1, heatBins - 1)) * (maxR - minR);
+    }
+  }
+
+  store.update(s => {
+    if (bestRow >= 0 && bestStrength > config.strengthGate) {
+      s.lastDirection.angle = angles[bestRow];
+      s.lastDirection.strength = bestStrength;
+
+      if (bestBin >= 0 && Number.isFinite(bestRange)) {
+        s.lastTarget.angle = angles[bestRow];
+        s.lastTarget.range = bestRange;
+        s.lastTarget.strength = bestStrength;
+      }
+    } else {
+      s.lastDirection.angle = NaN;
+      s.lastDirection.strength = 0;
+      s.lastTarget.angle = NaN;
+      s.lastTarget.range = NaN;
+      s.lastTarget.strength = 0;
+    }
+
+    s.scanning = false;
+    s.status = 'ready';
+  });
+
+  const scanTs = Date.now();
+  if (bestRow >= 0 && bestStrength > config.strengthGate && Number.isFinite(bestRange)) {
+    updateTrackingFromMeasurement({
+      range: bestRange,
+      angleDeg: angles[bestRow],
+      strength: bestStrength,
+      timestamp: scanTs,
+    }, scanTs);
+  } else {
+    updateTrackingFromMeasurement(null, scanTs);
+  }
+
+  if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
   bus.emit('scan:complete', undefined as unknown as void);
 }
 

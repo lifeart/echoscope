@@ -119,4 +119,16 @@ describe('findDirectPathTau', () => {
     // So it should fall back to the global peak
     expect(Math.abs(tau - globalPeakSample / sr)).toBeLessThan(5 / sr);
   });
+
+  it('with strong lock keeps local path despite stronger distant peak', () => {
+    const sr = 48000;
+    const corr = new Float32Array(sr * 0.06);
+    const localSample = 620;
+    const globalPeakSample = 2100;
+    corr[localSample] = 0.05;
+    corr[globalPeakSample] = 1.0;
+
+    const tau = findDirectPathTau(corr, localSample / sr, 0.95, sr);
+    expect(Math.abs(tau - localSample / sr)).toBeLessThan(25 / sr);
+  });
 });

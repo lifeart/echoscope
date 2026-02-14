@@ -79,7 +79,7 @@ const defaultConfig: AppConfig = {
     useInCalibration: false,
   },
   subtractionBackoff: { enabled: true, collapseThreshold: 0.24, peakDropThreshold: 0.30 },
-  calibration: { repeats: 3, gapMs: 120, useCalib: true, multiband: true },
+  calibration: { repeats: 5, gapMs: 120, useCalib: true, multiband: true },
   devicePreset: 'custom',
   heatBins: DEFAULT_HEAT_BINS,
   speedOfSound: SPEED_OF_SOUND,

@@ -5,9 +5,11 @@ import { clamp } from '../utils.js';
 import { fftCorrelate } from '../dsp/fft-correlate.js';
 import { absMaxNormalize } from '../dsp/normalize.js';
 import { measureRoundTripLatency } from '../audio/latency.js';
-import { findPeakAbs } from '../dsp/peak.js';
+import { findPeakAbs, estimateBestFromProfile } from '../dsp/peak.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { applyQualityAlgorithms } from '../dsp/quality.js';
+import { caCfar, cfarAlpha } from '../dsp/cfar.js';
+import { computeProfileConfidence } from '../scan/confidence.js';
 import {
   createNoiseKalmanState,
   guardBackoff,
@@ -16,7 +18,7 @@ import {
 } from '../dsp/noise-floor-kalman.js';
 import { genGolayChipped } from '../signal/golay.js';
 import { pingAndCaptureOneSide, pingAndCaptureSteered } from '../spatial/steering.js';
-import { getSampleRate } from '../audio/engine.js';
+import { computeListenSamples, getRingBuffer, getSampleRate } from '../audio/engine.js';
 import { assessMonoDecision } from './mono-detect.js';
 import { computeCalibQuality } from './quality-score.js';
 import { computeEnvBaseline } from './env-baseline.js';
@@ -50,6 +52,108 @@ interface SolvedMicGeometry {
   micX: number;
   rL: number;
   rR: number;
+}
+
+interface AdaptiveThresholdComputationInput {
+  profiles: Float32Array[];
+  minR: number;
+  maxR: number;
+  strengthGate: number;
+  confidenceGate: number;
+  cfar: {
+    guardCells: number;
+    trainingCells: number;
+    pfa: number;
+    minThreshold: number;
+  };
+}
+
+function percentileSorted(sorted: number[], q: number): number {
+  if (sorted.length === 0) return NaN;
+  const qq = clamp(q, 0, 1);
+  const pos = qq * (sorted.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  const t = pos - lo;
+  return sorted[lo] * (1 - t) + sorted[hi] * t;
+}
+
+export function deriveAdaptiveDetectionThresholds(
+  input: AdaptiveThresholdComputationInput,
+): CalibrationResult['adaptiveDetection'] | undefined {
+  if (input.profiles.length < 2) return undefined;
+
+  const bestVals: number[] = [];
+  const confidences: number[] = [];
+  const cfarRatios: number[] = [];
+
+  for (const profile of input.profiles) {
+    if (profile.length === 0) continue;
+    const best = estimateBestFromProfile(profile, input.minR, input.maxR);
+    if (!(best.bin >= 0) || !(best.val > 0)) continue;
+
+    const conf = computeProfileConfidence(profile, best.bin, best.val).confidence;
+    const cfar = caCfar(profile, input.cfar);
+    const threshold = best.bin < cfar.thresholds.length ? cfar.thresholds[best.bin] : NaN;
+    const ratio = Number.isFinite(threshold) && threshold > 0
+      ? best.val / threshold
+      : NaN;
+
+    bestVals.push(best.val);
+    confidences.push(conf);
+    if (Number.isFinite(ratio) && ratio > 0) cfarRatios.push(ratio);
+  }
+
+  const sampleCount = bestVals.length;
+  if (sampleCount < 2) return undefined;
+
+  const bestSorted = [...bestVals].sort((a, b) => a - b);
+  const confSorted = [...confidences].sort((a, b) => a - b);
+  const ratioSorted = [...cfarRatios].sort((a, b) => a - b);
+
+  const bestP25 = percentileSorted(bestSorted, 0.25);
+  const confP25 = percentileSorted(confSorted, 0.25);
+  const ratioMed = ratioSorted.length > 0 ? percentileSorted(ratioSorted, 0.5) : NaN;
+
+  const weakEnvironment =
+    (Number.isFinite(ratioMed) && ratioMed < 1.25)
+    || confP25 < input.confidenceGate * 0.8;
+
+  const strengthCap = weakEnvironment ? input.strengthGate * 0.82 : input.strengthGate;
+  const strengthGate = clamp(
+    Math.min(strengthCap, Math.max(2e-5, bestP25 * 0.86)),
+    2e-5,
+    0.5,
+  );
+  const confidenceScale = weakEnvironment ? 0.75 : 0.90;
+  const confidenceFloor = weakEnvironment ? 0.05 : 0.06;
+  const confidenceGate = clamp(
+    Math.min(input.confidenceGate, Math.max(confidenceFloor, confP25 * confidenceScale)),
+    confidenceFloor,
+    0.95,
+  );
+
+  let cfarPfa = input.cfar.pfa;
+  if (Number.isFinite(ratioMed) && ratioMed > 0) {
+    const trainCount = Math.max(2, 2 * Math.max(1, input.cfar.trainingCells));
+    const alphaCurrent = cfarAlpha(trainCount, input.cfar.pfa);
+    const targetRatio = 1.05;
+    if (alphaCurrent > 0 && ratioMed < targetRatio) {
+      const alphaScale = clamp(ratioMed / targetRatio, 0.22, 1);
+      const alphaNew = Math.max(0.05, alphaCurrent * alphaScale);
+      const pfaFromAlpha = Math.pow(1 + alphaNew / trainCount, -trainCount);
+      cfarPfa = clamp(Math.max(input.cfar.pfa, pfaFromAlpha), input.cfar.pfa, 0.2);
+    }
+  }
+
+  return {
+    strengthGate,
+    confidenceGate,
+    cfarPfa,
+    sampleCount,
+    source: 'calibration-env',
+  };
 }
 
 /**
@@ -232,11 +336,17 @@ export function buildMicArrayCalibrationFromRepeats(params: BuildMicArrayCalibra
       monoLikely: false,
     });
 
+    const chMaxMadMs = Number.isFinite(chMadTauL) && Number.isFinite(chMadTauR)
+      ? 1000 * Math.max(chMadTauL, chMadTauR) : Infinity;
+    const chStable = chMaxMadMs < 2.0;
+    const chMicPlausible = Math.abs(chSolvedMic.micX) < d * 3;
+
     const chValid =
       chCluster.length >= 2 &&
       chMedPkL > 0.12 &&
       chMedPkR > 0.12 &&
-      chDeltaConsistency < 0.5 &&
+      chStable &&
+      chMicPlausible &&
       chQuality > 0.12;
 
     channelCalibrations.push({
@@ -342,6 +452,20 @@ function golaySumCorrelation(
 
   absMaxNormalize(sum);
   return { corr: sum, rawPeak };
+}
+
+async function captureAmbientWindow(
+  listenMs: number,
+  refLength: number,
+  sampleRate: number,
+): Promise<Float32Array | null> {
+  const ring = getRingBuffer();
+  if (!ring) return null;
+  const waitMs = Math.max(60, listenMs * 0.75);
+  await sleep(waitMs);
+  const end = ring.position;
+  const listenSamples = computeListenSamples(listenMs, refLength, sampleRate);
+  return ring.read(end, listenSamples);
 }
 
 function earlyPeakFromCorrelation(
@@ -745,6 +869,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   // RepeatMeasurement is now exported at module scope
   const allRepeats: RepeatMeasurement[] = [];
   const perChannelRepeats: RepeatMeasurement[][] = [];
+  const repeatRawPeaks: number[] = [];
 
   console.debug(`[calib] TDOA gate: maxTDOA=${(maxTDOA * 1000).toFixed(3)}ms (d/c=${(d / c * 1000).toFixed(3)}ms + ${(2 / sr * 1000).toFixed(3)}ms margin) pilotAnchor=${(pilotTau * 1000).toFixed(3)}ms pilotWin=${(PILOT_WIN * 1000).toFixed(3)}ms`);
 
@@ -762,6 +887,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(Math.max(0, gapMs));
     const capRB = await pingAndCaptureOneSide(b, 'R', gain, listenMs);
     const resR = golaySumCorrelation(capRA.micWin, capRB.micWin, a, b, sr);
+    repeatRawPeaks.push(Math.max(resL.rawPeak, resR.rawPeak));
 
     const channelCount = Math.min(
       capLA.micChannels.length,
@@ -999,6 +1125,11 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   let envBaselineFiltered: Float32Array | null = null;
   let envBaseline: Float32Array | null = null;
   let envBaselinePings = 0;
+  let ambientNoisePings = 0;
+  let ambientNoiseRawPeakMedian = NaN;
+  let ambientNoiseRawPeakMad = NaN;
+  let txContrast = Infinity;
+  const adaptiveProfiles: Float32Array[] = [];
   if (extraCalPings > 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
     const profiles: Float32Array[] = [];
     const filteredProfiles: Float32Array[] = [];
@@ -1006,6 +1137,7 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     let noiseKalmanState = useNoiseKalmanInCalibration
       ? createNoiseKalmanState(heatBins, config.noiseKalman.minFloor)
       : null;
+    const envRawPeaks: number[] = [];
 
     for (let i = 0; i < extraCalPings; i++) {
       // Capture at theta=0 using steered stereo Golay (both speakers active)
@@ -1013,10 +1145,12 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       await sleep(Math.max(0, gapMs));
       const cB = await pingAndCaptureSteered(b, 0, gain, listenMs);
       const envRes = golaySumCorrelation(cA.micWin, cB.micWin, a, b, sr);
+      envRawPeaks.push(envRes.rawPeak);
       const envTau0 = 0.5 * (medTauL + medTauR);
       let prof = buildRangeProfileFromCorrelation(envRes.corr, envTau0, c, minR, maxR, sr, heatBins);
       prof = applyQualityAlgorithms(prof, 'balanced');
       profiles.push(prof);
+      adaptiveProfiles.push(prof);
 
       if (noiseKalmanState && noiseKalmanState.x.length === prof.length) {
         updateNoiseKalman(noiseKalmanState, prof, {
@@ -1041,13 +1175,42 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     envBaselineFiltered = filteredProfiles.length > 0 ? computeEnvBaseline(filteredProfiles, heatBins) : null;
     envBaseline = envBaselineFiltered ?? envBaselineRaw;
     envBaselinePings = profiles.length;
+
+    const ambientCaptureCount = Math.max(2, Math.min(5, Math.floor(extraCalPings * 0.5)));
+    const ambientRawPeaks: number[] = [];
+    for (let i = 0; i < ambientCaptureCount; i++) {
+      const ambientA = await captureAmbientWindow(listenMs, a.length, sr);
+      await sleep(Math.max(0, gapMs));
+      const ambientB = await captureAmbientWindow(listenMs, b.length, sr);
+      if (!ambientA || !ambientB) break;
+      const ambientRes = golaySumCorrelation(ambientA, ambientB, a, b, sr);
+      ambientRawPeaks.push(ambientRes.rawPeak);
+      await sleep(Math.max(20, repeatGap * 0.3));
+    }
+
+    ambientNoisePings = ambientRawPeaks.length;
+    if (ambientRawPeaks.length > 0) {
+      const ambientMed = median(ambientRawPeaks);
+      const ambientSpread = ambientRawPeaks.length > 1 ? mad(ambientRawPeaks, ambientMed) : 0;
+      ambientNoiseRawPeakMedian = ambientMed;
+      ambientNoiseRawPeakMad = ambientSpread;
+
+      const envMed = envRawPeaks.length > 0 ? median(envRawPeaks) : (repeatRawPeaks.length > 0 ? median(repeatRawPeaks) : NaN);
+      if (Number.isFinite(envMed) && envMed > 1e-12) {
+        txContrast = envMed / Math.max(1e-12, ambientMed);
+      }
+    }
+
     console.debug(`[calib] env baseline: ${envBaselinePings} pings captured (steered at 0deg), filtered=${envBaselineFiltered ? 'yes' : 'no'}, envTau0=${(0.5 * (medTauL + medTauR) * 1000).toFixed(4)}ms`);
+    if (ambientNoisePings > 0) {
+      console.debug(`[calib] ambient noise: pings=${ambientNoisePings} rawPeakMed=${ambientNoiseRawPeakMedian.toExponential(3)} rawPeakMAD=${ambientNoiseRawPeakMad.toExponential(3)} txContrast=${Number.isFinite(txContrast) ? txContrast.toFixed(2) : 'n/a'}`);
+    }
   }
 
-  // Mark calibration invalid when measurements are clearly unreliable.
-  // Primary gates: signal-quality checks (stability, cluster size, corrQual,
-  // delta consistency).  Geometry fit is advisory — on distributed sources
-  // (laptop speakers) the point-source model is inherently violated.
+  // Mark calibration invalid only when timing measurements are clearly unreliable.
+  // Geometry/TDOA consistency is evaluated separately via angleReliable, because
+  // distributed sources and screen reflections can violate point-source assumptions
+  // while still yielding usable timing/range calibration.
   const maxMadMs = Number.isFinite(madTauL) && Number.isFinite(madTauR)
     ? 1000 * Math.max(madTauL, madTauR) : Infinity;
   const measurementsStable = maxMadMs < 2.0; // worst-channel MAD < 2ms
@@ -1055,19 +1218,20 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const micPlausible = Math.abs(micX) < d * 3; // mic X within 3× speaker spacing
   const enoughRepeats = clusterSize >= 2; // need ≥2 consistent repeats
   const corrQualOk = medPkL > 0.15 && medPkR > 0.15; // correlation quality above noise floor
+  const txContrastOk = !Number.isFinite(txContrast) || txContrast >= 1.35;
 
-  // Accept if: enough consistent repeats + stable + consistent deltas +
-  // decent corrQual + plausible mic position + quality above floor
-  const valid = enoughRepeats && measurementsStable && corrQualOk
-    && deltaConsistent && micPlausible && quality > 0.15;
+  // Timing/range validity (used by predictedTau0 and delay compensation).
+  const timingValid = enoughRepeats && measurementsStable && corrQualOk
+    && micPlausible && quality > 0.15 && txContrastOk;
+  const valid = timingValid;
 
   // Confidence tier: angle information is reliable when per-repeat TDOA
   // deltas are well-agreed.  maxDeltaDev < 0.6 means worst repeat's delta
   // deviates by less than 60% of maxTDOA from the median — good enough
   // for steering.  When false, calibration is still usable for range/timing.
-  const angleReliable = valid && maxDeltaDev < 0.6;
+  const angleReliable = timingValid && deltaConsistent && maxDeltaDev < 0.6;
 
-  console.debug(`[calib] validity: valid=${valid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.3=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15} angleReliable=${angleReliable}(maxDeltaDev=${maxDeltaDev.toFixed(3)}<0.6)`);
+  console.debug(`[calib] validity: valid=${valid} timingValid=${timingValid} cluster=${clusterSize}≥2=${enoughRepeats} maxMAD=${maxMadMs.toFixed(3)}ms stable=${measurementsStable} deltaConsist=${deltaConsistency.toFixed(3)}<0.3=${deltaConsistent} micPlausible=${micPlausible} corrQualOk=${corrQualOk} quality=${quality.toFixed(3)}>0.15=${quality > 0.15} txContrastOk=${txContrastOk}(${Number.isFinite(txContrast) ? txContrast.toFixed(2) : 'n/a'}≥1.35) angleReliable=${angleReliable}(maxDeltaDev=${maxDeltaDev.toFixed(3)}<0.6)`);
 
   // --- Multiband analysis ---
   // Run per-band calibration on the saved raw captures, then fuse.
@@ -1186,6 +1350,40 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     console.warn('[calib] multiplex carrier qualification failed:', error);
   }
 
+  const adaptiveDetection = deriveAdaptiveDetectionThresholds({
+    profiles: adaptiveProfiles,
+    minR,
+    maxR,
+    // Use the *original* user-set gates from before any prior adaptive
+    // adjustment.  The calibration result stores the adaptive values that
+    // were applied last time; if present, we recover the originals from
+    // the current config by reverting the previous adaptation.  The
+    // derivation function should operate on the user's baseline so that
+    // repeated recalibrations don't ratchet the thresholds down.
+    strengthGate: state.calibration?.adaptiveDetection
+      ? Math.max(config.strengthGate, state.calibration.adaptiveDetection.strengthGate)
+      : config.strengthGate,
+    confidenceGate: state.calibration?.adaptiveDetection
+      ? Math.max(config.confidenceGate, state.calibration.adaptiveDetection.confidenceGate)
+      : config.confidenceGate,
+    cfar: {
+      ...config.cfar,
+      // Restore the tighter original Pfa (smaller = stricter)
+      pfa: state.calibration?.adaptiveDetection
+        ? Math.min(config.cfar.pfa, state.calibration.adaptiveDetection.cfarPfa)
+        : config.cfar.pfa,
+    },
+  });
+
+  if (adaptiveDetection) {
+    console.debug(
+      `[calib] adaptive thresholds: samples=${adaptiveDetection.sampleCount} ` +
+      `strengthGate ${config.strengthGate.toExponential(3)}→${adaptiveDetection.strengthGate.toExponential(3)} ` +
+      `confidenceGate ${config.confidenceGate.toFixed(3)}→${adaptiveDetection.confidenceGate.toFixed(3)} ` +
+      `cfarPfa ${config.cfar.pfa.toExponential(3)}→${adaptiveDetection.cfarPfa.toExponential(3)}`,
+    );
+  }
+
   const result: CalibrationResult = {
     valid: mbValid,
     quality: mbQuality,
@@ -1202,9 +1400,18 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     envBaselineFiltered,
     envBaseline,
     envBaselinePings,
+    ambientNoise: ambientNoisePings > 0
+      ? {
+        pings: ambientNoisePings,
+        rawPeakMedian: ambientNoiseRawPeakMedian,
+        rawPeakMad: ambientNoiseRawPeakMad,
+        txContrast,
+      }
+      : undefined,
     sanity,
     multiband: multibandInfo,
     micArrayCalibration,
+    adaptiveDetection,
     carrierCalibration,
   };
 
@@ -1213,6 +1420,16 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     const validCount = result.micArrayCalibration.channels.filter(ch => ch.valid).length;
     const drift = result.micArrayCalibration.driftFromPrevious;
     console.debug(`[calib] mic-array result: validChannels=${validCount}/${result.micArrayCalibration.channels.length}${drift ? ` drift={mic:${(drift.maxMicShiftM * 100).toFixed(2)}cm delay:${drift.maxDelayShiftMs.toFixed(3)}ms guard:${drift.resetApplied}}` : ''}`);
+  }
+
+  if (adaptiveDetection && result.valid) {
+    store.update(s => {
+      s.config.strengthGate = adaptiveDetection.strengthGate;
+      s.config.confidenceGate = adaptiveDetection.confidenceGate;
+      s.config.cfar.pfa = adaptiveDetection.cfarPfa;
+    });
+  } else if (adaptiveDetection && !result.valid) {
+    console.debug('[calib] adaptive thresholds skipped: calibration timing is invalid');
   }
 
   store.set('calibration', result);

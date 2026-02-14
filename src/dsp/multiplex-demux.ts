@@ -164,6 +164,7 @@ export function demuxMultiplexProfile(input: MultiplexDemuxInput): MultiplexDemu
       input.maxR,
       input.sampleRate,
       input.heatBins,
+      false,
     );
     const qual = profileStats(profile);
     const baseWeight = input.carrierWeights?.[c] ?? 1;
@@ -199,6 +200,7 @@ export function demuxMultiplexProfile(input: MultiplexDemuxInput): MultiplexDemu
       input.maxR,
       input.sampleRate,
       input.heatBins,
+      false,
     );
     frames.push({
       corrReal: corrRealBank[0],

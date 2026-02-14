@@ -113,6 +113,10 @@ export function renderCalibInfo(): void {
   } else {
     lines.push('env baseline = no');
   }
+  if (calib.adaptiveDetection) {
+    const ad = calib.adaptiveDetection;
+    lines.push(`adaptive gates: strength=${ad.strengthGate.toExponential(3)} confidence=${ad.confidenceGate.toFixed(3)} cfarPfa=${ad.cfarPfa.toExponential(3)} (n=${ad.sampleCount})`);
+  }
   lines.push(`Direct-path lock: ${(state.config.calibration.useCalib && calib.quality > 0.2) ? 'ON' : 'OFF/weak'}`);
   const micSp = state.config.micArraySpacing;
   const chCount = state.audio.channelCount;

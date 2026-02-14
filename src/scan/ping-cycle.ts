@@ -1,7 +1,8 @@
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import { sleep } from '../utils.js';
+import { sleep, signalEnergy, energyNormalize } from '../utils.js';
 import { fftCorrelateComplex } from '../dsp/fft-correlate.js';
+import { estimateCorrelationEvidence } from '../dsp/correlation-evidence.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { estimateBestFromProfile } from '../dsp/peak.js';
@@ -20,6 +21,8 @@ import { applyDisplayReflectionBlanking } from '../dsp/display-reflection-blanki
 import { caCfar } from '../dsp/cfar.js';
 import { demuxMultiplexProfile } from '../dsp/multiplex-demux.js';
 import { computeProfileConfidence } from './confidence.js';
+import { buildRangePrior, selectPeakWithRangePrior } from './range-prior.js';
+import { computeChirpSubbandStability } from './subband-stability.js';
 import { createProbe } from '../signal/probe-factory.js';
 import { resumeIfSuspended, getSampleRate } from '../audio/engine.js';
 import { pingAndCaptureSteered } from '../spatial/steering.js';
@@ -27,14 +30,51 @@ import { computeSteeringDelay } from '../spatial/steering.js';
 import { delayAndSum } from '../spatial/rx-beamformer.js';
 import { predictedTau0ForPing } from '../calibration/engine.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
+import { mahalanobisDistance, DEFAULT_KALMAN_CONFIG } from '../tracking/kalman.js';
+import { DEFAULT_MT_CONFIG } from '../tracking/multi-target.js';
 import { peerManager } from '../network/peer-manager.js';
 import { mergeRemoteAudio } from '../network/distributed-array.js';
 import { broadcastCaptureRequest, waitForRemoteCaptures } from '../network/capture-collector.js';
-import type { PingDetailedResult, RangeProfile, ArrayGeometry, CaptureResponse, SyncedAudioChunk } from '../types.js';
+import type { PingDetailedResult, RangeProfile, ArrayGeometry, CaptureResponse, SyncedAudioChunk, Measurement } from '../types.js';
 
 let clutterState: ClutterState = { model: null };
 let noiseKalmanState: NoiseKalmanState | null = null;
 let nextPingId = 1;
+
+interface PeakCandidate {
+  bin: number;
+  value: number;
+  range: number;
+}
+
+function extractTopProfilePeaks(
+  profile: Float32Array,
+  minR: number,
+  maxR: number,
+  count = 3,
+  minSeparationBins = 3,
+): PeakCandidate[] {
+  if (profile.length === 0) return [];
+
+  const candidates: PeakCandidate[] = [];
+  for (let i = 0; i < profile.length; i++) {
+    const value = profile[i];
+    if (!(value > 0)) continue;
+    const range = profile.length > 1
+      ? minR + (i / (profile.length - 1)) * (maxR - minR)
+      : minR;
+    candidates.push({ bin: i, value, range });
+  }
+
+  candidates.sort((a, b) => b.value - a.value);
+  const selected: PeakCandidate[] = [];
+  for (const candidate of candidates) {
+    if (selected.length >= count) break;
+    const tooClose = selected.some(p => Math.abs(p.bin - candidate.bin) < minSeparationBins);
+    if (!tooClose) selected.push(candidate);
+  }
+  return selected;
+}
 
 function capturesToChunks(captures: CaptureResponse[]): SyncedAudioChunk[] {
   const probeConfig = store.get().config.probe;
@@ -103,18 +143,6 @@ function getRxChannelDelaySec(channelCount: number): number[] | undefined {
   return sorted.map(ch => ch.relativeDelaySec);
 }
 
-function signalEnergy(a: Float32Array): number {
-  let e = 0;
-  for (let i = 0; i < a.length; i++) e += a[i] * a[i];
-  return e;
-}
-
-function energyNormalize(corr: Float32Array, refEnergy: number): void {
-  if (refEnergy <= 1e-12) return;
-  const inv = 1 / refEnergy;
-  for (let i = 0; i < corr.length; i++) corr[i] *= inv;
-}
-
 function estimateProbeCenterHz(): number {
   const probe = store.get().config.probe;
   if (probe.type === 'chirp') {
@@ -150,6 +178,7 @@ function corrAndBuildProfile(
   const corrComplex = fftCorrelateComplex(micWin, ref, sampleRate);
   const corrReal = corrComplex.correlation;
   const corrImag = corrComplex.correlationImag;
+  const txEvidence = estimateCorrelationEvidence(corrReal, micWin, ref);
   const refE = signalEnergy(ref);
   energyNormalize(corrReal, refE);
   energyNormalize(corrImag, refE);
@@ -158,14 +187,23 @@ function corrAndBuildProfile(
   let corrMax = 0, corrMaxIdx = 0, micMax = 0;
   for (let i = 0; i < corrReal.length; i++) { const v = Math.abs(corrReal[i]); if (v > corrMax) { corrMax = v; corrMaxIdx = i; } }
   for (let i = 0; i < micWin.length; i++) { const v = Math.abs(micWin[i]); if (v > micMax) micMax = v; }
-  console.log(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
+  console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
 
   const tau0 = findDirectPathTau(corrReal, predictedTau0OrNull, lockStrength, sampleRate);
-  console.log(`[corrAndBuild] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms, sample=${Math.round(tau0 * sampleRate)})`);
+  console.debug(`[corrAndBuild] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms, sample=${Math.round(tau0 * sampleRate)})`);
 
   const prof = buildRangeProfileFromCorrelation(corrReal, tau0, c, minR, maxR, sampleRate, heatBins);
   const best = estimateBestFromProfile(prof, minR, maxR);
-  return { corrReal, corrImag, tau0, prof, bestBin: best.bin, bestVal: best.val, bestR: best.range };
+  return {
+    corrReal,
+    corrImag,
+    tau0,
+    prof,
+    bestBin: best.bin,
+    bestVal: best.val,
+    bestR: best.range,
+    txEvidence,
+  };
 }
 
 async function captureGolaySteered(
@@ -246,7 +284,7 @@ async function captureGolaySteered(
   for (let i = 0; i < micA.length; i++) { const v = Math.abs(micA[i]); if (v > micMaxA) micMaxA = v; }
   for (let i = 0; i < micB.length; i++) { const v = Math.abs(micB[i]); if (v > micMaxB) micMaxB = v; }
   for (let i = 0; i < corrRealSum.length; i++) { const v = Math.abs(corrRealSum[i]); if (v > corrSumMax) { corrSumMax = v; corrSumMaxIdx = i; } }
-  console.log(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
+  console.debug(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
 
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));
@@ -254,7 +292,7 @@ async function captureGolaySteered(
   else if (Number.isFinite(predTau0B)) predTau0 = predTau0B;
 
   const tau0 = findDirectPathTau(corrRealSum, predTau0, lockStrength, sampleRate);
-  console.log(`[golayCorr] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms) predTau0=${predTau0?.toFixed(6) ?? 'null'}`);
+  console.debug(`[golayCorr] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms) predTau0=${predTau0?.toFixed(6) ?? 'null'}`);
 
   const prof = buildRangeProfileFromCorrelation(corrRealSum, tau0, c, minR, maxR, sampleRate, heatBins);
   return { corrReal: corrRealSum, corrImag: corrImagSum, tau0, prof };
@@ -289,6 +327,8 @@ export async function doPingDetailed(
   let corrFinalImag: Float32Array;
   let tau0Final: number;
   let profFinal: Float32Array;
+  let chirpStabilityInput: { micSignal: Float32Array; ref: Float32Array; f1: number; f2: number } | null = null;
+  let txEvidence = { peakNorm: 0, medianNorm: 0, prominence: 0, peakIndex: -1, pass: true };
 
   bus.emit('ping:start', { angleDeg });
 
@@ -417,12 +457,21 @@ export async function doPingDetailed(
     const rxGeo = buildRxGeometry(config.micArraySpacing, c, micChannels.length);
     const rxChannelDelaySec = getRxChannelDelaySec(micChannels.length);
     const micSignal = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
+    if (probe.type === 'chirp' && config.probe.type === 'chirp') {
+      chirpStabilityInput = {
+        micSignal,
+        ref,
+        f1: config.probe.params.f1,
+        f2: config.probe.params.f2,
+      };
+    }
 
     const res = corrAndBuildProfile(micSignal, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
     corrFinalReal = res.corrReal;
     corrFinalImag = res.corrImag;
     tau0Final = res.tau0;
     profFinal = res.prof;
+    txEvidence = res.txEvidence;
   }
 
   // Debug: raw profile stats
@@ -430,7 +479,7 @@ export async function doPingDetailed(
   {
     let rawNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > rawMax) rawMax = profFinal[i]; if (profFinal[i] > 1e-15) rawNZ++; }
-    console.log(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawNZ}/${profFinal.length}`);
+    console.debug(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawNZ}/${profFinal.length}`);
   }
 
   if (config.displayReflectionBlanking.enabled) {
@@ -442,7 +491,7 @@ export async function doPingDetailed(
     );
     let dMax = 0, dNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > dMax) dMax = profFinal[i]; if (profFinal[i] > 1e-15) dNZ++; }
-    console.log(`[doPing:displayBlank] max=${dMax.toExponential(3)} nonZero=${dNZ}/${profFinal.length}`);
+    console.debug(`[doPing:displayBlank] max=${dMax.toExponential(3)} nonZero=${dNZ}/${profFinal.length}`);
   }
 
   // Apply env baseline
@@ -457,7 +506,7 @@ export async function doPingDetailed(
     );
     let eMax = 0, eNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > eMax) eMax = profFinal[i]; if (profFinal[i] > 1e-15) eNZ++; }
-    console.log(`[doPing:envBaseline] max=${eMax.toExponential(3)} nonZero=${eNZ}/${profFinal.length}`);
+    console.debug(`[doPing:envBaseline] max=${eMax.toExponential(3)} nonZero=${eNZ}/${profFinal.length}`);
     // Safeguard: if envBaseline removed ALL signal but raw had data, fall back
     if (eMax < 1e-15 && rawMax > 1e-15) {
       console.warn('[doPing] envBaseline zeroed out entire profile — falling back to raw profile');
@@ -502,7 +551,7 @@ export async function doPingDetailed(
       if (profFinal[i] > nkMax) nkMax = profFinal[i];
       if (profFinal[i] > 1e-15) nkNZ++;
     }
-    console.log(`[doPing:noiseKalman] freeze=${freeze} updBins=${kalmanUpdate.updatedBins} meanK=${kalmanUpdate.meanGain.toFixed(4)} backoff=${kalmanBackoff.backoffLevel.toFixed(3)} max=${nkMax.toExponential(3)} nonZero=${nkNZ}/${profFinal.length}`);
+    console.debug(`[doPing:noiseKalman] freeze=${freeze} updBins=${kalmanUpdate.updatedBins} meanK=${kalmanUpdate.meanGain.toFixed(4)} backoff=${kalmanBackoff.backoffLevel.toFixed(3)} max=${nkMax.toExponential(3)} nonZero=${nkNZ}/${profFinal.length}`);
   }
 
   // Apply static clutter suppression during scanning
@@ -518,7 +567,7 @@ export async function doPingDetailed(
     clutterState = result.clutterState;
     let cMax = 0, cNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > cMax) cMax = profFinal[i]; if (profFinal[i] > 1e-15) cNZ++; }
-    console.log(`[doPing:clutter] max=${cMax.toExponential(3)} nonZero=${cNZ}/${profFinal.length}`);
+    console.debug(`[doPing:clutter] max=${cMax.toExponential(3)} nonZero=${cNZ}/${profFinal.length}`);
   }
 
   // Apply quality algorithms
@@ -531,25 +580,304 @@ export async function doPingDetailed(
     });
     algoName = resolved.resolved;
     autoSwitched = resolved.switched;
-    console.log(`[doPing:autoQuality] resolved=${algoName} psr=${resolved.stats.psr.toFixed(2)} snrDb=${resolved.stats.snrDb.toFixed(2)} switched=${autoSwitched}`);
+    console.debug(`[doPing:autoQuality] resolved=${algoName} psr=${resolved.stats.psr.toFixed(2)} snrDb=${resolved.stats.snrDb.toFixed(2)} switched=${autoSwitched}`);
   }
   profFinal = applyQualityAlgorithms(profFinal, algoName);
   {
     let qMax = 0, qNZ = 0;
     for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > qMax) qMax = profFinal[i]; if (profFinal[i] > 1e-15) qNZ++; }
-    console.log(`[doPing:quality] algo=${algoName} max=${qMax.toExponential(3)} nonZero=${qNZ}/${profFinal.length}`);
+    console.debug(`[doPing:quality] algo=${algoName} max=${qMax.toExponential(3)} nonZero=${qNZ}/${profFinal.length}`);
   }
 
   const bestPost = estimateBestFromProfile(profFinal, minR, maxR);
   let bestBin = bestPost.bin;
   let bestVal = bestPost.val;
   let bestR = bestPost.range;
+  const topPeaks = extractTopProfilePeaks(
+    profFinal,
+    minR,
+    maxR,
+    3,
+    Math.max(2, Math.floor(profFinal.length * 0.015)),
+  );
+  const rangePrior = buildRangePrior(state.targets, state.lastTarget.range, minR, maxR);
+  const mapPeak = selectPeakWithRangePrior(topPeaks, rangePrior);
+  if (mapPeak) {
+    bestBin = mapPeak.bin;
+    bestVal = mapPeak.value;
+    bestR = mapPeak.range;
+  }
 
-  const conf = computeProfileConfidence(profFinal, bestBin, bestVal);
+  const edgeBinMargin = Math.max(3, Math.floor(profFinal.length * 0.02));
+  const isEdgePeak = bestBin >= 0
+    && (bestBin <= edgeBinMargin || bestBin >= (profFinal.length - 1 - edgeBinMargin));
+
+  const confBase = computeProfileConfidence(profFinal, bestBin, bestVal);
+  const subbandStability =
+    chirpStabilityInput && bestBin >= 0
+      ? computeChirpSubbandStability({
+        micSignal: chirpStabilityInput.micSignal,
+        ref: chirpStabilityInput.ref,
+        tau0: tau0Final,
+        c,
+        minR,
+        maxR,
+        sampleRate: sr,
+        heatBins,
+        bestBin,
+        f1: chirpStabilityInput.f1,
+        f2: chirpStabilityInput.f2,
+      })
+      : null;
+  const confidenceBoost = subbandStability?.confidenceBoost ?? 0;
+  const conf = confidenceBoost > 0
+    ? {
+      ...confBase,
+      confidence: Math.min(1, confBase.confidence + confidenceBoost),
+    }
+    : confBase;
   const cfarResult = caCfar(profFinal, config.cfar);
+  // Re-evaluate CFAR at the MAP-selected bin (may differ from raw best peak).
+  // This ensures the CFAR detection status corresponds to the peak we actually use.
   const cfarDetected = bestBin >= 0 && cfarResult.detections[bestBin] === 1;
-  const isWeak = !cfarDetected || conf.confidence < config.confidenceGate;
-  console.log(`[doPing:gate] bestVal=${bestVal.toExponential(3)} strengthGate=${strengthGate} confidence=${conf.confidence.toFixed(3)} confidenceGate=${config.confidenceGate.toFixed(3)} cfarDetected=${cfarDetected} isWeak=${isWeak}`);
+  const cfarThresholdAtBest = bestBin >= 0 && bestBin < cfarResult.thresholds.length
+    ? cfarResult.thresholds[bestBin]
+    : NaN;
+  const cfarRatioAtBest = Number.isFinite(cfarThresholdAtBest) && cfarThresholdAtBest > 0
+    ? bestVal / cfarThresholdAtBest
+    : NaN;
+
+  let bestTrackMd = NaN;
+  if (state.targets.length > 0 && Number.isFinite(bestR) && bestBin >= 0) {
+    const measurement: Measurement = {
+      range: bestR,
+      angleDeg,
+      strength: bestVal,
+      timestamp: nowMs,
+    };
+    for (const target of state.targets) {
+      const md = mahalanobisDistance(target, measurement, DEFAULT_KALMAN_CONFIG);
+      if (!Number.isFinite(bestTrackMd) || md < bestTrackMd) bestTrackMd = md;
+    }
+  }
+
+  const trackStrongEvidence =
+    cfarDetected
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 1.35
+    && conf.confidence >= Math.max(0.20, config.confidenceGate * 1.7);
+  const trackNearGateReject =
+    state.targets.length > 0
+    && Number.isFinite(bestTrackMd)
+    && rangePrior?.source === 'track'
+    && !!mapPeak
+    && mapPeak.zScore >= 1.7
+    && bestTrackMd > DEFAULT_MT_CONFIG.gatingThreshold * 0.90
+    && (!Number.isFinite(cfarRatioAtBest) || cfarRatioAtBest < 1.30);
+  const trackOutlierReject =
+    state.targets.length > 0
+    && Number.isFinite(bestTrackMd)
+    && (bestTrackMd > DEFAULT_MT_CONFIG.gatingThreshold || trackNearGateReject)
+    && !trackStrongEvidence;
+
+  const edgeHardReject = isEdgePeak && (
+    !cfarDetected
+    || !Number.isFinite(cfarRatioAtBest)
+    || cfarRatioAtBest < 1.6
+  );
+
+  const nonChirpProbe = config.probe.type !== 'chirp';
+  const chirpProbe = !nonChirpProbe;
+  const confidenceGateEffective = nonChirpProbe
+    ? Math.min(config.confidenceGate, 0.14)
+    : config.confidenceGate;
+  const strengthGateEffective = strengthGate;
+  const nonChirpCfarPass =
+    nonChirpProbe
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 0.20
+    && conf.confidence >= Math.max(0.05, confidenceGateEffective * 0.70);
+  const chirpCfarAssist =
+    chirpProbe
+    && !cfarDetected
+    && !!mapPeak
+    && !!rangePrior
+    && rangePrior.source === 'mid-range'
+    && mapPeak.zScore <= 0.35
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 0.82
+    && bestVal > strengthGateEffective * 0.80
+    && conf.confidence >= Math.max(0.06, confidenceGateEffective * 0.82);
+  const chirpTrackCfarAssist =
+    chirpProbe
+    && !cfarDetected
+    && state.targets.length > 0
+    && Number.isFinite(bestTrackMd)
+    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.70
+    && !!mapPeak
+    && !!rangePrior
+    && rangePrior.source === 'track'
+    && mapPeak.zScore <= 0.55
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 0.88
+    && bestVal > strengthGateEffective * 0.90
+    && conf.confidence >= Math.max(0.045, confidenceGateEffective * 0.48)
+    && !edgeHardReject
+    && !trackOutlierReject;
+  const chirpSubbandCfarAssist =
+    chirpProbe
+    && !cfarDetected
+    && !edgeHardReject
+    && !trackOutlierReject
+    && !!subbandStability
+    && !!mapPeak
+    && !!rangePrior
+    && Number.isFinite(cfarRatioAtBest)
+    && bestVal > strengthGateEffective * 0.95
+    && conf.confidence >= Math.max(0.08, confidenceGateEffective * 0.90)
+    && (
+      ((subbandStability.supportCount >= 3 && subbandStability.stability >= 0.60) && cfarRatioAtBest >= 0.62)
+      || ((subbandStability.supportCount >= 2 && subbandStability.stability >= 0.30) && cfarRatioAtBest >= 0.82)
+    )
+    && (
+      (rangePrior.source === 'mid-range' && mapPeak.zScore <= 1.00)
+      || (
+        rangePrior.source === 'track'
+        && mapPeak.zScore <= 0.90
+        && Number.isFinite(bestTrackMd)
+        && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.85
+      )
+    );
+  const cfarPass = cfarDetected || nonChirpCfarPass || chirpCfarAssist || chirpTrackCfarAssist || chirpSubbandCfarAssist;
+
+  const confidenceSoftPass =
+    conf.confidence >= confidenceGateEffective * 0.92
+    && cfarDetected
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 1.25
+    && !edgeHardReject
+    && (!mapPeak || mapPeak.zScore <= (rangePrior?.source === 'mid-range' ? 0.9 : 1.25));
+  const confidenceTrackPass =
+    cfarPass
+    && !edgeHardReject
+    && state.targets.length > 0
+    && Number.isFinite(bestTrackMd)
+    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.85
+    && conf.confidence >= confidenceGateEffective * 0.82;
+  const confidenceCfarAssist =
+    cfarDetected
+    && !edgeHardReject
+    && !trackOutlierReject
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 1.0
+    && conf.confidence >= Math.max(0.07, confidenceGateEffective * 0.84)
+    && (
+      !chirpProbe
+      || !subbandStability
+      || (subbandStability.supportCount >= 2 && subbandStability.stability >= 0.20)
+    );
+  const confidencePriorAssist =
+    chirpProbe
+    && cfarPass
+    && !!mapPeak
+    && mapPeak.zScore <= 0.35
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 1.05
+    && bestVal > strengthGateEffective * 0.92
+    && conf.confidence >= Math.max(0.06, confidenceGateEffective * 0.80)
+    && !edgeHardReject
+    && !trackOutlierReject;
+  const confidenceTrackPriorAssist =
+    chirpTrackCfarAssist
+    && Number.isFinite(bestTrackMd)
+    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.65
+    && conf.confidence >= Math.max(0.045, confidenceGateEffective * 0.50)
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 0.90;
+  const confidencePass =
+    conf.confidence >= confidenceGateEffective
+    || confidenceSoftPass
+    || confidenceTrackPass
+    || confidenceCfarAssist
+    || chirpCfarAssist
+    || confidencePriorAssist
+    || confidenceTrackPriorAssist;
+  const trackOutlierDisplayPass =
+    trackOutlierReject
+    && cfarDetected
+    && confidencePass
+    && Number.isFinite(bestTrackMd)
+    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 2.0
+    && bestVal > strengthGateEffective * 0.95;
+  const trackRejectEffective = trackOutlierReject && !trackOutlierDisplayPass;
+
+  const priorRescue =
+    !cfarPass
+    && !!mapPeak
+    && !!rangePrior
+    && rangePrior.source !== 'mid-range'
+    && mapPeak.zScore <= 1.6
+    && conf.confidence >= confidenceGateEffective * 0.9
+    && bestVal > strengthGateEffective * 1.05;
+  const detectionPass = cfarPass || priorRescue;
+  const strengthSoftPass =
+    bestVal > strengthGateEffective * 0.90
+    && detectionPass
+    && confidencePass
+    && !edgeHardReject
+    && !trackRejectEffective
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 1.0;
+  const strengthCfarAssist =
+    cfarPass
+    && confidencePass
+    && !edgeHardReject
+    && !trackRejectEffective
+    && Number.isFinite(cfarRatioAtBest)
+    && cfarRatioAtBest >= 0.95
+    && bestVal > strengthGateEffective * 0.85;
+  const strengthPass = bestVal > strengthGateEffective || strengthSoftPass || strengthCfarAssist;
+
+  const isWeak = edgeHardReject || trackRejectEffective || !detectionPass || !confidencePass || !strengthPass || !txEvidence.pass;
+  const trackingCandidate = Number.isFinite(bestR)
+    && bestBin >= 0
+    && (cfarPass || priorRescue)
+    && !edgeHardReject
+    && !trackOutlierReject
+    && (bestVal > strengthGateEffective * 0.95 || strengthSoftPass)
+    && conf.confidence >= Math.max(0.05, confidenceGateEffective * 0.60)
+    && txEvidence.pass;
+
+  const rejectReasons: string[] = [];
+  if (!(bestBin >= 0)) rejectReasons.push('no-peak');
+  if (edgeHardReject) rejectReasons.push('edge');
+  if (trackRejectEffective) rejectReasons.push('track');
+  if (!strengthPass) rejectReasons.push('strength');
+  if (!txEvidence.pass) rejectReasons.push('tx');
+  if (!detectionPass) rejectReasons.push('cfar');
+  if (!confidencePass) rejectReasons.push('confidence');
+  const rejectReasonText = rejectReasons.length > 0 ? rejectReasons.join('+') : 'none';
+
+  const topPeaksText = topPeaks
+    .map((p, idx) => `#${idx + 1}@b${p.bin}/r${p.range.toFixed(2)}m/v${p.value.toExponential(2)}`)
+    .join(' ');
+
+  // Consolidated detection log — uses console.debug to avoid console spam
+  // in production while remaining available via devtools verbose filter.
+  console.debug(
+    `[rangeDet] a=${angleDeg} bin=${bestBin} r=${Number.isFinite(bestR) ? bestR.toFixed(3) : 'NaN'}m ` +
+    `v=${bestVal.toExponential(3)} conf=${conf.confidence.toFixed(3)} cfar=${cfarDetected}/${cfarPass} ` +
+    `cfarR=${Number.isFinite(cfarRatioAtBest) ? cfarRatioAtBest.toFixed(2) : '-'} ` +
+    `prior=${rangePrior?.source ?? '-'} mapZ=${mapPeak ? mapPeak.zScore.toFixed(2) : '-'} ` +
+    `tx=${txEvidence.pass} edge=${edgeHardReject} track=${trackRejectEffective} ` +
+    `weak=${isWeak} reject=${rejectReasonText} peaks=[${topPeaksText}]`,
+  );
+
+  const trackingRange = bestR;
+  const trackingStrength = bestVal;
+  if (!txEvidence.pass) {
+    profFinal = new Float32Array(profFinal.length);
+  }
   if (isWeak) {
     bestBin = -1;
     bestVal = 0;
@@ -572,9 +900,22 @@ export async function doPingDetailed(
     s.lastProfile.maxR = maxR;
 
     if (!isWeak && Number.isFinite(bestR)) {
-      s.lastTarget.angle = angleDeg;
-      s.lastTarget.range = bestR;
-      s.lastTarget.strength = bestVal;
+      if (updateHeatRowIndex !== null) {
+        // During scanning: only promote lastTarget when this ping is
+        // stronger than whatever the best-so-far is. This keeps the
+        // focus point stable — it converges toward the strongest angle
+        // instead of jumping to every angle that passes the gate.
+        if (bestVal > s.lastTarget.strength) {
+          s.lastTarget.angle = angleDeg;
+          s.lastTarget.range = bestR;
+          s.lastTarget.strength = bestVal;
+        }
+      } else {
+        // Single-ping mode: always update.
+        s.lastTarget.angle = angleDeg;
+        s.lastTarget.range = bestR;
+        s.lastTarget.strength = bestVal;
+      }
     } else if (updateHeatRowIndex === null) {
       s.lastTarget.angle = NaN;
       s.lastTarget.range = NaN;
@@ -590,11 +931,11 @@ export async function doPingDetailed(
   });
 
   if (updateHeatRowIndex === null) {
-    if (!isWeak && Number.isFinite(bestR)) {
+    if (trackingCandidate && Number.isFinite(trackingRange)) {
       updateTrackingFromMeasurement({
-        range: bestR,
+        range: trackingRange,
         angleDeg,
-        strength: bestVal,
+        strength: trackingStrength,
         timestamp: nowMs,
       }, nowMs);
     } else {
@@ -609,7 +950,7 @@ export async function doPingDetailed(
     if (profFinal[i] > profMax) profMax = profFinal[i];
     if (profFinal[i] > 1e-15) profNonZero++;
   }
-  console.log(`[doPing] angle=${angleDeg} profLen=${profFinal.length} profMin=${profMin.toExponential(3)} profMax=${profMax.toExponential(3)} nonZero=${profNonZero}/${profFinal.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)} bestR=${bestR.toFixed(3)} isWeak=${isWeak} tau0=${tau0Final.toFixed(6)}`);
+  console.debug(`[doPing] angle=${angleDeg} profLen=${profFinal.length} profMin=${profMin.toExponential(3)} profMax=${profMax.toExponential(3)} nonZero=${profNonZero}/${profFinal.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)} bestR=${bestR.toFixed(3)} isWeak=${isWeak} tau0=${tau0Final.toFixed(6)}`);
 
   const rangeProfile: RangeProfile = {
     bins: profFinal,

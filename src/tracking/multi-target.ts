@@ -20,11 +20,13 @@ export interface MultiTargetConfig {
 export const DEFAULT_MT_CONFIG: MultiTargetConfig = {
   kalman: DEFAULT_KALMAN_CONFIG,
   gatingThreshold: 3.0,
-  initThreshold: 3,
-  initWindow: 5,
+  initThreshold: 2,
+  initWindow: 8,
   deleteThreshold: 10,
   maxTracks: 20,
 };
+
+const INIT_ASSOCIATION_GATE_SCALE = 1.25;
 
 interface TrackCandidate {
   measurements: Measurement[];
@@ -87,9 +89,10 @@ export class MultiTargetTracker {
       let foundCandidate = false;
       for (const cand of this.candidates) {
         const lastMeas = cand.measurements[cand.measurements.length - 1];
-        const dr = Math.abs(meas.range - lastMeas.range);
-        const da = Math.abs(meas.angleDeg - lastMeas.angleDeg);
-        if (dr < 0.5 && da < 15) {
+        const pseudoTrack = createTarget(-1, lastMeas);
+        const md = mahalanobisDistance(pseudoTrack, meas, this.config.kalman);
+        const initGate = this.config.gatingThreshold * INIT_ASSOCIATION_GATE_SCALE;
+        if (md < initGate) {
           cand.measurements.push(meas);
           foundCandidate = true;
           break;

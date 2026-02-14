@@ -5,32 +5,24 @@ let pingCalls = 0;
 
 vi.mock('../../src/scan/ping-cycle.js', () => ({
   resetClutter: () => {},
-  doPingDetailed: async (angleDeg: number) => {
+  doPingDetailed: async () => {
+    throw new Error('Legacy TX-steering scan should not be used in this test');
+  },
+}));
+
+vi.mock('../../src/spatial/steering.js', () => ({
+  pingAndCaptureOneSide: async () => {
     pingCalls++;
     if (cancelAfterFirstPing && pingCalls === 1) {
       store.set('scanning', false);
     }
-
-    const bins = new Float32Array([0.02, 0.90, 0.05, 0.01]);
+    const micWin = new Float32Array(256);
+    micWin[32] = 1;
     return {
-      profile: {
-        bins,
-        minRange: 0.3,
-        maxRange: 4.0,
-        binCount: bins.length,
-        bestBin: 1,
-        bestRange: 1.2,
-        bestStrength: 0.9,
-      },
-      rawFrame: {
-        angleDeg,
-        sampleRate: 48000,
-        tau0: 0,
-        corrReal: new Float32Array([0, 1, 0]),
-        corrImag: new Float32Array([0, 0, 0]),
-        centerFreqHz: 4000,
-        quality: 0.9,
-      },
+      micWin,
+      micChannels: [micWin],
+      which: 'L' as const,
+      delay: 0.012,
     };
   },
 }));

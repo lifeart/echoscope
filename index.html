@@ -383,6 +383,10 @@
             <input id="confidenceGate" type="number" step="0.01" min="0" max="1" value="0.38" title="Minimum composite confidence required to keep a target.">
           </div>
           <div>
+            <label title="CFAR false-alarm probability. Higher = more sensitive CFAR detection.">CFAR Pfa</label>
+            <input id="cfarPfa" type="number" step="0.0005" min="0.000001" max="0.5" value="0.001" title="Cell-averaging CFAR false-alarm probability used for detection thresholding.">
+          </div>
+          <div>
             <label style="display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:#bdbdbd;">
               <input id="scanClutterOn" type="checkbox" checked title="Enable static clutter suppression across scan frames.">
               Suppress static reflections
@@ -612,7 +616,7 @@
         <div class="row" style="margin-top:10px">
           <div>
             <label title="Independent L/R measurement pairs. 1–9. More = more robust.">Calibration repeats (N)</label>
-            <input id="calRepeats" type="number" step="1" min="1" max="9" value="3" title="Number of repeated left/right calibration measurements.">
+            <input id="calRepeats" type="number" step="1" min="1" max="9" value="5" title="Number of repeated left/right calibration measurements.">
           </div>
           <div>
             <label title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>

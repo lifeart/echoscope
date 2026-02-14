@@ -207,6 +207,7 @@ export async function qualifyMultiplexCarriers(input: QualificationInput): Promi
         input.maxR,
         input.sampleRate,
         input.heatBins,
+        false,
       );
       const best = estimateBestFromProfile(profile, input.minR, input.maxR);
       const conf = computeProfileConfidence(profile, best.bin, best.val);

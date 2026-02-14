@@ -115,6 +115,7 @@ export function syncDOMFromConfig(): void {
 
   setVal('strengthGate', `${config.strengthGate}`);
   setVal('confidenceGate', `${config.confidenceGate}`);
+  setVal('cfarPfa', `${config.cfar.pfa}`);
   setChecked('scanClutterOn', config.clutterSuppression.enabled);
   setVal('scanClutterStrength', `${config.clutterSuppression.strength}`);
   setVal('qualityAlgo', `${config.qualityAlgo}`);
@@ -274,6 +275,7 @@ export function readConfigFromDOM(): void {
     );
     s.config.strengthGate = clamp(inputVal('strengthGate'), 0, 1);
     s.config.confidenceGate = clamp(inputVal('confidenceGate', current.confidenceGate), 0, 1);
+    s.config.cfar.pfa = clamp(inputVal('cfarPfa', current.cfar.pfa), 1e-6, 0.5);
     s.config.scanAggregateMode = aggregateMode;
     s.config.scanTrimFraction = clamp(inputVal('scanTrimFraction', current.scanTrimFraction), 0, 0.45);
     s.config.temporalIirAlpha = clamp(inputVal('temporalIirAlpha', current.temporalIirAlpha), 0.01, 1);

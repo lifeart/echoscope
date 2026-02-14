@@ -6,6 +6,20 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+/** Sum of squared samples. */
+export function signalEnergy(a: Float32Array): number {
+  let e = 0;
+  for (let i = 0; i < a.length; i++) e += a[i] * a[i];
+  return e;
+}
+
+/** In-place divide every sample by refEnergy (acts as energy normalization). */
+export function energyNormalize(corr: Float32Array, refEnergy: number): void {
+  if (refEnergy <= 1e-12) return;
+  const inv = 1 / refEnergy;
+  for (let i = 0; i < corr.length; i++) corr[i] *= inv;
+}
+
 export function median(arr: number[]): number {
   const a = arr.slice().sort((x, y) => x - y);
   const n = a.length;

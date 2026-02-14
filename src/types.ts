@@ -213,6 +213,14 @@ export interface MicArrayCalibration {
   driftFromPrevious?: MicArrayCalibrationDrift;
 }
 
+export interface AdaptiveDetectionThresholds {
+  strengthGate: number;
+  confidenceGate: number;
+  cfarPfa: number;
+  sampleCount: number;
+  source: 'calibration-env';
+}
+
 export interface CalibrationResult {
   valid: boolean;
   quality: number;
@@ -231,11 +239,19 @@ export interface CalibrationResult {
   envBaselineFiltered: Float32Array | null;
   envBaseline: Float32Array | null;
   envBaselinePings: number;
+  ambientNoise?: {
+    pings: number;
+    rawPeakMedian: number;
+    rawPeakMad: number;
+    txContrast: number;
+  };
   sanity: CalibrationSanity;
   /** Multiband info (present when multiband calibration was used) */
   multiband?: MultibandInfo;
   /** Per-channel mic array calibration for beamforming compensation */
   micArrayCalibration?: MicArrayCalibration;
+  /** Runtime detection thresholds adapted from calibration environment pings */
+  adaptiveDetection?: AdaptiveDetectionThresholds;
   /** Carrier qualification results for multiplex mode */
   carrierCalibration?: CarrierCalibrationResult;
 }

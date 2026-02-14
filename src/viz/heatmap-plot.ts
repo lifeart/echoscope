@@ -273,7 +273,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
     const gate = state.config.strengthGate;
     for (let ri = 0; ri < rows; ri++) {
       const b = heatmap.bestBin[ri];
-      if (b < 0) continue;
+      if (b < 0 || !(heatmap.bestVal[ri] > gate)) continue;
       const x = xPad + (ri / rowDen) * plotW;
       const y = yPad + (1 - b / colDen) * plotH;
       const conf = clamp((heatmap.bestVal[ri] - gate) / Math.max(1e-6, 1 - gate), 0, 1);
