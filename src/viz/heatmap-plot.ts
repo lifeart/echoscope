@@ -100,7 +100,9 @@ export function drawHeatmap(minR: number, maxR: number): void {
     if (heatmap.display[i] > 1e-15) nonZeroCount++;
   }
 
-  const hasData = displayMax > 1e-12;
+  // Gate: require meaningful signal level to render.
+  // Without this, auto-scaling amplifies tiny noise residue into colored pixels.
+  const hasData = displayMax > 1e-7;
 
   console.log(`[drawHeatmap] dataMax=${dataMax.toExponential(3)} displayMax=${displayMax.toExponential(3)} nonZero=${nonZeroCount}/${heatmap.display.length} hasData=${hasData}`);
 

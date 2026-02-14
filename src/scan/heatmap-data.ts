@@ -47,13 +47,28 @@ export function updateHeatmapRow(
   }
   console.log(`[updateHeatmapRow] row=${rowIndex} profileLen=${profile.length} heatmapBins=${bins} profileMin=${pMin.toExponential(3)} profileMax=${pMax.toExponential(3)} nonZero=${pNonZero}/${profile.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)}`);
 
+  // Check if the incoming profile is entirely zero (weak/rejected ping).
+  // In that case, apply pure decay instead of max-accumulating noise residue.
+  let profileIsZero = true;
+  for (let b = 0; b < Math.min(bins, profile.length); b++) {
+    if (profile[b] > 1e-15) { profileIsZero = false; break; }
+  }
+
   for (let b = 0; b < bins; b++) {
     const idx = rowIndex * bins + b;
-    const decayed = data[idx] * decayFactor;
-    if (Number.isFinite(temporalIirAlpha)) {
+    if (profileIsZero) {
+      // Zeroed profile = no detection. Decay existing data toward zero.
+      data[idx] *= decayFactor;
+      // Snap to zero once negligible to avoid infinite decay tail.
+      // Threshold 1e-10 ensures zero is reached in ~170 iterations of 0.90 decay
+      // (well below the display hasData threshold of 1e-7).
+      if (data[idx] < 1e-10) data[idx] = 0;
+    } else if (Number.isFinite(temporalIirAlpha)) {
+      const decayed = data[idx] * decayFactor;
       const alpha = Math.max(0.01, Math.min(1, temporalIirAlpha!));
       data[idx] = decayed + alpha * (profile[b] - decayed);
     } else {
+      const decayed = data[idx] * decayFactor;
       data[idx] = Math.max(decayed, profile[b]);
     }
   }

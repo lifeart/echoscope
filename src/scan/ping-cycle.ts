@@ -2,6 +2,7 @@ import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
 import { sleep, signalEnergy, energyNormalize } from '../utils.js';
 import { fftCorrelateComplex } from '../dsp/fft-correlate.js';
+import { bandpassToProbe } from '../dsp/probe-band.js';
 import { estimateCorrelationEvidence } from '../dsp/correlation-evidence.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
@@ -175,10 +176,16 @@ function corrAndBuildProfile(
   sampleRate: number,
   heatBins: number,
 ) {
-  const corrComplex = fftCorrelateComplex(micWin, ref, sampleRate);
+  // Bandpass-filter mic to the probe frequency band.
+  // Removes out-of-band noise that would otherwise inflate the
+  // sliding-window energy denominator in TX evidence normalization.
+  const probeConfig = store.get().config.probe;
+  const micFiltered = bandpassToProbe(micWin, probeConfig, sampleRate);
+
+  const corrComplex = fftCorrelateComplex(micFiltered, ref, sampleRate);
   const corrReal = corrComplex.correlation;
   const corrImag = corrComplex.correlationImag;
-  const txEvidence = estimateCorrelationEvidence(corrReal, micWin, ref);
+  const txEvidence = estimateCorrelationEvidence(corrReal, micFiltered, ref);
   const refE = signalEnergy(ref);
   energyNormalize(corrReal, refE);
   energyNormalize(corrImag, refE);
@@ -187,7 +194,7 @@ function corrAndBuildProfile(
   let corrMax = 0, corrMaxIdx = 0, micMax = 0;
   for (let i = 0; i < corrReal.length; i++) { const v = Math.abs(corrReal[i]); if (v > corrMax) { corrMax = v; corrMaxIdx = i; } }
   for (let i = 0; i < micWin.length; i++) { const v = Math.abs(micWin[i]); if (v > micMax) micMax = v; }
-  console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
+  console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
 
   const tau0 = findDirectPathTau(corrReal, predictedTau0OrNull, lockStrength, sampleRate);
   console.debug(`[corrAndBuild] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms, sample=${Math.round(tau0 * sampleRate)})`);
@@ -262,8 +269,13 @@ async function captureGolaySteered(
   // Apply RX beamforming if stereo mic array is configured
   const rxGeo = buildRxGeometry(micArraySpacing, c, micChannelsA.length);
   const rxChannelDelaySec = getRxChannelDelaySec(micChannelsA.length);
-  const micA = rxGeo ? delayAndSum(micChannelsA, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capA.micWin;
-  const micB = rxGeo ? delayAndSum(micChannelsB, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capB.micWin;
+  const micARaw = rxGeo ? delayAndSum(micChannelsA, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capA.micWin;
+  const micBRaw = rxGeo ? delayAndSum(micChannelsB, angleDeg, rxGeo, sampleRate, rxChannelDelaySec) : capB.micWin;
+
+  // Bandpass-filter mic signals to the probe frequency band
+  const probeConfig = store.get().config.probe;
+  const micA = bandpassToProbe(micARaw, probeConfig, sampleRate);
+  const micB = bandpassToProbe(micBRaw, probeConfig, sampleRate);
 
   // Sum raw correlations WITHOUT per-half normalization to preserve Golay sidelobe cancellation
   const corrA = fftCorrelateComplex(micA, a, sampleRate);
@@ -286,6 +298,18 @@ async function captureGolaySteered(
   for (let i = 0; i < corrRealSum.length; i++) { const v = Math.abs(corrRealSum[i]); if (v > corrSumMax) { corrSumMax = v; corrSumMaxIdx = i; } }
   console.debug(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
 
+  // TX evidence: check each half for signal presence
+  const txA = estimateCorrelationEvidence(corrA.correlation, micA, a);
+  const txB = estimateCorrelationEvidence(corrB.correlation, micB, b);
+  const golayTxEvidence = {
+    peakNorm: Math.max(txA.peakNorm, txB.peakNorm),
+    medianNorm: (txA.medianNorm + txB.medianNorm) / 2,
+    prominence: Math.max(txA.prominence, txB.prominence),
+    peakIndex: txA.peakNorm >= txB.peakNorm ? txA.peakIndex : txB.peakIndex,
+    pass: txA.pass || txB.pass,
+  };
+  console.debug(`[golayCorr] txA.pass=${txA.pass} txB.pass=${txB.pass} txPass=${golayTxEvidence.pass} peakNorm=${golayTxEvidence.peakNorm.toFixed(4)} prominence=${golayTxEvidence.prominence.toFixed(2)}`);
+
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));
   else if (Number.isFinite(predTau0A)) predTau0 = predTau0A;
@@ -295,7 +319,7 @@ async function captureGolaySteered(
   console.debug(`[golayCorr] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms) predTau0=${predTau0?.toFixed(6) ?? 'null'}`);
 
   const prof = buildRangeProfileFromCorrelation(corrRealSum, tau0, c, minR, maxR, sampleRate, heatBins);
-  return { corrReal: corrRealSum, corrImag: corrImagSum, tau0, prof };
+  return { corrReal: corrRealSum, corrImag: corrImagSum, tau0, prof, txEvidence: golayTxEvidence };
 }
 
 export async function doPingDetailed(
@@ -345,6 +369,7 @@ export async function doPingDetailed(
     corrFinalImag = golay.corrImag;
     tau0Final = golay.tau0;
     profFinal = golay.prof;
+    txEvidence = golay.txEvidence;
   } else if (probe.type === 'multiplex' && probe.ref && probe.refsByCarrier && probe.carrierHz) {
     // Distributed: broadcast capture request before local ping
     const muxPingId = nextPingId++;
@@ -368,7 +393,14 @@ export async function doPingDetailed(
 
     const rxGeo = buildRxGeometry(config.micArraySpacing, c, muxMicChannels.length);
     const rxChannelDelaySec = getRxChannelDelaySec(muxMicChannels.length);
-    const micSignal = rxGeo ? delayAndSum(muxMicChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
+    const micSignalRaw = rxGeo ? delayAndSum(muxMicChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
+    // Bandpass-filter mic to the probe frequency band
+    const micSignal = bandpassToProbe(micSignalRaw, config.probe, sr);
+
+    // TX evidence: check if probe was actually transmitted
+    const muxTxCorr = fftCorrelateComplex(micSignal, probe.ref, sr);
+    txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignal, probe.ref);
+    console.debug(`[doPing:multiplex] txPass=${txEvidence.pass} peakNorm=${txEvidence.peakNorm.toFixed(4)} prominence=${txEvidence.prominence.toFixed(2)}`);
 
     const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
     const demux = demuxMultiplexProfile({
@@ -457,7 +489,9 @@ export async function doPingDetailed(
     // Apply RX beamforming if stereo mic array is configured
     const rxGeo = buildRxGeometry(config.micArraySpacing, c, micChannels.length);
     const rxChannelDelaySec = getRxChannelDelaySec(micChannels.length);
-    const micSignal = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
+    const micSignalRaw = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
+    // Bandpass-filter mic to the probe frequency band
+    const micSignal = bandpassToProbe(micSignalRaw, config.probe, sr);
     if (probe.type === 'chirp' && config.probe.type === 'chirp') {
       chirpStabilityInput = {
         micSignal,
@@ -876,13 +910,12 @@ export async function doPingDetailed(
 
   const trackingRange = bestR;
   const trackingStrength = bestVal;
-  if (!txEvidence.pass) {
-    profFinal = new Float32Array(profFinal.length);
-  }
   if (isWeak) {
     bestBin = -1;
     bestVal = 0;
     bestR = NaN;
+    profFinal = new Float32Array(profFinal.length);
+    corrFinalReal = new Float32Array(corrFinalReal.length);
   }
 
   // Update store

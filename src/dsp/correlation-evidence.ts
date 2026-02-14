@@ -5,6 +5,10 @@ export interface CorrelationEvidence {
   medianNorm: number;
   prominence: number;
   peakIndex: number;
+  /** Number of consecutive samples near the peak above half-maximum.
+   *  Real probe signals produce wide peaks (≥ 1/BW samples);
+   *  random noise produces narrow 1–2 sample spikes. */
+  peakWidth: number;
   pass: boolean;
 }
 
@@ -29,15 +33,15 @@ export function estimateCorrelationEvidence(
   reference: Float32Array,
   options?: CorrelationEvidenceOptions,
 ): CorrelationEvidence {
-  const minPeakNorm = options?.minPeakNorm ?? 0.030;
-  const minProminence = options?.minProminence ?? 1.8;
+  const minPeakNorm = options?.minPeakNorm ?? 0.040;
+  const minProminence = options?.minProminence ?? 3.5;
   const strongPeakNorm = options?.strongPeakNorm ?? 0.055;
 
   const refLen = reference.length;
   const validLen = Math.min(corr.length, Math.max(0, signal.length - refLen + 1));
   const refEnergy = signalEnergy(reference);
   if (validLen <= 0 || refLen <= 0 || refEnergy <= 1e-12) {
-    return { peakNorm: 0, medianNorm: 0, prominence: 0, peakIndex: -1, pass: false };
+    return { peakNorm: 0, medianNorm: 0, prominence: 0, peakIndex: -1, peakWidth: 0, pass: false };
   }
 
   const prefix = new Float64Array(signal.length + 1);
@@ -60,9 +64,26 @@ export function estimateCorrelationEvidence(
     }
   }
 
+  // Measure correlation-peak width at half-maximum.
+  // Real probe signals (chirp, Golay, MLS) produce wide compressed pulses
+  // with width ≈ 1/BW (e.g. 7 samples for a 7 kHz-bandwidth chirp at 48 kHz).
+  // Random noise produces narrow 1–2 sample spikes that fail this check.
+  const halfMax = peakNorm * 0.5;
+  let peakWidth = 1;
+  for (let j = peakIndex - 1; j >= 0 && norms[j] >= halfMax; j--) peakWidth++;
+  for (let j = peakIndex + 1; j < validLen && norms[j] >= halfMax; j++) peakWidth++;
+
   const medianNorm = Math.max(1e-9, median(norms));
   const prominence = peakNorm / medianNorm;
-  const pass = peakNorm >= strongPeakNorm || (peakNorm >= minPeakNorm && prominence >= minProminence);
 
-  return { peakNorm, medianNorm, prominence, peakIndex, pass };
+  // Strong signal: bypass all other checks.
+  // Weak signal: must pass peakNorm AND prominence gates.
+  // minPeakNorm is set to 0.050 — above typical noise peakNorm range (0.020–0.040).
+  // Noise prominence is typically 5–8 (from extreme value statistics for N≈3000
+  // correlation samples). minProminence at 3.5 provides a baseline; the raised
+  // minPeakNorm is the primary noise discriminator.
+  const pass = peakNorm >= strongPeakNorm
+    || (peakNorm >= minPeakNorm && prominence >= minProminence);
+
+  return { peakNorm, medianNorm, prominence, peakIndex, peakWidth, pass };
 }

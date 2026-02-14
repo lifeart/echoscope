@@ -7,6 +7,7 @@ import { buildSaftHeatmap } from './saft.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
 import { fftCorrelateComplex } from '../dsp/fft-correlate.js';
 import { estimateCorrelationEvidence } from '../dsp/correlation-evidence.js';
+import { bandpassToProbe } from '../dsp/probe-band.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
 import { applyQualityAlgorithms } from '../dsp/quality.js';
 import { caCfar } from '../dsp/cfar.js';
@@ -254,15 +255,13 @@ async function captureOneSideRangeProfile(
   sampleRate: number,
 ): Promise<Float32Array> {
   const capture = await pingAndCaptureOneSide(ref, side, gain, listenMs);
-  const corr = fftCorrelateComplex(capture.micWin, ref, sampleRate).correlation;
-  const txEvidence = estimateCorrelationEvidence(corr, capture.micWin, ref, {
-    minPeakNorm: 0.012,
-    minProminence: 1.25,
-    strongPeakNorm: 0.026,
-  });
-  const txWeakPass = txEvidence.peakNorm >= 0.009 && txEvidence.prominence >= 1.12;
-  if (!txEvidence.pass && !txWeakPass) {
-    console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txPass=${txEvidence.pass} -> zero profile`);
+  // Bandpass-filter mic to the probe frequency band to reject out-of-band noise
+  const probeConfig = store.get().config.probe;
+  const micFiltered = bandpassToProbe(capture.micWin, probeConfig, sampleRate);
+  const corr = fftCorrelateComplex(micFiltered, ref, sampleRate).correlation;
+  const txEvidence = estimateCorrelationEvidence(corr, micFiltered, ref);
+  if (!txEvidence.pass) {
+    console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} -> zero profile`);
     return new Float32Array(heatBins);
   }
   energyNormalize(corr, signalEnergy(ref));
@@ -294,22 +293,16 @@ async function captureOneSideRangeProfileGolay(
   if (gapMs > 0) await sleep(gapMs);
   const capB = await pingAndCaptureOneSide(b, side, gain, listenMs);
 
-  const corrA = fftCorrelateComplex(capA.micWin, a, sampleRate).correlation;
-  const corrB = fftCorrelateComplex(capB.micWin, b, sampleRate).correlation;
-  const txEvidenceA = estimateCorrelationEvidence(corrA, capA.micWin, a, {
-    minPeakNorm: 0.010,
-    minProminence: 1.20,
-    strongPeakNorm: 0.022,
-  });
-  const txEvidenceB = estimateCorrelationEvidence(corrB, capB.micWin, b, {
-    minPeakNorm: 0.010,
-    minProminence: 1.20,
-    strongPeakNorm: 0.022,
-  });
-  const txPassA = txEvidenceA.pass || (txEvidenceA.peakNorm >= 0.008 && txEvidenceA.prominence >= 1.10);
-  const txPassB = txEvidenceB.pass || (txEvidenceB.peakNorm >= 0.008 && txEvidenceB.prominence >= 1.10);
-  if (!txPassA && !txPassB) {
-    console.log(`[scan:golayEvidence] side=${side} txA=${txPassA} txB=${txPassB} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} -> zero profile`);
+  // Bandpass-filter mic signals to the probe frequency band
+  const probeConfig = store.get().config.probe;
+  const micAFiltered = bandpassToProbe(capA.micWin, probeConfig, sampleRate);
+  const micBFiltered = bandpassToProbe(capB.micWin, probeConfig, sampleRate);
+  const corrA = fftCorrelateComplex(micAFiltered, a, sampleRate).correlation;
+  const corrB = fftCorrelateComplex(micBFiltered, b, sampleRate).correlation;
+  const txEvidenceA = estimateCorrelationEvidence(corrA, micAFiltered, a);
+  const txEvidenceB = estimateCorrelationEvidence(corrB, micBFiltered, b);
+  if (!txEvidenceA.pass && !txEvidenceB.pass) {
+    console.log(`[scan:golayEvidence] side=${side} txA=${txEvidenceA.pass} txB=${txEvidenceB.pass} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} widthA=${txEvidenceA.peakWidth} widthB=${txEvidenceB.peakWidth} -> zero profile`);
     return new Float32Array(heatBins);
   }
   const len = Math.min(corrA.length, corrB.length);

@@ -500,11 +500,22 @@ export function initApp(): void {
 
     const state = store.get();
     const lp = state.lastProfile;
-    if (lp.corr) {
-      console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
-      drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    if (lp.corr && lp.corr.length > 0) {
+      // Check if correlation has meaningful signal (not zeroed out)
+      let corrHasSignal = false;
+      for (let i = 0; i < lp.corr.length; i++) {
+        if (Math.abs(lp.corr[i]) > 1e-12) { corrHasSignal = true; break; }
+      }
+      if (corrHasSignal) {
+        console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
+        drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+      } else {
+        console.log('[ping:complete] no TX detected — showing placeholder');
+        drawProfilePlaceholder();
+      }
     } else {
       console.warn('[ping:complete] no corr in lastProfile');
+      drawProfilePlaceholder();
     }
 
     // Update heatmap row for current angle (works for both single Ping and Scan)
@@ -531,13 +542,21 @@ export function initApp(): void {
     const peak = profile.bestStrength;
     const bins = profile.bins;
     if (bins && bins.length > 0) {
-      const sorted = Float32Array.from(bins).sort();
-      const median = sorted[Math.floor(sorted.length / 2)];
-      const snr = median > 1e-12 ? 10 * Math.log10(peak / median) : 0;
       const statsEl = el('pingStats');
-      if (statsEl) {
-        statsEl.style.display = 'inline-block';
-        statsEl.textContent = `Ping: ${elapsed}ms | peak: ${peak.toFixed(4)} | SNR: ${snr.toFixed(1)} dB`;
+      if (profile.bestBin < 0) {
+        // No valid detection (muted speakers / noise only)
+        if (statsEl) {
+          statsEl.style.display = 'inline-block';
+          statsEl.textContent = `Ping: ${elapsed}ms | no signal detected`;
+        }
+      } else {
+        const sorted = Float32Array.from(bins).sort();
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const snr = median > 1e-12 ? 10 * Math.log10(peak / median) : 0;
+        if (statsEl) {
+          statsEl.style.display = 'inline-block';
+          statsEl.textContent = `Ping: ${elapsed}ms | peak: ${peak.toFixed(4)} | SNR: ${snr.toFixed(1)} dB`;
+        }
       }
     }
   });
