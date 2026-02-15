@@ -173,3 +173,51 @@ export function getAudioContext(): AudioContext {
 export function getSampleRate(): number {
   return store.get().audio.actualSampleRate;
 }
+
+export async function closeAudio(): Promise<void> {
+  const state = store.get();
+  const ctx = state.audio.context;
+  
+  if (!ctx) return;
+  
+  // Stop and release microphone stream tracks
+  const micStream = (ctx as any)._micStream as MediaStream | undefined;
+  if (micStream) {
+    micStream.getTracks().forEach(track => track.stop());
+  }
+  
+  // Disconnect audio nodes
+  const micSource = (ctx as any)._micSource as MediaStreamAudioSourceNode | undefined;
+  const micTapNode = (ctx as any)._micTapNode as AudioNode | undefined;
+  
+  try {
+    if (micSource) micSource.disconnect();
+    if (micTapNode) micTapNode.disconnect();
+  } catch {
+    // Ignore disconnection errors
+  }
+  
+  // Close the audio context
+  try {
+    await ctx.close();
+  } catch {
+    // Ignore close errors
+  }
+  
+  // Clear references
+  (ctx as any)._micStream = null;
+  (ctx as any)._micSource = null;
+  (ctx as any)._micTapNode = null;
+  ringBuffer = null;
+  
+  // Update store
+  store.update(s => {
+    s.audio.context = null;
+    s.audio.isRunning = false;
+    s.audio.channelCount = 1;
+    s.audio.captureMethod = 'worklet';
+    s.status = 'idle';
+  });
+  
+  bus.emit('audio:closed', undefined as unknown as void);
+}
