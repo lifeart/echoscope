@@ -1,5 +1,6 @@
 import type { HeatmapData } from '../types.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
+import { median } from '../utils.js';
 
 export interface HeatmapRowUpdateOptions {
   decayFactor?: number;
@@ -96,14 +97,6 @@ export function averageProfiles(
   profiles: Float32Array[],
 ): { averaged: Float32Array; bestBin: number; bestVal: number } {
   return aggregateProfiles(profiles, { mode: 'mean' });
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  values.sort((a, b) => a - b);
-  const mid = Math.floor(values.length / 2);
-  if (values.length % 2 === 0) return 0.5 * (values[mid - 1] + values[mid]);
-  return values[mid];
 }
 
 export function aggregateProfiles(

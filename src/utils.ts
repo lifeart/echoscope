@@ -21,9 +21,9 @@ export function energyNormalize(corr: Float32Array, refEnergy: number): void {
 }
 
 export function median(arr: number[]): number {
+  const n = arr.length;
+  if (!n) return 0;
   const a = arr.slice().sort((x, y) => x - y);
-  const n = a.length;
-  if (!n) return NaN;
   if (n % 2) return a[(n / 2) | 0];
   return 0.5 * (a[n / 2 - 1] + a[n / 2]);
 }

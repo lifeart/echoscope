@@ -1,4 +1,4 @@
-import { clamp } from '../utils.js';
+import { clamp, median } from '../utils.js';
 import { fftCorrelateComplex } from './fft-correlate.js';
 import { findDirectPathTau } from '../calibration/direct-path.js';
 import { buildRangeProfileFromCorrelation } from './profile.js';
@@ -49,13 +49,7 @@ function energyNormalize(corr: Float32Array, refEnergy: number): void {
   for (let i = 0; i < corr.length; i++) corr[i] *= inv;
 }
 
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
-  return sorted[mid];
-}
+
 
 function fusedMedian(frames: CarrierFrame[], bins: number): Float32Array {
   const out = new Float32Array(bins);

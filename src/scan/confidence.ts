@@ -1,18 +1,10 @@
-import { clamp } from '../utils.js';
+import { clamp, median } from '../utils.js';
 
 export interface ProfileConfidenceMetrics {
   psr: number;
   sharpness: number;
   sidelobeRatio: number;
   confidence: number;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  values.sort((a, b) => a - b);
-  const mid = Math.floor(values.length / 2);
-  if (values.length % 2 === 0) return 0.5 * (values[mid - 1] + values[mid]);
-  return values[mid];
 }
 
 export function computeProfileConfidence(

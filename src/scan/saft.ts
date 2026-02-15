@@ -94,7 +94,7 @@ function resolveAngleTolerance(scanAngles: number[]): number {
   return Math.max(1e-4, 0.45 * minStep);
 }
 
-function buildRowFrameLookup(rawFrames: RawAngleFrame[], scanAngles: number[]): Array<RawAngleFrame | null> {
+export function buildRowFrameLookup(rawFrames: RawAngleFrame[], scanAngles: number[]): Array<RawAngleFrame | null> {
   const lookup: Array<RawAngleFrame | null> = new Array(scanAngles.length).fill(null);
   const tol = resolveAngleTolerance(scanAngles);
 
@@ -129,11 +129,6 @@ function buildRowFrameLookup(rawFrames: RawAngleFrame[], scanAngles: number[]): 
   return lookup;
 }
 
-function getFrameForRow(rowIndex: number, rawFrames: RawAngleFrame[], scanAngles: number[]): RawAngleFrame | null {
-  if (rowIndex < 0 || rowIndex >= scanAngles.length) return null;
-  return buildRowFrameLookup(rawFrames, scanAngles)[rowIndex];
-}
-
 function resolvePhaseCenterHz(cfg: SaftConfig, frame: RawAngleFrame): number {
   if (Number.isFinite(cfg.phaseCenterHz) && cfg.phaseCenterHz > 0) return cfg.phaseCenterHz;
   if (Number.isFinite(frame.centerFreqHz) && frame.centerFreqHz > 0) return frame.centerFreqHz;
@@ -148,7 +143,7 @@ export function coherentSumCell(
   config: SaftConfig,
   spacing: number,
   speedOfSound: number,
-  rowFrameLookup?: Array<RawAngleFrame | null>,
+  rowFrameLookup: Array<RawAngleFrame | null> = buildRowFrameLookup(rawFrames, scanAngles),
 ): { intensity: number; coherence: number } {
   if (targetRowIndex < 0 || targetRowIndex >= scanAngles.length) return { intensity: 0, coherence: 0 };
   if (!(Number.isFinite(rangeMeters) && rangeMeters > 0)) return { intensity: 0, coherence: 0 };
@@ -165,7 +160,7 @@ export function coherentSumCell(
   const targetAngle = scanAngles[targetRowIndex];
 
   for (let row = start; row <= end; row++) {
-    const frame = rowFrameLookup ? rowFrameLookup[row] : getFrameForRow(row, rawFrames, scanAngles);
+    const frame = rowFrameLookup[row];
     if (!frame) continue;
 
     const sourceAngle = scanAngles[row];

@@ -62,11 +62,11 @@ export function buildJointHeatmapFromLR(params: JointHeatmapParams): JointHeatma
   }
 
   const binSize = (maxRange - minRange) / (bins - 1);
+  const halfD = 0.5 * speakerSpacingM;
 
   for (let row = 0; row < rows; row++) {
     const thetaRad = anglesDeg[row] * Math.PI / 180;
-    const shiftRange = 0.5 * speakerSpacingM * Math.sin(thetaRad);
-    const shiftBins = shiftRange / Math.max(1e-9, binSize);
+    const sinTheta = Math.sin(thetaRad);
     const angleW = Number.isFinite(prevAngleDeg)
       ? gaussianWeight(anglesDeg[row], prevAngleDeg!, angleSigmaDeg)
       : 1;
@@ -84,6 +84,18 @@ export function buildJointHeatmapFromLR(params: JointHeatmapParams): JointHeatma
       const priorW = Number.isFinite(priorRangeM) && Number.isFinite(priorSigmaM)
         ? gaussianWeight(r, priorRangeM!, Math.max(1e-6, priorSigmaM!))
         : 1;
+
+      // Near-field path-length difference: exact geometry for speaker
+      // half-spacing d/2 and target at range r, angle θ.
+      // ΔR = sqrt(r² + (d/2)² + r·d·sinθ) - sqrt(r² + (d/2)² - r·d·sinθ)
+      // This reduces to the far-field approximation d·sin(θ)/2 when r >> d.
+      const rSq = r * r;
+      const halfDSq = halfD * halfD;
+      const rdSin = r * speakerSpacingM * sinTheta;
+      const dL = Math.sqrt(rSq + halfDSq + rdSin);
+      const dR = Math.sqrt(rSq + halfDSq - rdSin);
+      const shiftRange = 0.5 * (dL - dR);
+      const shiftBins = shiftRange / Math.max(1e-9, binSize);
 
       const left = interpolateLinear(profileL, bin + shiftBins);
       const right = interpolateLinear(profileR, bin - shiftBins);

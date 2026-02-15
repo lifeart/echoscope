@@ -1,6 +1,6 @@
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import { clamp, sleep, signalEnergy, energyNormalize } from '../utils.js';
+import { clamp, sleep, signalEnergy, energyNormalize, median } from '../utils.js';
 import { doPingDetailed, resetClutter } from './ping-cycle.js';
 import { createHeatmap, updateHeatmapRow, aggregateProfiles, crossAngleSmooth } from './heatmap-data.js';
 import { buildSaftHeatmap } from './saft.js';
@@ -35,14 +35,6 @@ interface JointAnglePrior {
   sigmaDeg: number;
   source: 'none' | 'history' | 'track' | 'blended';
   trackConfidence: number;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
-  return sorted[mid];
 }
 
 function medianProfile(profiles: Float32Array[]): Float32Array {
@@ -138,7 +130,11 @@ export function selectConsensusDirection(
       const coherent = Math.abs(rowBestBin[nr] - rowBestBin[r]) <= config.continuityBins;
       support += coherent ? rowScores[nr] : -0.25 * rowScores[nr];
     }
-    const consensusScore = smoothed[r] + 0.6 * support;
+    // Clamp negative support so incoherent neighbors can't overwhelm the
+    // row's own score. Without the floor, two strong incoherent neighbors
+    // can suppress a legitimate detection entirely.
+    const clampedSupport = Math.max(support, -0.5 * smoothed[r]);
+    const consensusScore = smoothed[r] + 0.6 * clampedSupport;
     if (consensusScore > bestScore) {
       bestScore = consensusScore;
       bestRow = r;
@@ -377,6 +373,30 @@ function selectBestRowByScores(scores: Float32Array): number {
   return bestRow;
 }
 
+/**
+ * Interpolate a complex sample at a fractional index using linear interpolation.
+ * Returns {real, imag} at the given (possibly fractional) sample position.
+ */
+function interpolateComplexSample(
+  real: Float32Array,
+  imag: Float32Array,
+  index: number,
+  len: number,
+): { r: number; i: number } {
+  if (index < 0 || index >= len - 1) {
+    // Clamp to edges
+    const clamped = Math.max(0, Math.min(len - 1, Math.round(index)));
+    return { r: real[clamped], i: imag[clamped] };
+  }
+  const i0 = Math.floor(index);
+  const frac = index - i0;
+  const i1 = Math.min(i0 + 1, len - 1);
+  return {
+    r: real[i0] + (real[i1] - real[i0]) * frac,
+    i: imag[i0] + (imag[i1] - imag[i0]) * frac,
+  };
+}
+
 function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null {
   if (frames.length === 0) return null;
   if (frames.length === 1) return frames[0];
@@ -388,18 +408,30 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
   const len = Math.floor(minLen);
   const corrReal = new Float32Array(len);
   const corrImag = new Float32Array(len);
-  let tau0Sum = 0;
   let qualitySum = 0;
   let centerFreqSum = 0;
 
+  // Use first frame's tau0 as the reference; shift all other frames to
+  // align their correlation peaks before averaging. Without this alignment,
+  // sub-sample tau0 jitter causes destructive interference at the peak,
+  // degrading SNR instead of improving it.
+  const refTau0 = first.tau0;
+
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i];
-    tau0Sum += frame.tau0;
     qualitySum += frame.quality;
     centerFreqSum += frame.centerFreqHz;
+
+    // Compute the sample offset needed to align this frame's tau0 to refTau0
+    const deltaTau = frame.tau0 - refTau0;
+    const shiftSamples = deltaTau * frame.sampleRate;
+
     for (let n = 0; n < len; n++) {
-      corrReal[n] += frame.corrReal[n];
-      corrImag[n] += frame.corrImag[n];
+      // Read from the shifted position in this frame's correlation
+      const srcIndex = n + shiftSamples;
+      const sample = interpolateComplexSample(frame.corrReal, frame.corrImag, srcIndex, len);
+      corrReal[n] += sample.r;
+      corrImag[n] += sample.i;
     }
   }
 
@@ -412,7 +444,7 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
   return {
     angleDeg: first.angleDeg,
     sampleRate: first.sampleRate,
-    tau0: tau0Sum * inv,
+    tau0: refTau0,
     corrReal,
     corrImag,
     centerFreqHz: centerFreqSum * inv,
@@ -899,12 +931,11 @@ export async function doScan(): Promise<void> {
     crossAngleSmooth(heatmap, config.crossAngleSmooth.radius ?? 1);
   }
 
-  // Blend with previous scan data to stabilize targets across scans
-  blendWithPreviousScan(heatmap);
-
-  // Apply CFAR + confidence gating per row to reject false-alarm rows.
-  // The legacy TX-steering path gets this through doPingDetailed; the L/R
-  // path skipped it entirely, making it more prone to false positives.
+  // Apply CFAR + confidence gating per row BEFORE inter-scan blending.
+  // CFAR statistics depend on the current noise floor; blending with the
+  // previous scan alters those statistics and can mask false alarms.
+  // The legacy TX-steering path applies CFAR inside doPingDetailed (before
+  // any blending), so this ordering keeps both paths consistent.
   const rowScores = new Float32Array(angles.length);
   for (let i = 0; i < angles.length; i++) {
     const profile = rowProfileView(heatmap, i);
@@ -921,6 +952,10 @@ export async function doScan(): Promise<void> {
 
     rowScores[i] = bestValI * confMetrics.confidence;
   }
+
+  // Blend with previous scan data to stabilize targets across scans
+  // (after CFAR gating to preserve noise-floor statistics)
+  blendWithPreviousScan(heatmap);
   const rowCandidate = selectBestRowByScores(rowScores);
   const bestRow = applyAngularContinuity(rowCandidate, angles, rowScores);
 

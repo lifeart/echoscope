@@ -1,4 +1,5 @@
 import type { QualityPerf } from '../types.js';
+import { median } from '../utils.js';
 
 export function median3Profile(src: Float32Array): Float32Array {
   const n = src.length;
@@ -56,14 +57,6 @@ export interface ResolveAutoQualityOptions {
   highPsr: number;
 }
 
-function medianValue(src: Float32Array): number {
-  if (!src.length) return 0;
-  const sorted = Array.from(src).sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
-  return sorted[mid];
-}
-
 export function computeProfileQualityStats(profile: Float32Array): ProfileQualityStats {
   if (profile.length === 0) {
     return { peak: 0, floor: 0, psr: 0, snrDb: -Infinity };
@@ -72,7 +65,7 @@ export function computeProfileQualityStats(profile: Float32Array): ProfileQualit
   for (let i = 0; i < profile.length; i++) {
     if (profile[i] > peak) peak = profile[i];
   }
-  const floor = Math.max(1e-12, medianValue(profile));
+  const floor = Math.max(1e-12, median(Array.from(profile)));
   const psr = peak / floor;
   const snrDb = 20 * Math.log10(Math.max(1e-12, psr));
   return { peak, floor, psr, snrDb };
