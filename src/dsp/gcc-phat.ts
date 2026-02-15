@@ -22,9 +22,9 @@ export function gccPhat(sig1: Float32Array, sig2: Float32Array, sampleRate: numb
   const outR = new Float32Array(N);
   const outI = new Float32Array(N);
   for (let k = 0; k < N; k++) {
-    // G12 = X1 * conj(X2)
+    // G12 = conj(X1) * X2
     const gR = r1[k] * r2[k] + i1[k] * i2[k];
-    const gI = i1[k] * r2[k] - r1[k] * i2[k];
+    const gI = r1[k] * i2[k] - i1[k] * r2[k];
     const mag = Math.sqrt(gR * gR + gI * gI);
     if (mag > 1e-12) {
       outR[k] = gR / mag;

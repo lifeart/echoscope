@@ -20,7 +20,7 @@ export interface ProfileBest {
 export function findPeak(a: Float32Array, start = 0, end = a.length): PeakResult {
   const s = clamp(start | 0, 0, a.length);
   const e = clamp(end | 0, s, a.length);
-  if (e <= s) return { index: s, value: 0 };
+  if (e <= s) return { index: Math.max(0, Math.min(s, a.length - 1)), value: 0 };
   let bestI = s, bestV = -Infinity;
   for (let i = s; i < e; i++) {
     const v = a[i];
@@ -32,7 +32,7 @@ export function findPeak(a: Float32Array, start = 0, end = a.length): PeakResult
 export function findPeakAbs(a: Float32Array, start = 0, end = a.length): PeakAbsResult {
   const s = clamp(start | 0, 0, a.length);
   const e = clamp(end | 0, s, a.length);
-  if (e <= s) return { index: s, value: 0, absValue: 0 };
+  if (e <= s) return { index: Math.max(0, Math.min(s, a.length - 1)), value: 0, absValue: 0 };
   let bestI = s, bestV = -Infinity, bestRaw = 0;
   for (let i = s; i < e; i++) {
     const raw = a[i];

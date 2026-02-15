@@ -74,7 +74,7 @@ export function computeProfileQualityStats(profile: Float32Array): ProfileQualit
   }
   const floor = Math.max(1e-12, medianValue(profile));
   const psr = peak / floor;
-  const snrDb = 10 * Math.log10(Math.max(1e-12, psr));
+  const snrDb = 20 * Math.log10(Math.max(1e-12, psr));
   return { peak, floor, psr, snrDb };
 }
 
@@ -101,12 +101,12 @@ export function resolveAutoQualityAlgo(
 
   let target: QualityAlgoName = current;
   if (current === 'max') {
-    target = (stats.psr > opts.lowPsr + 1 && stats.snrDb > 8) ? 'balanced' : 'max';
+    target = (stats.psr > opts.lowPsr + 1 && stats.snrDb > 16) ? 'balanced' : 'max';
   } else if (current === 'fast') {
-    target = (stats.psr < opts.highPsr - 1 || stats.snrDb < 12) ? 'balanced' : 'fast';
+    target = (stats.psr < opts.highPsr - 1 || stats.snrDb < 24) ? 'balanced' : 'fast';
   } else {
-    if (stats.psr < opts.lowPsr - 0.5 || stats.snrDb < 5) target = 'max';
-    else if (stats.psr > opts.highPsr + 1 && stats.snrDb > 16) target = 'fast';
+    if (stats.psr < opts.lowPsr - 0.5 || stats.snrDb < 10) target = 'max';
+    else if (stats.psr > opts.highPsr + 1 && stats.snrDb > 32) target = 'fast';
     else target = 'balanced';
   }
 
