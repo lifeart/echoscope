@@ -200,6 +200,22 @@ function corrAndBuildProfile(
   for (let i = 0; i < micWin.length; i++) { const v = Math.abs(micWin[i]); if (v > micMax) micMax = v; }
   console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
 
+  // Early exit: if TX evidence fails (e.g., mic muted), skip all processing
+  if (!txEvidence.pass) {
+    console.debug(`[corrAndBuild] TX evidence failed — early exit (mic may be muted)`);
+    const emptyProf = new Float32Array(heatBins);
+    return {
+      corrReal: new Float32Array(corrReal.length),
+      corrImag: new Float32Array(corrImag.length),
+      tau0: 0,
+      prof: emptyProf,
+      bestBin: -1,
+      bestVal: 0,
+      bestR: NaN,
+      txEvidence,
+    };
+  }
+
   const tau0 = findDirectPathTau(corrReal, predictedTau0OrNull, lockStrength, sampleRate);
   console.debug(`[corrAndBuild] tau0=${tau0.toFixed(6)} (${(tau0 * 1000).toFixed(2)}ms, sample=${Math.round(tau0 * sampleRate)})`);
 
@@ -318,6 +334,18 @@ async function captureGolaySteered(
   };
   console.debug(`[golayCorr] txA.pass=${txA.pass} txB.pass=${txB.pass} txPass=${golayTxEvidence.pass} peakNorm=${golayTxEvidence.peakNorm.toFixed(4)} prominence=${golayTxEvidence.prominence.toFixed(2)}`);
 
+  // Early exit: if Golay TX evidence fails, skip processing
+  if (!golayTxEvidence.pass) {
+    console.debug(`[golayCorr] TX evidence failed — early exit (mic may be muted)`);
+    return {
+      corrReal: new Float32Array(corrRealSum.length),
+      corrImag: new Float32Array(corrImagSum.length),
+      tau0: 0,
+      prof: new Float32Array(heatBins),
+      txEvidence: golayTxEvidence,
+    };
+  }
+
   let predTau0: number | null = null;
   if (Number.isFinite(predTau0A) && Number.isFinite(predTau0B)) predTau0 = 0.5 * ((predTau0A ?? 0) + (predTau0B ?? 0));
   else if (Number.isFinite(predTau0A)) predTau0 = predTau0A;
@@ -410,6 +438,29 @@ export async function doPingDetailed(
     const muxTxCorr = fftCorrelateComplex(micSignal, probe.ref, sr);
     txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignalRaw, probe.ref);
     console.debug(`[doPing:multiplex] txPass=${txEvidence.pass} peakNorm=${txEvidence.peakNorm.toFixed(4)} prominence=${txEvidence.prominence.toFixed(2)}`);
+
+    // Early exit: if TX evidence fails, skip all processing
+    if (!txEvidence.pass) {
+      console.debug(`[doPing:multiplex] TX evidence failed — early exit (mic may be muted)`);
+      const emptyProf = new Float32Array(heatBins);
+      const emptyCorr = new Float32Array(1);
+      corrFinalReal = emptyCorr;
+      corrFinalImag = emptyCorr;
+      tau0Final = 0;
+      profFinal = emptyProf;
+      // Skip to final result emission
+      const rangeProfile: RangeProfile = {
+        bins: profFinal,
+        minRange: minR,
+        maxRange: maxR,
+        binCount: heatBins,
+        bestBin: -1,
+        bestRange: NaN,
+        bestStrength: 0,
+      };
+      bus.emit('ping:complete', { angleDeg, profile: rangeProfile });
+      return { profile: rangeProfile, rawFrame: { angleDeg, sampleRate: sr, tau0: tau0Final, corrReal: corrFinalReal, corrImag: corrFinalImag, centerFreqHz: estimateProbeCenterHz(), quality: 0 } };
+    }
 
     const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
     const demux = demuxMultiplexProfile({

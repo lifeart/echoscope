@@ -51,7 +51,7 @@ function inv2x2(a: number, b: number, c: number, d: number): [number, number, nu
 }
 
 /** Wrap angle difference to [-180, 180]. */
-function wrapAngle(deg: number): number {
+export function wrapAngle(deg: number): number {
   return ((deg + 180) % 360 + 360) % 360 - 180;
 }
 

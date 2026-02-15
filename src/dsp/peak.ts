@@ -48,7 +48,7 @@ export function pickBestFromProfile(prof: Float32Array): { bin: number; val: num
     const v = prof[i];
     if (v > bv) { bv = v; bi = i; }
   }
-  return { bin: bi, val: (bv < 0 ? 0 : bv) };
+  return { bin: bi, val: bv };
 }
 
 export function estimateBestFromProfile(prof: Float32Array, minR: number, maxR: number): ProfileBest {

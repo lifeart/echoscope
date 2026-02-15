@@ -524,7 +524,12 @@ export function initApp(): void {
       const rowIdx = heatmap.angles.indexOf(angleDeg);
       console.log(`[ping:complete] heatmap lookup: angleDeg=${angleDeg} rowIdx=${rowIdx} angles=${JSON.stringify(heatmap.angles)}`);
       if (rowIdx >= 0) {
-        updateHeatmapRow(heatmap, rowIdx, profile.bins, profile.bestBin, profile.bestStrength);
+        // Skip heatmap update if profile is empty (no valid detection)
+        if (profile.bestBin >= 0 && profile.bestStrength > 1e-12) {
+          updateHeatmapRow(heatmap, rowIdx, profile.bins, profile.bestBin, profile.bestStrength);
+        } else {
+          console.log(`[ping:complete] skipping heatmap update — no valid detection (bestBin=${profile.bestBin}, bestStrength=${profile.bestStrength.toExponential(3)})`);
+        }
       } else {
         console.warn(`[ping:complete] angle ${angleDeg} not found in heatmap angles`);
       }

@@ -51,10 +51,10 @@ function energyNormalize(corr: Float32Array, refEnergy: number): void {
 
 function median(values: number[]): number {
   if (values.length === 0) return 0;
-  values.sort((a, b) => a - b);
-  const mid = Math.floor(values.length / 2);
-  if (values.length % 2 === 0) return 0.5 * (values[mid - 1] + values[mid]);
-  return values[mid];
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) return 0.5 * (sorted[mid - 1] + sorted[mid]);
+  return sorted[mid];
 }
 
 function fusedMedian(frames: CarrierFrame[], bins: number): Float32Array {
