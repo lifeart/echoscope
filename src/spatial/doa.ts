@@ -44,8 +44,10 @@ export function srpPhatDOA(
     for (let p = 0; p < pairs.length; p++) {
       const [i, j] = pairs[p];
       const dx = mics[j].x - mics[i].x;
-      // Expected TDOA for this angle
-      const expectedDelay = (dx * Math.sin(theta)) / c;
+      // Expected TDOA for this angle: τ_ij = -(dx * sinθ) / c
+      // Negative sign because a source at positive θ reaches the
+      // further mic (j, if dx > 0) later, shortening its path.
+      const expectedDelay = -(dx * Math.sin(theta)) / c;
       // Look up GCC value at expected delay
       const delaySamples = Math.round(expectedDelay * sampleRate);
       const gcc = gccResults[p].gcc;
