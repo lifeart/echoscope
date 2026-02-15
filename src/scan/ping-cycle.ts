@@ -706,6 +706,10 @@ export async function doPingDetailed(
     bestR = mapPeak.range;
   }
 
+  // --- Simplified detection scoring ---
+  // Replaces ~15 boolean spaghetti variables with a single weighted score.
+  // Detection passes when score >= 1.0 (normalized threshold).
+
   const edgeBinMargin = Math.max(3, Math.floor(profFinal.length * 0.02));
   const isEdgePeak = bestBin >= 0
     && (bestBin <= edgeBinMargin || bestBin >= (profFinal.length - 1 - edgeBinMargin));
@@ -729,246 +733,69 @@ export async function doPingDetailed(
       : null;
   const confidenceBoost = subbandStability?.confidenceBoost ?? 0;
   const conf = confidenceBoost > 0
-    ? {
-      ...confBase,
-      confidence: Math.min(1, confBase.confidence + confidenceBoost),
-    }
+    ? { ...confBase, confidence: Math.min(1, confBase.confidence + confidenceBoost) }
     : confBase;
+
   const cfarResult = caCfar(profFinal, config.cfar);
-  // Re-evaluate CFAR at the MAP-selected bin (may differ from raw best peak).
-  // This ensures the CFAR detection status corresponds to the peak we actually use.
   const cfarDetected = bestBin >= 0 && cfarResult.detections[bestBin] === 1;
   const cfarThresholdAtBest = bestBin >= 0 && bestBin < cfarResult.thresholds.length
-    ? cfarResult.thresholds[bestBin]
-    : NaN;
+    ? cfarResult.thresholds[bestBin] : NaN;
   const cfarRatioAtBest = Number.isFinite(cfarThresholdAtBest) && cfarThresholdAtBest > 0
-    ? bestVal / cfarThresholdAtBest
-    : NaN;
+    ? bestVal / cfarThresholdAtBest : NaN;
 
+  // Mahalanobis distance to nearest tracked target
   let bestTrackMd = NaN;
   if (state.targets.length > 0 && Number.isFinite(bestR) && bestBin >= 0) {
-    const measurement: Measurement = {
-      range: bestR,
-      angleDeg,
-      strength: bestVal,
-      timestamp: nowMs,
-    };
+    const measurement: Measurement = { range: bestR, angleDeg, strength: bestVal, timestamp: nowMs };
     for (const target of state.targets) {
       const md = mahalanobisDistance(target, measurement, DEFAULT_KALMAN_CONFIG);
       if (!Number.isFinite(bestTrackMd) || md < bestTrackMd) bestTrackMd = md;
     }
   }
 
-  const trackStrongEvidence =
-    cfarDetected
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 1.35
-    && conf.confidence >= Math.max(0.20, config.confidenceGate * 1.7);
-  const trackNearGateReject =
-    state.targets.length > 0
-    && Number.isFinite(bestTrackMd)
-    && rangePrior?.source === 'track'
-    && !!mapPeak
-    && mapPeak.zScore >= 1.7
-    && bestTrackMd > DEFAULT_MT_CONFIG.gatingThreshold * 0.90
-    && (!Number.isFinite(cfarRatioAtBest) || cfarRatioAtBest < 1.30);
-  const trackOutlierReject =
-    state.targets.length > 0
-    && Number.isFinite(bestTrackMd)
-    && (bestTrackMd > DEFAULT_MT_CONFIG.gatingThreshold || trackNearGateReject)
-    && !trackStrongEvidence;
-
-  const edgeHardReject = isEdgePeak && (
-    !cfarDetected
-    || !Number.isFinite(cfarRatioAtBest)
-    || cfarRatioAtBest < 1.6
-  );
-
-  const nonChirpProbe = config.probe.type !== 'chirp';
-  const chirpProbe = !nonChirpProbe;
-  const confidenceGateEffective = nonChirpProbe
+  // Compute a single detection score from weighted factors.
+  // Each factor contributes 0..1; total >= 1.0 means detection accepted.
+  const confidenceGateEff = config.probe.type !== 'chirp'
     ? Math.min(config.confidenceGate, 0.14)
     : config.confidenceGate;
-  const strengthGateEffective = strengthGate;
-  const nonChirpCfarPass =
-    nonChirpProbe
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 0.20
-    && conf.confidence >= Math.max(0.05, confidenceGateEffective * 0.70);
-  const chirpCfarAssist =
-    chirpProbe
-    && !cfarDetected
-    && !!mapPeak
-    && !!rangePrior
-    && rangePrior.source === 'mid-range'
-    && mapPeak.zScore <= 0.35
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 0.82
-    && bestVal > strengthGateEffective * 0.80
-    && conf.confidence >= Math.max(0.06, confidenceGateEffective * 0.82);
-  const chirpTrackCfarAssist =
-    chirpProbe
-    && !cfarDetected
-    && state.targets.length > 0
-    && Number.isFinite(bestTrackMd)
-    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.70
-    && !!mapPeak
-    && !!rangePrior
-    && rangePrior.source === 'track'
-    && mapPeak.zScore <= 0.55
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 0.88
-    && bestVal > strengthGateEffective * 0.90
-    && conf.confidence >= Math.max(0.045, confidenceGateEffective * 0.48)
-    && !edgeHardReject
-    && !trackOutlierReject;
-  const chirpSubbandCfarAssist =
-    chirpProbe
-    && !cfarDetected
-    && !edgeHardReject
-    && !trackOutlierReject
-    && !!subbandStability
-    && !!mapPeak
-    && !!rangePrior
-    && Number.isFinite(cfarRatioAtBest)
-    && bestVal > strengthGateEffective * 0.95
-    && conf.confidence >= Math.max(0.08, confidenceGateEffective * 0.90)
-    && (
-      ((subbandStability.supportCount >= 3 && subbandStability.stability >= 0.60) && cfarRatioAtBest >= 0.62)
-      || ((subbandStability.supportCount >= 2 && subbandStability.stability >= 0.30) && cfarRatioAtBest >= 0.82)
-    )
-    && (
-      (rangePrior.source === 'mid-range' && mapPeak.zScore <= 1.00)
-      || (
-        rangePrior.source === 'track'
-        && mapPeak.zScore <= 0.90
-        && Number.isFinite(bestTrackMd)
-        && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.85
-      )
-    );
-  const cfarPass = cfarDetected || nonChirpCfarPass || chirpCfarAssist || chirpTrackCfarAssist || chirpSubbandCfarAssist;
 
-  const confidenceSoftPass =
-    conf.confidence >= confidenceGateEffective * 0.92
-    && cfarDetected
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 1.25
-    && !edgeHardReject
-    && (!mapPeak || mapPeak.zScore <= (rangePrior?.source === 'mid-range' ? 0.9 : 1.25));
-  const confidenceTrackPass =
-    cfarPass
-    && !edgeHardReject
-    && state.targets.length > 0
-    && Number.isFinite(bestTrackMd)
-    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.85
-    && conf.confidence >= confidenceGateEffective * 0.82;
-  const confidenceCfarAssist =
-    cfarDetected
-    && !edgeHardReject
-    && !trackOutlierReject
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 1.0
-    && conf.confidence >= Math.max(0.07, confidenceGateEffective * 0.84)
-    && (
-      !chirpProbe
-      || !subbandStability
-      || (subbandStability.supportCount >= 2 && subbandStability.stability >= 0.20)
-    );
-  const confidencePriorAssist =
-    chirpProbe
-    && cfarPass
-    && !!mapPeak
-    && mapPeak.zScore <= 0.35
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 1.05
-    && bestVal > strengthGateEffective * 0.92
-    && conf.confidence >= Math.max(0.06, confidenceGateEffective * 0.80)
-    && !edgeHardReject
-    && !trackOutlierReject;
-  const confidenceTrackPriorAssist =
-    chirpTrackCfarAssist
-    && Number.isFinite(bestTrackMd)
-    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 0.65
-    && conf.confidence >= Math.max(0.045, confidenceGateEffective * 0.50)
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 0.90;
-  const confidencePass =
-    conf.confidence >= confidenceGateEffective
-    || confidenceSoftPass
-    || confidenceTrackPass
-    || confidenceCfarAssist
-    || chirpCfarAssist
-    || confidencePriorAssist
-    || confidenceTrackPriorAssist;
-  const trackOutlierDisplayPass =
-    trackOutlierReject
-    && cfarDetected
-    && confidencePass
-    && Number.isFinite(bestTrackMd)
-    && bestTrackMd <= DEFAULT_MT_CONFIG.gatingThreshold * 2.0
-    && bestVal > strengthGateEffective * 0.95;
-  const trackRejectEffective = trackOutlierReject && !trackOutlierDisplayPass;
+  const confScore = Math.min(1, conf.confidence / Math.max(0.01, confidenceGateEff));
+  const strengthScore = Math.min(1, bestVal / Math.max(1e-12, strengthGate));
+  const cfarScore = cfarDetected ? 1.0
+    : Number.isFinite(cfarRatioAtBest) ? Math.min(1, cfarRatioAtBest) : 0;
+  const trackScore = Number.isFinite(bestTrackMd)
+    ? Math.max(0, 1 - bestTrackMd / (DEFAULT_MT_CONFIG.gatingThreshold * 1.5))
+    : 0;
+  const priorScore = mapPeak
+    ? Math.max(0, 1 - mapPeak.zScore / 2.0)
+    : 0.3; // no prior = neutral
+  const edgePenalty = isEdgePeak ? 0.4 : 0;
 
-  const priorRescue =
-    !cfarPass
-    && !!mapPeak
-    && !!rangePrior
-    && rangePrior.source !== 'mid-range'
-    && mapPeak.zScore <= 1.6
-    && conf.confidence >= confidenceGateEffective * 0.9
-    && bestVal > strengthGateEffective * 1.05;
-  const detectionPass = cfarPass || priorRescue;
-  const strengthSoftPass =
-    bestVal > strengthGateEffective * 0.90
-    && detectionPass
-    && confidencePass
-    && !edgeHardReject
-    && !trackRejectEffective
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 1.0;
-  const strengthCfarAssist =
-    cfarPass
-    && confidencePass
-    && !edgeHardReject
-    && !trackRejectEffective
-    && Number.isFinite(cfarRatioAtBest)
-    && cfarRatioAtBest >= 0.95
-    && bestVal > strengthGateEffective * 0.85;
-  const strengthPass = bestVal > strengthGateEffective || strengthSoftPass || strengthCfarAssist;
+  // Weighted detection score: needs >= 1.0 to pass
+  const detectionScore =
+    0.30 * confScore +
+    0.25 * strengthScore +
+    0.25 * cfarScore +
+    0.10 * trackScore +
+    0.10 * priorScore -
+    edgePenalty;
 
-  const isWeak = edgeHardReject || trackRejectEffective || !detectionPass || !confidencePass || !strengthPass || !txEvidence.pass;
+  const isWeak = !(bestBin >= 0) || !txEvidence.pass || detectionScore < 1.0;
   const trackingCandidate = Number.isFinite(bestR)
     && bestBin >= 0
-    && (cfarPass || priorRescue)
-    && !edgeHardReject
-    && !trackOutlierReject
-    && (bestVal > strengthGateEffective * 0.95 || strengthSoftPass)
-    && conf.confidence >= Math.max(0.05, confidenceGateEffective * 0.60)
-    && txEvidence.pass;
-
-  const rejectReasons: string[] = [];
-  if (!(bestBin >= 0)) rejectReasons.push('no-peak');
-  if (edgeHardReject) rejectReasons.push('edge');
-  if (trackRejectEffective) rejectReasons.push('track');
-  if (!strengthPass) rejectReasons.push('strength');
-  if (!txEvidence.pass) rejectReasons.push('tx');
-  if (!detectionPass) rejectReasons.push('cfar');
-  if (!confidencePass) rejectReasons.push('confidence');
-  const rejectReasonText = rejectReasons.length > 0 ? rejectReasons.join('+') : 'none';
+    && txEvidence.pass
+    && detectionScore >= 0.75;
 
   const topPeaksText = topPeaks
     .map((p, idx) => `#${idx + 1}@b${p.bin}/r${p.range.toFixed(2)}m/v${p.value.toExponential(2)}`)
     .join(' ');
 
-  // Consolidated detection log — uses console.debug to avoid console spam
-  // in production while remaining available via devtools verbose filter.
   console.debug(
     `[rangeDet] a=${angleDeg} bin=${bestBin} r=${Number.isFinite(bestR) ? bestR.toFixed(3) : 'NaN'}m ` +
-    `v=${bestVal.toExponential(3)} conf=${conf.confidence.toFixed(3)} cfar=${cfarDetected}/${cfarPass} ` +
+    `v=${bestVal.toExponential(3)} conf=${conf.confidence.toFixed(3)} cfar=${cfarDetected} ` +
     `cfarR=${Number.isFinite(cfarRatioAtBest) ? cfarRatioAtBest.toFixed(2) : '-'} ` +
-    `prior=${rangePrior?.source ?? '-'} mapZ=${mapPeak ? mapPeak.zScore.toFixed(2) : '-'} ` +
-    `tx=${txEvidence.pass} edge=${edgeHardReject} track=${trackRejectEffective} ` +
-    `weak=${isWeak} reject=${rejectReasonText} peaks=[${topPeaksText}]`,
+    `score=${detectionScore.toFixed(3)} tx=${txEvidence.pass} edge=${isEdgePeak} ` +
+    `weak=${isWeak} peaks=[${topPeaksText}]`,
   );
 
   const trackingRange = bestR;

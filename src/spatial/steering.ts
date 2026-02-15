@@ -1,5 +1,26 @@
 import { sleep } from '../utils.js';
 import { getRingBuffer, computeListenSamples, getAudioContext, getSampleRate } from '../audio/engine.js';
+import { store } from '../core/store.js';
+
+/** Extra margin (seconds) to account for WorkletProcessor→main-thread postMessage latency
+ *  and AudioContext scheduling jitter. */
+const CAPTURE_MARGIN_SEC = 0.065;
+
+/** Wait for ring buffer to advance by at least `minSamples` from `startPos`,
+ *  with a hard timeout to avoid infinite hangs. */
+async function waitForRingAdvance(minSamples: number, startPos: number, timeoutMs = 500): Promise<void> {
+  const ring = getRingBuffer();
+  if (!ring) return;
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    const pos = ring.position;
+    const advanced = pos >= startPos
+      ? pos - startPos
+      : (ring.size - startPos) + pos;  // wrapped
+    if (advanced >= minSamples) return;
+    await sleep(4);
+  }
+}
 
 interface StereoPing {
   srcL: AudioBufferSourceNode;
@@ -74,15 +95,22 @@ export async function pingAndCaptureOneSide(
   const ping = buildStereoPingForOneSide(monoRef, which, gain, delay);
   ping.out.connect(ac.destination);
 
+  const audioLatency = (store.get().audio.baseLatency || 0) + (store.get().audio.outputLatency || 0);
+  const ringBefore = ring.position;
   const tStart = ac.currentTime + 0.03;
   ping.srcL.start(tStart);
   ping.srcR.start(tStart);
 
   const emitDelay = delay + ping.pingSec;
-  await sleep((emitDelay + 0.040) * 1000);
+  const totalWaitSec = emitDelay + audioLatency + CAPTURE_MARGIN_SEC;
+  await sleep(totalWaitSec * 1000);
+
+  // Ensure ring buffer has caught up with expected data
+  const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
+  const expectedAdvance = Math.ceil(totalWaitSec * sr);
+  await waitForRingAdvance(Math.min(expectedAdvance, listenSamples), ringBefore);
 
   const end = ring.position;
-  const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
   const micWin = ring.read(end, listenSamples);
   const micChannels = ring.channels > 1 ? ring.readMulti(end, listenSamples) : [micWin];
 
@@ -104,15 +132,22 @@ export async function pingAndCaptureSteered(
   const ping = buildSteeredStereoPing(monoRef, dt, gain);
   ping.out.connect(ac.destination);
 
+  const audioLatency = (store.get().audio.baseLatency || 0) + (store.get().audio.outputLatency || 0);
+  const ringBefore = ring.position;
   const tStart = ac.currentTime + 0.03;
   ping.srcL.start(tStart);
   ping.srcR.start(tStart);
 
   const emitDelay = Math.max(ping.delayL, ping.delayR) + ping.pingSec;
-  await sleep((emitDelay + 0.040) * 1000);
+  const totalWaitSec = emitDelay + audioLatency + CAPTURE_MARGIN_SEC;
+  await sleep(totalWaitSec * 1000);
+
+  // Ensure ring buffer has caught up with expected data
+  const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
+  const expectedAdvance = Math.ceil(totalWaitSec * sr);
+  await waitForRingAdvance(Math.min(expectedAdvance, listenSamples), ringBefore);
 
   const end = ring.position;
-  const listenSamples = computeListenSamples(listenMs, monoRef.length, sr);
   const micWin = ring.read(end, listenSamples);
   const micChannels = ring.channels > 1 ? ring.readMulti(end, listenSamples) : [micWin];
 

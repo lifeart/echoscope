@@ -10,9 +10,9 @@ export const MIN_FREQUENCY = 800;
 export const MAX_FREQUENCY = 12000;
 export const FADE_SAMPLES = 192;
 
-export const DEFAULT_CHIRP = { f1: 2000, f2: 9000, durationMs: 7 } as const;
+export const DEFAULT_CHIRP = { f1: 2000, f2: 9000, durationMs: 20 } as const;
 export const DEFAULT_MLS = { order: 12, chipRate: 4000 } as const;
-export const DEFAULT_GOLAY = { order: 10, chipRate: 5000, gapMs: 12 } as const;
+export const DEFAULT_GOLAY = { order: 11, chipRate: 6000, gapMs: 15 } as const;
 export const DEFAULT_MULTIPLEX = {
   carrierCount: 6,
   fStart: 2200,

@@ -182,5 +182,36 @@ describe('estimateCorrelationEvidence', () => {
       expect(ev.pass).toBe(true);
       expect(ev.peakNorm).toBeGreaterThan(0.055);
     });
+
+    it('passes long probe via high prominence even with low peakNorm', () => {
+      // Simulates the real-world scenario: longer ref (960 samples) → larger
+      // refEnergy → lower peakNorm, but prominence stays very high because
+      // the embedded signal is clearly distinct from noise.
+      const N = 960;
+      const ref = new Float32Array(N);
+      for (let i = 0; i < N; i++) {
+        ref[i] = Math.sin(2 * Math.PI * i * 4000 / 48000 + (i / N) * Math.PI * 7000 / 48000);
+      }
+      const sigLen = 4800;
+      const signal = new Float32Array(sigLen);
+      // low-level ambient noise
+      let seed = 123;
+      for (let i = 0; i < sigLen; i++) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        signal[i] = ((seed / 0x7fffffff) - 0.5) * 0.002;
+      }
+      // Embed a weak copy of the ref at offset 2000
+      for (let i = 0; i < N && 2000 + i < sigLen; i++) {
+        signal[2000 + i] += ref[i] * 0.02;
+      }
+      const corr = correlate(signal, ref);
+      const ev = estimateCorrelationEvidence(corr, signal, ref);
+
+      // peakNorm will be very small because refEnergy is large
+      // but prominence should be high (>> 12)
+      expect(ev.prominence).toBeGreaterThan(12);
+      expect(ev.pass).toBe(true);
+      expect(ev.peakIndex).toBe(2000);
+    });
   });
 });

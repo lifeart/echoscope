@@ -78,12 +78,16 @@ export function estimateCorrelationEvidence(
 
   // Strong signal: bypass all other checks.
   // Weak signal: must pass peakNorm AND prominence gates.
-  // minPeakNorm is set to 0.050 — above typical noise peakNorm range (0.020–0.040).
-  // Noise prominence is typically 5–8 (from extreme value statistics for N≈3000
-  // correlation samples). minProminence at 3.5 provides a baseline; the raised
-  // minPeakNorm is the primary noise discriminator.
+  // minPeakNorm is set to 0.040 — above typical noise peakNorm range (0.020–0.040)
+  // for short references.  With longer probes (20 ms chirp → refLen 960),
+  // refEnergy grows ~3×, shrinking peakNorm while prominence stays high.
+  // The highProminence path catches this: prominence ≥ 12 (noise range 5–8)
+  // with a minimal-floor peakNorm ≥ 0.005 to reject silence.
+  const highProminence = 12;
+  const minPeakFloor = 0.005;
   const pass = peakNorm >= strongPeakNorm
-    || (peakNorm >= minPeakNorm && prominence >= minProminence);
+    || (peakNorm >= minPeakNorm && prominence >= minProminence)
+    || (prominence >= highProminence && peakNorm >= minPeakFloor);
 
   return { peakNorm, medianNorm, prominence, peakIndex, peakWidth, pass };
 }

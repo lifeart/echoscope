@@ -158,8 +158,8 @@ describe('E2E pipeline: chirp probe', () => {
   it('generates valid chirp reference', () => {
     expect(ref).toBeInstanceOf(Float32Array);
     expect(ref.length).toBeGreaterThan(0);
-    // 7ms at 48kHz ≈ 336 samples
-    expect(ref.length).toBeCloseTo(336, -1);
+    // 20ms at 48kHz ≈ 960 samples
+    expect(ref.length).toBeCloseTo(960, -1);
     // Has non-trivial energy
     expect(signalEnergy(ref)).toBeGreaterThan(0.1);
   });

@@ -30,7 +30,7 @@ const _defaultC = speedOfSoundFromTemp(25);
 const _defaultListenMs = (2 * 4.0 / _defaultC) * 1000 + 50;
 
 const defaultConfig: AppConfig = {
-  probe: { type: 'chirp', params: { f1: 2000, f2: 9000, durationMs: 7 } },
+  probe: { type: 'golay', params: { order: 11, chipRate: 6000, gapMs: 15 } },
   distributed: { enabled: false, captureTimeoutMs: 300 },
   spectrogram: {
     enabled: true,
@@ -41,7 +41,7 @@ const defaultConfig: AppConfig = {
     fps: 24,
   },
   steeringAngleDeg: 0,
-  gain: 0.22,
+  gain: 0.50,
   listenMs: _defaultListenMs,
   minRange: 0.3,
   maxRange: 4.0,
@@ -58,7 +58,7 @@ const defaultConfig: AppConfig = {
   qualityAlgo: 'balanced',
   adaptiveQuality: { enabled: true, hysteresisMs: 1200 },
   directionAxis: 'horizontal',
-  clutterSuppression: { enabled: true, strength: 0.65 },
+  clutterSuppression: { enabled: true, strength: 0.45 },
   displayReflectionBlanking: {
     enabled: false,
     startRange: 0.30,
@@ -66,12 +66,12 @@ const defaultConfig: AppConfig = {
     attenuation: 0.85,
     edgeSoftness: 0.08,
   },
-  envBaseline: { enabled: true, strength: 0.55, pings: 4 },
+  envBaseline: { enabled: true, strength: 0.40, pings: 4 },
   noiseKalman: {
     enabled: true,
     processNoiseQ: 1e-5,
     measurementNoiseR: 5e-4,
-    subtractStrength: 0.55,
+    subtractStrength: 0.40,
     freezeOnHighConfidence: true,
     highConfidenceGate: 0.68,
     minFloor: 0,

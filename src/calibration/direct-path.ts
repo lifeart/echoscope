@@ -1,5 +1,6 @@
 import { clamp } from '../utils.js';
 import { findPeakAbs } from '../dsp/peak.js';
+import { store } from '../core/store.js';
 
 export function findDirectPathTau(
   corr: Float32Array,
@@ -7,11 +8,18 @@ export function findDirectPathTau(
   lockStrength: number,
   sampleRate: number,
 ): number {
+  // Account for audio output latency when determining the search window.
+  // The direct-path peak cannot arrive before the audio system latency,
+  // so we can skip early samples that are pure playback→capture crosstalk.
+  const audioState = store.get().audio;
+  const outputLatencySec = (audioState.outputLatency || 0) + (audioState.baseLatency || 0);
+  const latencySkip = Math.max(0, Math.floor(outputLatencySec * sampleRate * 0.5));
   const earlyEnd = Math.min(corr.length, Math.floor(sampleRate * 0.060));
+  const searchStart = Math.min(latencySkip, Math.max(0, earlyEnd - 64));
   const lock = clamp(lockStrength, 0, 1);
 
   if (predictedTau0SecOrNull === null || !Number.isFinite(predictedTau0SecOrNull) || lock <= 0) {
-    const dp = findPeakAbs(corr, 0, earlyEnd);
+    const dp = findPeakAbs(corr, searchStart, earlyEnd);
     return dp.index / sampleRate;
   }
 
@@ -23,7 +31,7 @@ export function findDirectPathTau(
   const end = clamp(center + searchRadius, 0, earlyEnd);
 
   if (end - start < 64) {
-    const dp = findPeakAbs(corr, 0, earlyEnd);
+    const dp = findPeakAbs(corr, searchStart, earlyEnd);
     return dp.index / sampleRate;
   }
 
@@ -42,7 +50,7 @@ export function findDirectPathTau(
     }
   }
 
-  const fb = findPeakAbs(corr, 0, earlyEnd);
+  const fb = findPeakAbs(corr, searchStart, earlyEnd);
   const minLocalRatio = 0.02 + 0.08 * (1 - lock);
   if (fb.absValue > 1e-12 && Math.abs(corr[bestI]) < minLocalRatio * fb.absValue) {
     return fb.index / sampleRate;
