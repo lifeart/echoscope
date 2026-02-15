@@ -63,16 +63,16 @@ export function updateHeatmapRow(
       // Threshold 1e-10 ensures zero is reached in ~170 iterations of 0.90 decay
       // (well below the display hasData threshold of 1e-7).
       if (data[idx] < 1e-10) data[idx] = 0;
-    } else if (Number.isFinite(temporalIirAlpha)) {
+    } else if (temporalIirAlpha != null && temporalIirAlpha > 0) {
       const decayed = data[idx] * decayFactor;
-      const alpha = Math.max(0.01, Math.min(1, temporalIirAlpha!));
+      const alpha = Math.max(0.01, Math.min(1, temporalIirAlpha));
       data[idx] = decayed + alpha * (profile[b] - decayed);
     } else {
       const decayed = data[idx] * decayFactor;
       data[idx] = Math.max(decayed, profile[b]);
     }
   }
-  if (Number.isFinite(temporalIirAlpha)) {
+  if (temporalIirAlpha != null && temporalIirAlpha > 0) {
     const integrated = data.subarray(rowIndex * bins, rowIndex * bins + bins);
     const bestIntegrated = pickBestFromProfile(integrated);
     bestBinArr[rowIndex] = bestIntegrated.bin;

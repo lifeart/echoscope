@@ -821,29 +821,29 @@ export async function doPingDetailed(
       }
     }
 
-    s.lastProfile.corr = corrFinalReal;
-    s.lastProfile.tau0 = tau0Final;
-    s.lastProfile.c = c;
-    s.lastProfile.minR = minR;
-    s.lastProfile.maxR = maxR;
+    // During scanning, don't overwrite lastProfile on every ping—
+    // it causes the profile plot to show whichever angle was last pinged
+    // rather than the best detection.  Scan completion sets it from the
+    // consensus direction.
+    if (updateHeatRowIndex === null) {
+      s.lastProfile.corr = corrFinalReal;
+      s.lastProfile.tau0 = tau0Final;
+      s.lastProfile.c = c;
+      s.lastProfile.minR = minR;
+      s.lastProfile.maxR = maxR;
+    }
 
     if (!isWeak && Number.isFinite(bestR)) {
-      if (updateHeatRowIndex !== null) {
-        // During scanning: only promote lastTarget when this ping is
-        // stronger than whatever the best-so-far is. This keeps the
-        // focus point stable — it converges toward the strongest angle
-        // instead of jumping to every angle that passes the gate.
-        if (bestVal > s.lastTarget.strength) {
-          s.lastTarget.angle = angleDeg;
-          s.lastTarget.range = bestR;
-          s.lastTarget.strength = bestVal;
-        }
-      } else {
+      if (updateHeatRowIndex === null) {
         // Single-ping mode: always update.
         s.lastTarget.angle = angleDeg;
         s.lastTarget.range = bestR;
         s.lastTarget.strength = bestVal;
       }
+      // During scanning: don't update lastTarget per-ping.
+      // The scan engine computes a consensus direction at the end and
+      // sets lastTarget from that — per-ping updates caused the target
+      // to jump between angles as stronger pings arrived.
     } else if (updateHeatRowIndex === null) {
       s.lastTarget.angle = NaN;
       s.lastTarget.range = NaN;

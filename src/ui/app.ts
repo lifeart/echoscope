@@ -479,6 +479,26 @@ export function initApp(): void {
     progressEl?.classList.add('is-hidden');
     if (textEl) textEl.textContent = 'Scanning...';
     if (fillEl) fillEl.style.width = '0%';
+
+    // Final update of profile/geometry/readouts after consensus is computed.
+    // During scanning these were suppressed per-ping to avoid target jumping.
+    const state = store.get();
+    const lp = state.lastProfile;
+    if (lp.corr && lp.corr.length > 0) {
+      let corrHasSignal = false;
+      for (let i = 0; i < lp.corr.length; i++) {
+        if (Math.abs(lp.corr[i]) > 1e-12) { corrHasSignal = true; break; }
+      }
+      if (corrHasSignal) {
+        drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+      } else {
+        drawProfilePlaceholder();
+      }
+    }
+    drawHeatmap(state.config.minRange, state.config.maxRange);
+    drawGeometry(state.config.minRange, state.config.maxRange);
+    updateBestReadout();
+    updateDirectionReadout();
   });
 
   // ---- Ping statistics ----
@@ -499,23 +519,30 @@ export function initApp(): void {
     console.log(`[ping:complete] bins min=${bMin.toExponential(3)} max=${bMax.toExponential(3)} nonZero=${bNonZero}/${profile.bins.length}`);
 
     const state = store.get();
-    const lp = state.lastProfile;
-    if (lp.corr && lp.corr.length > 0) {
-      // Check if correlation has meaningful signal (not zeroed out)
-      let corrHasSignal = false;
-      for (let i = 0; i < lp.corr.length; i++) {
-        if (Math.abs(lp.corr[i]) > 1e-12) { corrHasSignal = true; break; }
-      }
-      if (corrHasSignal) {
-        console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
-        drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+    const isScanning = state.scanning;
+
+    // During scanning, only update the heatmap progressively.
+    // Skip profile/geometry/readout updates to prevent target instability —
+    // those will be updated once at scan completion with the consensus result.
+    if (!isScanning) {
+      const lp = state.lastProfile;
+      if (lp.corr && lp.corr.length > 0) {
+        // Check if correlation has meaningful signal (not zeroed out)
+        let corrHasSignal = false;
+        for (let i = 0; i < lp.corr.length; i++) {
+          if (Math.abs(lp.corr[i]) > 1e-12) { corrHasSignal = true; break; }
+        }
+        if (corrHasSignal) {
+          console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
+          drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
+        } else {
+          console.log('[ping:complete] no TX detected — showing placeholder');
+          drawProfilePlaceholder();
+        }
       } else {
-        console.log('[ping:complete] no TX detected — showing placeholder');
+        console.warn('[ping:complete] no corr in lastProfile');
         drawProfilePlaceholder();
       }
-    } else {
-      console.warn('[ping:complete] no corr in lastProfile');
-      drawProfilePlaceholder();
     }
 
     // Update heatmap row for current angle (works for both single Ping and Scan)
@@ -538,9 +565,14 @@ export function initApp(): void {
     }
 
     drawHeatmap(state.config.minRange, state.config.maxRange);
-    drawGeometry(state.config.minRange, state.config.maxRange);
-    updateBestReadout();
-    updateDirectionReadout();
+
+    // During scanning, skip geometry/readout updates to avoid target jumping.
+    // The scan-complete handler will do the final update.
+    if (!isScanning) {
+      drawGeometry(state.config.minRange, state.config.maxRange);
+      updateBestReadout();
+      updateDirectionReadout();
+    }
 
     // Ping stats
     const elapsed = (performance.now() - pingStartTime).toFixed(0);

@@ -26,6 +26,10 @@ const perAngleProfileHistory = new Map<number, Float32Array[]>();
 const perAngleCoherentHistory = new Map<number, RawAngleFrame[]>();
 let lastStableDirectionAngle: number | null = null;
 
+/** Snapshot of previous scan heatmap for inter-scan blending */
+let previousScanSnapshot: { data: Float32Array; bestBin: Int16Array; bestVal: Float32Array; angles: number[]; bins: number } | null = null;
+const INTER_SCAN_BLEND_ALPHA = 0.65; // weight for new scan data (0.65 new + 0.35 old)
+
 interface JointAnglePrior {
   expectedAngleDeg: number | undefined;
   sigmaDeg: number;
@@ -171,7 +175,7 @@ export function applyAngularContinuity(
 
   const prevScore = scores[prevRow] ?? 0;
   const candScore = scores[candidateRow] ?? 0;
-  if (prevScore > 0 && candScore < prevScore * 1.25) {
+  if (prevScore > 0 && candScore < prevScore * 1.5) {
     return prevRow;
   }
   return candidateRow;
@@ -181,6 +185,44 @@ export function resetScanStabilityState(): void {
   perAngleProfileHistory.clear();
   perAngleCoherentHistory.clear();
   lastStableDirectionAngle = null;
+  previousScanSnapshot = null;
+}
+
+/**
+ * Blend current heatmap data with the previous scan's snapshot.
+ * Smooths out scan-to-scan noise so that targets remain stable
+ * when scanned repeatedly from the same location.
+ */
+function blendWithPreviousScan(heatmap: ReturnType<typeof createHeatmap>): void {
+  if (!previousScanSnapshot) return;
+  const prev = previousScanSnapshot;
+  if (prev.bins !== heatmap.bins || prev.angles.length !== heatmap.angles.length) return;
+  // Verify angles match
+  for (let i = 0; i < heatmap.angles.length; i++) {
+    if (prev.angles[i] !== heatmap.angles[i]) return;
+  }
+  const alpha = INTER_SCAN_BLEND_ALPHA;
+  for (let i = 0; i < heatmap.data.length; i++) {
+    heatmap.data[i] = alpha * heatmap.data[i] + (1 - alpha) * prev.data[i];
+  }
+  // Re-derive bestBin/bestVal from blended data
+  for (let r = 0; r < heatmap.angles.length; r++) {
+    const profile = heatmap.data.subarray(r * heatmap.bins, (r + 1) * heatmap.bins);
+    const best = pickBestFromProfile(profile);
+    heatmap.bestBin[r] = best.bin;
+    heatmap.bestVal[r] = best.val;
+  }
+}
+
+/** Save a snapshot of the current heatmap data for the next scan's blending. */
+function saveScanSnapshot(heatmap: ReturnType<typeof createHeatmap>): void {
+  previousScanSnapshot = {
+    data: Float32Array.from(heatmap.data),
+    bestBin: Int16Array.from(heatmap.bestBin),
+    bestVal: Float32Array.from(heatmap.bestVal),
+    angles: heatmap.angles.slice(),
+    bins: heatmap.bins,
+  };
 }
 
 function resetScanFrameHistory(): void {
@@ -590,6 +632,9 @@ async function doScanTxSteeringLegacy(): Promise<void> {
     crossAngleSmooth(heatmap, config.crossAngleSmooth.radius ?? 1);
   }
 
+  // Blend with previous scan data to stabilize targets across scans
+  blendWithPreviousScan(heatmap);
+
   const consensus = selectConsensusDirection(heatmap, {
     strengthGate: config.strengthGate,
     confidenceGate: config.confidenceGate,
@@ -629,6 +674,17 @@ async function doScanTxSteeringLegacy(): Promise<void> {
       s.lastTarget.strength = 0;
     }
 
+    // Set lastProfile from the consensus direction's raw frame so the
+    // profile plot shows the best angle's correlation, not the last-pinged one.
+    if (bestRow >= 0 && bestRow < rawFrames.length) {
+      const bestFrame = rawFrames[bestRow];
+      s.lastProfile.corr = bestFrame.corrReal;
+      s.lastProfile.tau0 = bestFrame.tau0;
+      s.lastProfile.c = config.speedOfSound;
+      s.lastProfile.minR = minR;
+      s.lastProfile.maxR = maxR;
+    }
+
     s.scanning = false;
     s.status = 'ready';
   });
@@ -646,6 +702,7 @@ async function doScanTxSteeringLegacy(): Promise<void> {
   }
 
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
+  saveScanSnapshot(heatmap);
 
   bus.emit('scan:complete', undefined as unknown as void);
 }
@@ -842,6 +899,9 @@ export async function doScan(): Promise<void> {
     crossAngleSmooth(heatmap, config.crossAngleSmooth.radius ?? 1);
   }
 
+  // Blend with previous scan data to stabilize targets across scans
+  blendWithPreviousScan(heatmap);
+
   // Apply CFAR + confidence gating per row to reject false-alarm rows.
   // The legacy TX-steering path gets this through doPingDetailed; the L/R
   // path skipped it entirely, making it more prone to false positives.
@@ -912,6 +972,7 @@ export async function doScan(): Promise<void> {
   }
 
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
+  saveScanSnapshot(heatmap);
   bus.emit('scan:complete', undefined as unknown as void);
 }
 
