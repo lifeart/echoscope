@@ -8,18 +8,18 @@ import { buildOfferUrl, buildAnswerUrl } from '../../src/ui/url-params.js';
 describe('url-params', () => {
   it('buildOfferUrl produces URL with offer param', () => {
     const url = buildOfferUrl('compressed_data_here');
-    expect(url).toContain('?offer=compressed_data_here');
+    expect(url).toContain('?o=compressed_data_here');
   });
 
   it('buildAnswerUrl produces URL with answer param', () => {
     const url = buildAnswerUrl('answer_data_here');
-    expect(url).toContain('?answer=answer_data_here');
+    expect(url).toContain('?a=answer_data_here');
   });
 
   it('buildOfferUrl includes origin and pathname', () => {
     const url = buildOfferUrl('abc');
     // Should be a valid absolute URL
-    expect(url).toMatch(/^https?:\/\/.+\?offer=abc$/);
+    expect(url).toMatch(/^https?:\/\/.+\?o=abc$/);
   });
 
   it('clearSignalFromUrl calls history.replaceState', async () => {
