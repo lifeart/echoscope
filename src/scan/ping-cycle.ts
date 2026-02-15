@@ -754,7 +754,8 @@ export async function doPingDetailed(
   }
 
   // Compute a single detection score from weighted factors.
-  // Each factor contributes 0..1; total >= 1.0 means detection accepted.
+  // Each factor contributes 0..1; core factors (conf+strength+cfar) sum to 0.80.
+  // Detection passes when score >= 0.55 (first ping without tracking can reach ~0.83).
   const confidenceGateEff = config.probe.type !== 'chirp'
     ? Math.min(config.confidenceGate, 0.14)
     : config.confidenceGate;
@@ -771,7 +772,10 @@ export async function doPingDetailed(
     : 0.3; // no prior = neutral
   const edgePenalty = isEdgePeak ? 0.4 : 0;
 
-  // Weighted detection score: needs >= 1.0 to pass
+  // Weighted detection score: needs >= 0.55 to pass.
+  // Core factors alone (conf+strength+cfar) max out at 0.80,
+  // so the threshold must be below that to allow first-ping detection
+  // before any tracking history exists.
   const detectionScore =
     0.30 * confScore +
     0.25 * strengthScore +
@@ -780,11 +784,11 @@ export async function doPingDetailed(
     0.10 * priorScore -
     edgePenalty;
 
-  const isWeak = !(bestBin >= 0) || !txEvidence.pass || detectionScore < 1.0;
+  const isWeak = !(bestBin >= 0) || !txEvidence.pass || detectionScore < 0.55;
   const trackingCandidate = Number.isFinite(bestR)
     && bestBin >= 0
     && txEvidence.pass
-    && detectionScore >= 0.75;
+    && detectionScore >= 0.50;
 
   const topPeaksText = topPeaks
     .map((p, idx) => `#${idx + 1}@b${p.bin}/r${p.range.toFixed(2)}m/v${p.value.toExponential(2)}`)
