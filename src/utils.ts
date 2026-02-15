@@ -21,14 +21,15 @@ export function energyNormalize(corr: Float32Array, refEnergy: number): void {
 }
 
 export function median(arr: number[]): number {
-  const n = arr.length;
+  const a = arr.filter(v => isFinite(v));
+  const n = a.length;
   if (!n) return 0;
-  const a = arr.slice().sort((x, y) => x - y);
+  a.sort((x, y) => x - y);
   if (n % 2) return a[(n / 2) | 0];
   return 0.5 * (a[n / 2 - 1] + a[n / 2]);
 }
 
 export function mad(arr: number[], med: number): number {
-  const d = arr.map(x => Math.abs(x - med));
+  const d = arr.filter(v => isFinite(v)).map(x => Math.abs(x - med));
   return median(d);
 }
