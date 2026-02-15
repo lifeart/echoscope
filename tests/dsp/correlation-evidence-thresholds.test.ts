@@ -6,13 +6,14 @@ import { fftCorrelateComplex } from '../../src/dsp/fft-correlate.js';
  * whether a probe signal was actually emitted.
  *
  * Key thresholds (defaults):
- *   minPeakNorm   = 0.040
- *   minProminence = 3.5
- *   strongPeakNorm = 0.055
+ *   minPeakNorm    = 0.010
+ *   minProminence  = 8.0
+ *   strongPeakNorm = 0.20
  *
  * Pass conditions:
  *   peakNorm >= strongPeakNorm
  *   OR (peakNorm >= minPeakNorm AND prominence >= minProminence)
+ *   OR (prominence >= 12 AND peakNorm >= 0.005)
  */
 
 const SR = 48000;
@@ -41,7 +42,7 @@ function makeChirpRef(len: number, f1 = 2000, f2 = 8000): Float32Array {
 
 describe('correlation-evidence threshold behavior', () => {
   describe('default thresholds', () => {
-    it('default minPeakNorm is 0.040', () => {
+    it('default minPeakNorm is 0.010', () => {
       const ref = new Float32Array([1, -1, 1]);
       const signal = new Float32Array(20);
       // Embed at index 5 with amplitude that gives peakNorm above 0.040
@@ -69,7 +70,7 @@ describe('correlation-evidence threshold behavior', () => {
       const ev = estimateCorrelationEvidence(corr, signal, ref);
 
       // The signal is so faint it should have low peakNorm
-      if (ev.peakNorm < 0.040 && ev.prominence < 3.5) {
+      if (ev.peakNorm < 0.010 && ev.prominence < 8.0) {
         expect(ev.pass).toBe(false);
       }
     });
@@ -153,10 +154,9 @@ describe('correlation-evidence threshold behavior', () => {
     });
 
     it('unfiltered signal has lower noise peakNorm than filtered', () => {
-      // This is THE key property that the v4 fix relies on.
-      // When mic = noise only, bandpass filtering removes out-of-band energy
-      // from winEnergy denominator, making noise peakNorm HIGHER (bad).
-      // Using unfiltered signal keeps the denominator large → lower peakNorm.
+      // Property test: when mic = noise only, the signal used for the energy
+      // denominator affects peakNorm. Callers now use filtered energy, so
+      // peakNorm is higher — the peakWidth gate handles noise rejection.
       const ref = makeChirpRef(336);
       const noise = pseudoNoise(3500, 0.08, 99);
 

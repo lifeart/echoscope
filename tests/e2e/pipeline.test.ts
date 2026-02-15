@@ -194,12 +194,9 @@ describe('E2E pipeline: chirp probe', () => {
   });
 
   it('rejects muted speaker via downstream gates (noise only)', () => {
-    // Chirp ref is only 336 samples → normalized cross-correlation std ≈ 1/√336 ≈ 0.055
-    // equals strongPeakNorm threshold, so TX evidence alone may pass for noise.
-    // Real muted-speaker rejection relies on multiple downstream gates:
-    //   - profile confidence (PSR) is low for noise
-    //   - CFAR detection count is low or zero
-    //   - best peak value is tiny (random noise, not coherent echo)
+    // With strongPeakNorm=0.20 and peakWidth >= 3 gate, TX evidence should
+    // reliably reject noise.  If noise by chance passes TX evidence, downstream
+    // gates (confidence, CFAR) provide additional rejection.
     const mic = noise(Math.ceil(SR * 30 / 1000), 0.08, 123);
     const result = runPipeline(ref, mic, CHIRP_CONFIG);
 

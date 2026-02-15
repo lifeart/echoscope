@@ -66,9 +66,9 @@ describe('estimateCorrelationEvidence', () => {
     const corr = correlate(signal, ref);
     const ev = estimateCorrelationEvidence(corr, signal, ref);
 
-    // strongPeakNorm threshold (0.055) should be exceeded
+    // strongPeakNorm threshold (0.20) should be exceeded
     expect(ev.pass).toBe(true);
-    expect(ev.peakNorm).toBeGreaterThan(0.055);
+    expect(ev.peakNorm).toBeGreaterThan(0.20);
   });
 
   it('returns correct structure with all fields', () => {
@@ -143,10 +143,10 @@ describe('estimateCorrelationEvidence', () => {
     });
   });
 
-  describe('raised thresholds reject noise', () => {
-    it('rejects noise with peakNorm below 0.050 (user scenario: txNorm=0.037)', () => {
-      // With the old threshold (0.030), noise with peakNorm=0.037 would pass.
-      // With the new threshold (0.050), it should fail.
+  describe('noise rejection with prominence gate', () => {
+    it('rejects noise — prominence below minProminence threshold', () => {
+      // Noise prominence is typically 5–8. With minProminence=8.0,
+      // noise is rejected (peakNorm < strongPeakNorm, prominence < 8).
       const ref = new Float32Array([1, -1, 1, -1, 1]);
       const signal = new Float32Array(100);
       let seed = 42;
@@ -157,9 +157,9 @@ describe('estimateCorrelationEvidence', () => {
       const corr = correlate(signal, ref);
       const ev = estimateCorrelationEvidence(corr, signal, ref);
 
-      // Even if by chance peakNorm is in the 0.020-0.040 range,
-      // the threshold of 0.050 should reject it
-      if (ev.peakNorm < 0.050) {
+      // For very short refs (5 samples), noise peakNorm can exceed
+      // strongPeakNorm=0.20, so only assert rejection when below it.
+      if (ev.peakNorm < 0.20) {
         expect(ev.pass).toBe(false);
       }
     });
@@ -180,7 +180,8 @@ describe('estimateCorrelationEvidence', () => {
       const ev = estimateCorrelationEvidence(corr, signal, ref);
 
       expect(ev.pass).toBe(true);
-      expect(ev.peakNorm).toBeGreaterThan(0.055);
+      // strongPeakNorm threshold is 0.20; embedded signal produces peakNorm ≈ 1.0
+      expect(ev.peakNorm).toBeGreaterThan(0.20);
     });
 
     it('passes long probe via high prominence even with low peakNorm', () => {

@@ -41,7 +41,7 @@ const defaultConfig: AppConfig = {
     fps: 24,
   },
   steeringAngleDeg: 0,
-  gain: 0.50,
+  gain: 0.80,
   listenMs: _defaultListenMs,
   minRange: 0.3,
   maxRange: 4.0,

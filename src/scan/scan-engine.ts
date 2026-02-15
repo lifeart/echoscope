@@ -259,9 +259,8 @@ async function captureOneSideRangeProfile(
   const probeConfig = store.get().config.probe;
   const micFiltered = bandpassToProbe(capture.micWin, probeConfig, sampleRate);
   const corr = fftCorrelateComplex(micFiltered, ref, sampleRate).correlation;
-  // TX evidence uses UNFILTERED mic signal — full-spectrum energy denominator
-  // properly dilutes noise peakNorm while real signals still pass.
-  const txEvidence = estimateCorrelationEvidence(corr, capture.micWin, ref);
+  // TX evidence uses FILTERED mic signal — energy must match the correlation source.
+  const txEvidence = estimateCorrelationEvidence(corr, micFiltered, ref);
   if (!txEvidence.pass) {
     console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} -> zero profile`);
     return new Float32Array(heatBins);
@@ -301,9 +300,9 @@ async function captureOneSideRangeProfileGolay(
   const micBFiltered = bandpassToProbe(capB.micWin, probeConfig, sampleRate);
   const corrA = fftCorrelateComplex(micAFiltered, a, sampleRate).correlation;
   const corrB = fftCorrelateComplex(micBFiltered, b, sampleRate).correlation;
-  // TX evidence uses UNFILTERED mic signals for energy denominator.
-  const txEvidenceA = estimateCorrelationEvidence(corrA, capA.micWin, a);
-  const txEvidenceB = estimateCorrelationEvidence(corrB, capB.micWin, b);
+  // TX evidence uses FILTERED mic signals — energy must match correlation source.
+  const txEvidenceA = estimateCorrelationEvidence(corrA, micAFiltered, a);
+  const txEvidenceB = estimateCorrelationEvidence(corrB, micBFiltered, b);
   // Require BOTH halves to pass — noise randomly passes ~30% per half,
   // OR gate gives ~50%+ false positive. AND gate: ~9%.
   if (!txEvidenceA.pass || !txEvidenceB.pass) {

@@ -33,9 +33,9 @@ export function estimateCorrelationEvidence(
   reference: Float32Array,
   options?: CorrelationEvidenceOptions,
 ): CorrelationEvidence {
-  const minPeakNorm = options?.minPeakNorm ?? 0.040;
-  const minProminence = options?.minProminence ?? 3.5;
-  const strongPeakNorm = options?.strongPeakNorm ?? 0.055;
+  const minPeakNorm = options?.minPeakNorm ?? 0.010;
+  const minProminence = options?.minProminence ?? 8.0;
+  const strongPeakNorm = options?.strongPeakNorm ?? 0.20;
 
   const refLen = reference.length;
   const validLen = Math.min(corr.length, Math.max(0, signal.length - refLen + 1));
@@ -76,13 +76,17 @@ export function estimateCorrelationEvidence(
   const medianNorm = Math.max(1e-9, median(norms));
   const prominence = peakNorm / medianNorm;
 
-  // Strong signal: bypass all other checks.
-  // Weak signal: must pass peakNorm AND prominence gates.
-  // minPeakNorm is set to 0.040 — above typical noise peakNorm range (0.020–0.040)
-  // for short references.  With longer probes (20 ms chirp → refLen 960),
-  // refEnergy grows ~3×, shrinking peakNorm while prominence stays high.
-  // The highProminence path catches this: prominence ≥ 12 (noise range 5–8)
-  // with a minimal-floor peakNorm ≥ 0.005 to reject silence.
+  // Detection strategy (callers MUST pass the same signal for both correlation
+  // and energy — i.e. the bandpass-filtered mic, not the raw mic):
+  //
+  // 1. Strong signal (peakNorm ≥ 0.20): bypass — clearly a real probe.
+  // 2. Moderate signal: peakNorm ≥ 0.010 AND prominence ≥ 8.0.
+  //    Noise prominence is typically 5–8 (extreme value statistics for
+  //    N_eff ≈ signalLen/refLen independent correlation windows).
+  //    Setting minProminence=8.0 rejects the bulk of noise while accepting
+  //    real probes whose correlation peak stands well above the floor.
+  // 3. Very high prominence (≥ 12): override for edge cases (e.g. longer
+  //    probes where peakNorm is low but the peak clearly stands out).
   const highProminence = 12;
   const minPeakFloor = 0.005;
   const pass = peakNorm >= strongPeakNorm

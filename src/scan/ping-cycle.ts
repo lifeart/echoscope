@@ -184,25 +184,26 @@ function corrAndBuildProfile(
   const corrComplex = fftCorrelateComplex(micFiltered, ref, sampleRate);
   const corrReal = corrComplex.correlation;
   const corrImag = corrComplex.correlationImag;
-  // TX evidence uses the UNFILTERED mic signal for its energy denominator.
-  // The full-spectrum energy properly dilutes noise peakNorm (0.020–0.037),
-  // while a real signal still produces a strong correlation peak that passes.
-  // Using filtered signal would remove out-of-band energy from the denominator,
-  // paradoxically INCREASING noise peakNorm and causing false TX passes.
-  const txEvidence = estimateCorrelationEvidence(corrReal, micWin, ref);
+  // TX evidence uses the FILTERED mic signal so that the energy denominator
+  // matches the signal that produced the correlation.  The prominence gate
+  // inside estimateCorrelationEvidence rejects in-band noise (prominence 5–8)
+  // while real probes produce prominence ≥ 8.
+  const txEvidence = estimateCorrelationEvidence(corrReal, micFiltered, ref);
   const refE = signalEnergy(ref);
   energyNormalize(corrReal, refE);
   energyNormalize(corrImag, refE);
 
   // Debug: correlation stats
-  let corrMax = 0, corrMaxIdx = 0, micMax = 0;
+  let corrMax = 0, corrMaxIdx = 0, micMax = 0, micFilteredMax = 0;
   for (let i = 0; i < corrReal.length; i++) { const v = Math.abs(corrReal[i]); if (v > corrMax) { corrMax = v; corrMaxIdx = i; } }
   for (let i = 0; i < micWin.length; i++) { const v = Math.abs(micWin[i]); if (v > micMax) micMax = v; }
-  console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
+  for (let i = 0; i < micFiltered.length; i++) { const v = Math.abs(micFiltered[i]); if (v > micFilteredMax) micFilteredMax = v; }
+  console.debug(`[corrAndBuild] micLen=${micWin.length} micMax=${micMax.toExponential(3)} micFiltMax=${micFilteredMax.toExponential(3)} refLen=${ref.length} refEnergy=${refE.toExponential(3)} corrLen=${corrReal.length} corrMax=${corrMax.toExponential(3)} corrMaxIdx=${corrMaxIdx} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} predTau0=${predictedTau0OrNull?.toFixed(6) ?? 'null'}`);
 
   // Early exit: if TX evidence fails (e.g., mic muted), skip all processing
   if (!txEvidence.pass) {
-    console.debug(`[corrAndBuild] TX evidence failed — early exit (mic may be muted)`);
+    const reason = micMax > 0.5 ? 'high ambient noise — try a quieter environment' : 'mic may be muted';
+    console.debug(`[corrAndBuild] TX evidence failed — early exit (${reason})`);
     const emptyProf = new Float32Array(heatBins);
     return {
       corrReal: new Float32Array(corrReal.length),
@@ -318,11 +319,10 @@ async function captureGolaySteered(
   for (let i = 0; i < corrRealSum.length; i++) { const v = Math.abs(corrRealSum[i]); if (v > corrSumMax) { corrSumMax = v; corrSumMaxIdx = i; } }
   console.debug(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
 
-  // TX evidence: check each half for signal presence
-  // TX evidence uses UNFILTERED mic signals — full-spectrum energy correctly
-  // dilutes noise peakNorm while real signal correlation peaks still pass.
-  const txA = estimateCorrelationEvidence(corrA.correlation, micARaw, a);
-  const txB = estimateCorrelationEvidence(corrB.correlation, micBRaw, b);
+  // TX evidence: check each half for signal presence.
+  // Uses FILTERED mic signals — energy must match the signal used for correlation.
+  const txA = estimateCorrelationEvidence(corrA.correlation, micA, a);
+  const txB = estimateCorrelationEvidence(corrB.correlation, micB, b);
   const golayTxEvidence = {
     peakNorm: Math.max(txA.peakNorm, txB.peakNorm),
     medianNorm: (txA.medianNorm + txB.medianNorm) / 2,
@@ -434,9 +434,9 @@ export async function doPingDetailed(
     const micSignal = bandpassToProbe(micSignalRaw, config.probe, sr);
 
     // TX evidence: check if probe was actually transmitted.
-    // Uses UNFILTERED mic signal for energy denominator to properly dilute noise.
+    // Uses FILTERED mic signal — energy must match the correlation source.
     const muxTxCorr = fftCorrelateComplex(micSignal, probe.ref, sr);
-    txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignalRaw, probe.ref);
+    txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignal, probe.ref);
     console.debug(`[doPing:multiplex] txPass=${txEvidence.pass} peakNorm=${txEvidence.peakNorm.toFixed(4)} prominence=${txEvidence.prominence.toFixed(2)}`);
 
     // Early exit: if TX evidence fails, skip all processing

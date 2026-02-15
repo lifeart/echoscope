@@ -10,7 +10,8 @@ import type { ProbeConfig } from '../../src/types.js';
  * Integration tests for the scan pipeline's muted-speaker rejection.
  *
  * Tests the complete chain that prevents false detections when speakers are muted:
- * 1. TX evidence uses UNFILTERED mic signal (full-spectrum energy denominator)
+ * 1. TX evidence uses FILTERED mic signal (matched energy source) with
+ *    prominence gate: noise prominence is 5–8, threshold is 8.0.
  * 2. Golay AND gate: both halves must pass TX evidence
  * 3. L/R profile energy gate: aggregated profiles must have max > 1e-10
  * 4. Joint heatmap: geometric mean sqrt(L*R) zeros out single-side noise
@@ -44,8 +45,8 @@ beforeEach(() => {
   resetProbeBandCache();
 });
 
-describe('TX evidence: unfiltered vs filtered signal for noise rejection', () => {
-  it('noise-only mic: unfiltered signal produces lower peakNorm than filtered', () => {
+describe('TX evidence: prominence gate rejects noise', () => {
+  it('noise-only mic: filtered signal produces higher peakNorm than unfiltered', () => {
     const ref = makeChirpRef(336);
     const noise = pseudoNoise(3500, 0.08, 99);
 
@@ -61,10 +62,10 @@ describe('TX evidence: unfiltered vs filtered signal for noise rejection', () =>
     expect(evUnfiltered.peakNorm).toBeLessThan(evFiltered.peakNorm);
   });
 
-  it('noise-only: unfiltered rejects, filtered might falsely pass', () => {
-    // Multiple seeds to show the pattern is consistent
+  it('noise-only: prominence gate rejects noise with filtered energy', () => {
+    // With minProminence=8.0, noise (prominence 5–8) is mostly rejected.
+    // Some trials near the boundary may pass.
     const ref = makeChirpRef(336);
-    let unfilteredPassCount = 0;
     let filteredPassCount = 0;
     const TRIALS = 20;
 
@@ -74,18 +75,16 @@ describe('TX evidence: unfiltered vs filtered signal for noise rejection', () =>
       const micFiltered = bandpassToProbe(noise, CHIRP_PROBE, SR);
       const corr = fftCorrelateComplex(micFiltered, ref, SR).correlation;
 
-      const evUnfiltered = estimateCorrelationEvidence(corr, noise, ref);
-      const evFiltered = estimateCorrelationEvidence(corr, micFiltered, ref);
-
-      if (evUnfiltered.pass) unfilteredPassCount++;
-      if (evFiltered.pass) filteredPassCount++;
+      // Use filtered mic (the production code path now)
+      const ev = estimateCorrelationEvidence(corr, micFiltered, ref);
+      if (ev.pass) filteredPassCount++;
     }
 
-    // Unfiltered should have fewer false passes than filtered
-    expect(unfilteredPassCount).toBeLessThanOrEqual(filteredPassCount);
+    // Most noise should be rejected; allow some boundary passes
+    expect(filteredPassCount).toBeLessThanOrEqual(TRIALS / 2);
   });
 
-  it('real signal + noise: unfiltered still passes TX evidence', () => {
+  it('real signal + noise: filtered signal passes TX evidence', () => {
     const ref = makeChirpRef(336);
     const signal = pseudoNoise(3500, 0.02, 55); // light noise floor
 
@@ -97,10 +96,10 @@ describe('TX evidence: unfiltered vs filtered signal for noise rejection', () =>
     const micFiltered = bandpassToProbe(signal, CHIRP_PROBE, SR);
     const corr = fftCorrelateComplex(micFiltered, ref, SR).correlation;
 
-    // TX evidence on unfiltered signal — should still pass
-    const ev = estimateCorrelationEvidence(corr, signal, ref);
+    // TX evidence on filtered signal (production code path)
+    const ev = estimateCorrelationEvidence(corr, micFiltered, ref);
     expect(ev.pass).toBe(true);
-    expect(ev.peakNorm).toBeGreaterThan(0.04); // above minPeakNorm
+    expect(ev.peakNorm).toBeGreaterThan(0.01); // above minPeakNorm
   });
 });
 

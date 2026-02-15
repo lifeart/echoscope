@@ -4,7 +4,7 @@ import { store } from '../core/store.js';
 
 /** Extra margin (seconds) to account for WorkletProcessor→main-thread postMessage latency
  *  and AudioContext scheduling jitter. */
-const CAPTURE_MARGIN_SEC = 0.065;
+const CAPTURE_MARGIN_SEC = 0.12;
 
 /** Wait for ring buffer to advance by at least `minSamples` from `startPos`,
  *  with a hard timeout to avoid infinite hangs. */
