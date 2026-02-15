@@ -85,8 +85,8 @@ export function buildJointHeatmapFromLR(params: JointHeatmapParams): JointHeatma
         ? gaussianWeight(r, priorRangeM!, Math.max(1e-6, priorSigmaM!))
         : 1;
 
-      const left = profileL[bin];
-      const right = interpolateLinear(profileR, bin + shiftBins);
+      const left = interpolateLinear(profileL, bin + shiftBins);
+      const right = interpolateLinear(profileR, bin - shiftBins);
       const fused = (left > 0 && right > 0)
         ? Math.sqrt(left * right) * priorW * angleW
         : 0;

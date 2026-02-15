@@ -55,7 +55,9 @@ describe('joint L/R heatmap', () => {
       edgeMaskBins: 3,
     });
 
-    expect(res.rowScores[2]).toBeGreaterThan(res.rowScores[0]);
+    // R peaks at higher bin than L → r_R > r_L → target is at negative angle.
+    // So the -60° row should score higher than the +60° row.
+    expect(res.rowScores[0]).toBeGreaterThan(res.rowScores[2]);
     expect(res.rowScores[0]).toBeGreaterThan(0);
     expect(res.rowScores[2]).toBeGreaterThan(0);
   });
