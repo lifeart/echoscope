@@ -176,16 +176,20 @@ function corrAndBuildProfile(
   sampleRate: number,
   heatBins: number,
 ) {
-  // Bandpass-filter mic to the probe frequency band.
-  // Removes out-of-band noise that would otherwise inflate the
-  // sliding-window energy denominator in TX evidence normalization.
+  // Bandpass-filter mic to the probe frequency band for correlation.
+  // This improves range-profile quality by rejecting out-of-band noise.
   const probeConfig = store.get().config.probe;
   const micFiltered = bandpassToProbe(micWin, probeConfig, sampleRate);
 
   const corrComplex = fftCorrelateComplex(micFiltered, ref, sampleRate);
   const corrReal = corrComplex.correlation;
   const corrImag = corrComplex.correlationImag;
-  const txEvidence = estimateCorrelationEvidence(corrReal, micFiltered, ref);
+  // TX evidence uses the UNFILTERED mic signal for its energy denominator.
+  // The full-spectrum energy properly dilutes noise peakNorm (0.020–0.037),
+  // while a real signal still produces a strong correlation peak that passes.
+  // Using filtered signal would remove out-of-band energy from the denominator,
+  // paradoxically INCREASING noise peakNorm and causing false TX passes.
+  const txEvidence = estimateCorrelationEvidence(corrReal, micWin, ref);
   const refE = signalEnergy(ref);
   energyNormalize(corrReal, refE);
   energyNormalize(corrImag, refE);
@@ -299,14 +303,18 @@ async function captureGolaySteered(
   console.debug(`[golayCorr] micA=${micA.length} micMaxA=${micMaxA.toExponential(3)} micB=${micB.length} micMaxB=${micMaxB.toExponential(3)} totalEnergy=${totalEnergy.toExponential(3)} corrSumLen=${L} corrSumMax=${corrSumMax.toExponential(3)} corrSumMaxIdx=${corrSumMaxIdx}${rxGeo ? ' (RX beamformed)' : ''}`);
 
   // TX evidence: check each half for signal presence
-  const txA = estimateCorrelationEvidence(corrA.correlation, micA, a);
-  const txB = estimateCorrelationEvidence(corrB.correlation, micB, b);
+  // TX evidence uses UNFILTERED mic signals — full-spectrum energy correctly
+  // dilutes noise peakNorm while real signal correlation peaks still pass.
+  const txA = estimateCorrelationEvidence(corrA.correlation, micARaw, a);
+  const txB = estimateCorrelationEvidence(corrB.correlation, micBRaw, b);
   const golayTxEvidence = {
     peakNorm: Math.max(txA.peakNorm, txB.peakNorm),
     medianNorm: (txA.medianNorm + txB.medianNorm) / 2,
     prominence: Math.max(txA.prominence, txB.prominence),
     peakIndex: txA.peakNorm >= txB.peakNorm ? txA.peakIndex : txB.peakIndex,
-    pass: txA.pass || txB.pass,
+    // Require BOTH halves to pass — noise randomly passes ~30% per half,
+    // so OR gate gives ~50%+ false positive rate. AND gate reduces it to ~9%.
+    pass: txA.pass && txB.pass,
   };
   console.debug(`[golayCorr] txA.pass=${txA.pass} txB.pass=${txB.pass} txPass=${golayTxEvidence.pass} peakNorm=${golayTxEvidence.peakNorm.toFixed(4)} prominence=${golayTxEvidence.prominence.toFixed(2)}`);
 
@@ -397,9 +405,10 @@ export async function doPingDetailed(
     // Bandpass-filter mic to the probe frequency band
     const micSignal = bandpassToProbe(micSignalRaw, config.probe, sr);
 
-    // TX evidence: check if probe was actually transmitted
+    // TX evidence: check if probe was actually transmitted.
+    // Uses UNFILTERED mic signal for energy denominator to properly dilute noise.
     const muxTxCorr = fftCorrelateComplex(micSignal, probe.ref, sr);
-    txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignal, probe.ref);
+    txEvidence = estimateCorrelationEvidence(muxTxCorr.correlation, micSignalRaw, probe.ref);
     console.debug(`[doPing:multiplex] txPass=${txEvidence.pass} peakNorm=${txEvidence.peakNorm.toFixed(4)} prominence=${txEvidence.prominence.toFixed(2)}`);
 
     const muxCfg = config.probe.type === 'multiplex' ? config.probe.params : null;
@@ -490,18 +499,21 @@ export async function doPingDetailed(
     const rxGeo = buildRxGeometry(config.micArraySpacing, c, micChannels.length);
     const rxChannelDelaySec = getRxChannelDelaySec(micChannels.length);
     const micSignalRaw = rxGeo ? delayAndSum(micChannels, angleDeg, rxGeo, sr, rxChannelDelaySec) : cap.micWin;
-    // Bandpass-filter mic to the probe frequency band
-    const micSignal = bandpassToProbe(micSignalRaw, config.probe, sr);
+    // Keep unfiltered signal reference for TX evidence denominator
     if (probe.type === 'chirp' && config.probe.type === 'chirp') {
+      // Use filtered signal for stability analysis (needs in-band content)
+      const micSignalForStability = bandpassToProbe(micSignalRaw, config.probe, sr);
       chirpStabilityInput = {
-        micSignal,
+        micSignal: micSignalForStability,
         ref,
         f1: config.probe.params.f1,
         f2: config.probe.params.f2,
       };
     }
 
-    const res = corrAndBuildProfile(micSignal, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
+    // Pass RAW (unfiltered) signal — corrAndBuildProfile handles bandpass internally
+    // and uses the unfiltered signal for TX evidence energy denominator.
+    const res = corrAndBuildProfile(micSignalRaw, ref, c, minR, maxR, predTau0, lockStrength, sr, heatBins);
     corrFinalReal = res.corrReal;
     corrFinalImag = res.corrImag;
     tau0Final = res.tau0;

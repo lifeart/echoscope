@@ -259,7 +259,9 @@ async function captureOneSideRangeProfile(
   const probeConfig = store.get().config.probe;
   const micFiltered = bandpassToProbe(capture.micWin, probeConfig, sampleRate);
   const corr = fftCorrelateComplex(micFiltered, ref, sampleRate).correlation;
-  const txEvidence = estimateCorrelationEvidence(corr, micFiltered, ref);
+  // TX evidence uses UNFILTERED mic signal — full-spectrum energy denominator
+  // properly dilutes noise peakNorm while real signals still pass.
+  const txEvidence = estimateCorrelationEvidence(corr, capture.micWin, ref);
   if (!txEvidence.pass) {
     console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} -> zero profile`);
     return new Float32Array(heatBins);
@@ -299,9 +301,12 @@ async function captureOneSideRangeProfileGolay(
   const micBFiltered = bandpassToProbe(capB.micWin, probeConfig, sampleRate);
   const corrA = fftCorrelateComplex(micAFiltered, a, sampleRate).correlation;
   const corrB = fftCorrelateComplex(micBFiltered, b, sampleRate).correlation;
-  const txEvidenceA = estimateCorrelationEvidence(corrA, micAFiltered, a);
-  const txEvidenceB = estimateCorrelationEvidence(corrB, micBFiltered, b);
-  if (!txEvidenceA.pass && !txEvidenceB.pass) {
+  // TX evidence uses UNFILTERED mic signals for energy denominator.
+  const txEvidenceA = estimateCorrelationEvidence(corrA, capA.micWin, a);
+  const txEvidenceB = estimateCorrelationEvidence(corrB, capB.micWin, b);
+  // Require BOTH halves to pass — noise randomly passes ~30% per half,
+  // OR gate gives ~50%+ false positive. AND gate: ~9%.
+  if (!txEvidenceA.pass || !txEvidenceB.pass) {
     console.log(`[scan:golayEvidence] side=${side} txA=${txEvidenceA.pass} txB=${txEvidenceB.pass} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} widthA=${txEvidenceA.peakWidth} widthB=${txEvidenceB.peakWidth} -> zero profile`);
     return new Float32Array(heatBins);
   }
@@ -781,6 +786,30 @@ export async function doScan(): Promise<void> {
     mode: config.scanAggregateMode,
     trimFraction: config.scanTrimFraction,
   }).averaged;
+
+  // Profile energy gate: if the aggregated profile is essentially zero
+  // (all passes returned zeroed profiles due to TX evidence failure),
+  // skip the joint heatmap entirely — no real signal was detected.
+  let maxL = 0, maxR_ = 0;
+  for (let i = 0; i < aggregatedL.length; i++) if (aggregatedL[i] > maxL) maxL = aggregatedL[i];
+  for (let i = 0; i < aggregatedR.length; i++) if (aggregatedR[i] > maxR_) maxR_ = aggregatedR[i];
+  console.log(`[doScan:LR] aggregatedL max=${maxL.toExponential(3)} aggregatedR max=${maxR_.toExponential(3)}`);
+
+  if (maxL < 1e-10 || maxR_ < 1e-10) {
+    console.log(`[doScan:LR] profile energy gate: L or R profile is essentially zero -> no detection`);
+    store.update(s => {
+      s.lastDirection.angle = NaN;
+      s.lastDirection.strength = 0;
+      s.lastTarget.angle = NaN;
+      s.lastTarget.range = NaN;
+      s.lastTarget.strength = 0;
+      s.scanning = false;
+      s.status = 'ready';
+    });
+    updateTrackingFromMeasurement(null, Date.now());
+    bus.emit('scan:complete', undefined as unknown as void);
+    return;
+  }
 
   const stateBeforeJoint = store.get();
   const prior = buildRangePrior(

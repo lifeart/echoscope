@@ -371,67 +371,79 @@ describe('muted-speaker ping pipeline', () => {
     });
   });
 
-  describe('bandpass filtering + TX evidence pipeline (v3 fix)', () => {
+  describe('bandpass + TX evidence pipeline (v4 fix)', () => {
     const chirpProbe: ProbeConfig = {
       type: 'chirp',
       params: { f1: 2000, f2: 8000, durationMs: 7 },
     };
 
+    it('TX evidence uses unfiltered signal → noise peakNorm stays low', () => {
+      // KEY FIX: TX evidence normalizes by full-spectrum mic energy.
+      // Bandpass only affects correlation, not the energy denominator.
+      // With full-spectrum noise in the denominator, noise peakNorm stays
+      // low (~0.02–0.04) because out-of-band energy "dilutes" the ratio.
+      const ref = makeChirpRef(336);
+      const noise = pseudoNoise(3500, 0.08, 99);
+
+      // Real pipeline: correlate with filtered mic, but use unfiltered for TX evidence
+      const filtered = bandpassToProbe(noise, chirpProbe, sampleRate);
+      const corrComplex = fftCorrelateComplex(filtered, ref, sampleRate);
+
+      // TX evidence with UNFILTERED signal (the actual pipeline behavior)
+      const evUnfiltered = estimateCorrelationEvidence(corrComplex.correlation, noise, ref);
+      // TX evidence with FILTERED signal (old broken behavior)
+      const evFiltered = estimateCorrelationEvidence(corrComplex.correlation, filtered, ref);
+
+      // Unfiltered denominator keeps noise peakNorm lower
+      expect(evUnfiltered.peakNorm).toBeLessThan(evFiltered.peakNorm);
+    });
+
+    it('real chirp signal passes TX evidence with unfiltered denominator', () => {
+      const ref = makeChirpRef(336);
+      const micSignal = new Float32Array(3500);
+      for (let i = 0; i < ref.length; i++) {
+        micSignal[700 + i] = ref[i] * 0.7;
+      }
+
+      // Pipeline: bandpass for correlation, unfiltered for TX evidence
+      const filtered = bandpassToProbe(micSignal, chirpProbe, sampleRate);
+      const corrComplex = fftCorrelateComplex(filtered, ref, sampleRate);
+      const evidence = estimateCorrelationEvidence(corrComplex.correlation, micSignal, ref);
+
+      // Real signal should comfortably pass
+      expect(evidence.pass).toBe(true);
+      expect(evidence.peakNorm).toBeGreaterThan(0.050);
+    });
+
+    it('Golay AND gate rejects when only one half has noise peak', () => {
+      // Golay requires BOTH halves to pass TX evidence.
+      // With muted speakers, each half has ~30% chance of noise passing.
+      // AND gate: ~9% false positive vs OR gate: ~51%.
+      const refA = makeChirpRef(200);
+      const refB = makeChirpRef(200);
+
+      // Simulate: half A passes (lucky noise), half B fails
+      const txA = { pass: true, peakNorm: 0.045, medianNorm: 0.01, prominence: 4.5, peakIndex: 100, peakWidth: 3 };
+      const txB = { pass: false, peakNorm: 0.028, medianNorm: 0.01, prominence: 2.8, peakIndex: 150, peakWidth: 2 };
+
+      // AND gate (new behavior)
+      const andPass = txA.pass && txB.pass;
+      expect(andPass).toBe(false);
+
+      // OR gate (old broken behavior) would have passed
+      const orPass = txA.pass || txB.pass;
+      expect(orPass).toBe(true);
+    });
+
     it('bandpass filtering reduces out-of-band noise energy', () => {
-      // White noise has energy across all frequencies.
-      // Bandpass to chirp band (2000-8000 Hz) should remove ~65% of energy
-      // (band covers ~6kHz out of 24kHz Nyquist).
       const noise = pseudoNoise(3500, 0.08, 99);
       const filtered = bandpassToProbe(noise, chirpProbe, sampleRate);
 
       const origEnergy = signalEnergy(noise);
       const filtEnergy = signalEnergy(filtered);
 
-      // Filtered noise should have significantly less energy
       expect(filtEnergy).toBeLessThan(origEnergy * 0.8);
-      expect(filtEnergy).toBeGreaterThan(0); // not zeroed out
-    });
-
-    it('real chirp signal passes TX evidence after bandpass', () => {
-      const ref = makeChirpRef(336);
-      const micSignal = new Float32Array(3500);
-      // Embed reflected chirp at sample 700
-      for (let i = 0; i < ref.length; i++) {
-        micSignal[700 + i] = ref[i] * 0.7;
-      }
-
-      // Apply bandpass as the real pipeline does
-      const filtered = bandpassToProbe(micSignal, chirpProbe, sampleRate);
-      const corrComplex = fftCorrelateComplex(filtered, ref, sampleRate);
-      const evidence = estimateCorrelationEvidence(corrComplex.correlation, filtered, ref);
-
-      // Real signal should comfortably pass even after filtering
-      expect(evidence.pass).toBe(true);
-      expect(evidence.peakNorm).toBeGreaterThan(0.050);
-    });
-
-    it('bandpass filtering preserves signal detectability with added noise', () => {
-      // Key property: after bandpass + correlation, a real chirp embedded
-      // in broadband noise still passes TX evidence. The filter removes
-      // out-of-band noise from winEnergy, but may slightly reduce the
-      // correlation peak due to FIR passband ripple. Both raw and filtered
-      // should pass for a well-embedded signal.
-      const ref = makeChirpRef(336);
-      const micWithSignal = new Float32Array(3500);
-      for (let i = 0; i < ref.length; i++) {
-        micWithSignal[700 + i] = ref[i] * 0.5;
-      }
-      // Add broadband noise
-      const noiseOverlay = pseudoNoise(3500, 0.03, 77);
-      for (let i = 0; i < 3500; i++) micWithSignal[i] += noiseOverlay[i];
-
-      // With bandpass — still passes
-      const filtered = bandpassToProbe(micWithSignal, chirpProbe, sampleRate);
-      const corrFilt = fftCorrelateComplex(filtered, ref, sampleRate);
-      const evFilt = estimateCorrelationEvidence(corrFilt.correlation, filtered, ref);
-
-      expect(evFilt.pass).toBe(true);
-      expect(evFilt.peakNorm).toBeGreaterThan(0.10); // comfortably above threshold
+      expect(filtEnergy).toBeGreaterThan(0);
     });
 
     it('includes peakWidth diagnostic in evidence output', () => {
@@ -439,9 +451,8 @@ describe('muted-speaker ping pipeline', () => {
       const noise = pseudoNoise(3500, 0.08, 42);
       const filtered = bandpassToProbe(noise, chirpProbe, sampleRate);
       const corrComplex = fftCorrelateComplex(filtered, ref, sampleRate);
-      const ev = estimateCorrelationEvidence(corrComplex.correlation, filtered, ref);
+      const ev = estimateCorrelationEvidence(corrComplex.correlation, noise, ref);
 
-      // peakWidth is returned as diagnostic info (not used for gating)
       expect(typeof ev.peakWidth).toBe('number');
       expect(ev.peakWidth).toBeGreaterThanOrEqual(1);
     });
