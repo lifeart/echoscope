@@ -40,7 +40,10 @@ function pickCarriers(
     : null;
 
   const carriers: number[] = [];
-  const minSpacing = minOrthSpacing * 0.8;
+  // Use full orthogonal spacing (no relaxation) to guarantee inter-carrier
+  // orthogonality.  The previous 0.8× factor could allow non-orthogonal
+  // placement that degrades carrier isolation.
+  const minSpacing = minOrthSpacing;
   const tryAddCarrier = (rawHz: number): void => {
     const quantized = Math.round(rawHz / binHz) * binHz;
     if (quantized < fLo || quantized > fHi) return;

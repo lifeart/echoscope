@@ -1,8 +1,21 @@
-export function speedOfSoundFromTemp(tempC: number): number {
-  return 331.3 + 0.606 * tempC;
+/**
+ * Speed of sound in air as a function of temperature (°C) and relative
+ * humidity (0–100%).  Uses the exact square-root model with a first-order
+ * humidity correction:
+ *
+ *   c = 331.3 √(1 + T/273.15) × (1 + 0.00006 × h)
+ *
+ * The humidity correction accounts for the lower molar mass of water
+ * vapour compared to dry air (up to ~+0.6 % at 100 % RH, temperature-
+ * dependent in practice but approximated here as a linear term).
+ */
+export function speedOfSoundFromTemp(tempC: number, humidityPct = 50): number {
+  const base = 331.3 * Math.sqrt(1 + tempC / 273.15);
+  const humidityFactor = 1 + 0.00006 * Math.max(0, Math.min(100, humidityPct));
+  return base * humidityFactor;
 }
 
-export const SPEED_OF_SOUND = speedOfSoundFromTemp(25); // m/s at 25°C
+export const SPEED_OF_SOUND = speedOfSoundFromTemp(25); // m/s at 25 °C, 50 % RH
 export const DEFAULT_SAMPLE_RATE = 48000;
 export const DEFAULT_BUFFER_SECONDS = 2.2;
 export const DEFAULT_HEAT_BINS = 240;

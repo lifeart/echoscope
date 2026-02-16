@@ -5,19 +5,22 @@ describe('computeDerivedConfig', () => {
   // speedOfSound
   it('computes speedOfSound from temperature', () => {
     const d = computeDerivedConfig(25, 4.0, 0.2);
-    expect(d.speedOfSound).toBeCloseTo(346.45, 1);
+    const expected = 331.3 * Math.sqrt(1 + 25 / 273.15) * (1 + 0.00006 * 50);
+    expect(d.speedOfSound).toBeCloseTo(expected, 1);
   });
 
   // listenMs
   it('computes listenMs from maxRange (default 4m)', () => {
     const d = computeDerivedConfig(25, 4.0, 0.2);
-    // (2 * 4.0 / 346.45) * 1000 + 50 ≈ 73.1
-    expect(d.listenMs).toBeCloseTo(73.1, 0);
+    const c = 331.3 * Math.sqrt(1 + 25 / 273.15) * (1 + 0.00006 * 50);
+    const expected = (2 * 4.0 / c) * 1000 + 50;
+    expect(d.listenMs).toBeCloseTo(expected, 0);
   });
   it('scales listenMs with maxRange', () => {
     const d = computeDerivedConfig(25, 10.0, 0.2);
-    // (2 * 10 / 346.45) * 1000 + 50 ≈ 107.7
-    expect(d.listenMs).toBeCloseTo(107.7, 0);
+    const c = 331.3 * Math.sqrt(1 + 25 / 273.15) * (1 + 0.00006 * 50);
+    const expected = (2 * 10 / c) * 1000 + 50;
+    expect(d.listenMs).toBeCloseTo(expected, 0);
   });
   it('listenMs is 50ms when maxRange is 0', () => {
     const d = computeDerivedConfig(25, 0, 0.2);

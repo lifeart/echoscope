@@ -31,6 +31,11 @@ export function fft(real: Float32Array, imag: Float32Array): void {
   }
 
   // Butterfly stages
+  // Twiddle factors are computed via recurrence for speed, with periodic
+  // recomputation from scratch every TWIDDLE_RESET iterations to prevent
+  // floating-point drift that would otherwise degrade sidelobe cancellation
+  // (e.g. Golay pairs) for large FFT sizes (N >= 2^16).
+  const TWIDDLE_RESET = 64;
   for (let size = 2; size <= N; size <<= 1) {
     const halfSize = size >> 1;
     const angle = -2 * Math.PI / size;
@@ -40,6 +45,13 @@ export function fft(real: Float32Array, imag: Float32Array): void {
     for (let i = 0; i < N; i += size) {
       let curR = 1, curI = 0;
       for (let k = 0; k < halfSize; k++) {
+        // Reset twiddle factor from scratch periodically to bound
+        // accumulated floating-point error to O(1) ULP.
+        if (k > 0 && k % TWIDDLE_RESET === 0) {
+          const a = angle * k;
+          curR = Math.cos(a);
+          curI = Math.sin(a);
+        }
         const evenIdx = i + k;
         const oddIdx = i + k + halfSize;
         const tR = curR * real[oddIdx] - curI * imag[oddIdx];

@@ -2,17 +2,22 @@ import { describe, it, expect } from 'vitest';
 import { speedOfSoundFromTemp, SPEED_OF_SOUND, LAPTOP_PRESET_SCAN } from '../../src/constants.js';
 
 describe('speedOfSoundFromTemp', () => {
-  it('returns ~346.45 at 25°C (default)', () => {
-    expect(speedOfSoundFromTemp(25)).toBeCloseTo(346.45, 1);
+  it('returns correct value at 25°C (default)', () => {
+    const expected = 331.3 * Math.sqrt(1 + 25 / 273.15) * (1 + 0.00006 * 50);
+    expect(speedOfSoundFromTemp(25)).toBeCloseTo(expected, 1);
   });
-  it('returns ~342.21 at 18°C (min range)', () => {
-    expect(speedOfSoundFromTemp(18)).toBeCloseTo(342.21, 1);
+  it('returns correct value at 18°C (min range)', () => {
+    const expected = 331.3 * Math.sqrt(1 + 18 / 273.15) * (1 + 0.00006 * 50);
+    expect(speedOfSoundFromTemp(18)).toBeCloseTo(expected, 1);
   });
-  it('returns ~356.75 at 42°C (max range)', () => {
-    expect(speedOfSoundFromTemp(42)).toBeCloseTo(356.75, 1);
+  it('returns correct value at 42°C (max range)', () => {
+    const expected = 331.3 * Math.sqrt(1 + 42 / 273.15) * (1 + 0.00006 * 50);
+    expect(speedOfSoundFromTemp(42)).toBeCloseTo(expected, 1);
   });
-  it('returns 331.3 at 0°C (freezing)', () => {
-    expect(speedOfSoundFromTemp(0)).toBeCloseTo(331.3, 1);
+  it('returns ~331.3 at 0°C (freezing)', () => {
+    // At 0°C with default 50% humidity: 331.3 * 1.003 ≈ 331.3
+    const expected = 331.3 * (1 + 0.00006 * 50);
+    expect(speedOfSoundFromTemp(0)).toBeCloseTo(expected, 1);
   });
 });
 

@@ -173,8 +173,16 @@ export function coherentSumCell(
     const sampled = interpolateComplexAt(frame.corrReal, frame.corrImag, sampleIndex);
     if (!sampled.valid) continue;
 
+    // Phase correction: only compensate the sub-sample fractional residual.
+    // The integer-sample part of the shift is handled exactly by the sample
+    // index offset; linear interpolation introduces a small phase error for
+    // the fractional part, which the narrowband correction below fixes.
+    // Applying the full shiftSec would double-correct for wideband probes.
+    const shiftSamples = shiftSec * frame.sampleRate;
+    const fracSamples = shiftSamples - Math.round(shiftSamples);
+    const fracSec = fracSamples / frame.sampleRate;
     const phaseHz = resolvePhaseCenterHz(config, frame);
-    const phase = -2 * Math.PI * phaseHz * shiftSec;
+    const phase = -2 * Math.PI * phaseHz * fracSec;
     const c = Math.cos(phase);
     const s = Math.sin(phase);
     const rotatedReal = sampled.real * c - sampled.imag * s;

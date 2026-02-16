@@ -13,11 +13,13 @@ describe('scan-engine consensus selector', () => {
   it('rejects isolated strongest row when neighborhood is coherent elsewhere', () => {
     const hm = createHeatmap([-20, -10, 0, 10, 20], 8);
 
-    writeRow(hm, 0, [0.02, 0.03, 0.05, 0.10, 0.32, 0.10, 0.03, 0.02], 4, 0.32);
-    writeRow(hm, 1, [0.02, 0.03, 0.06, 0.12, 0.37, 0.12, 0.03, 0.02], 4, 0.37);
-    writeRow(hm, 2, [0.02, 0.85, 0.03, 0.02, 0.02, 0.01, 0.01, 0.01], 1, 0.85);
-    writeRow(hm, 3, [0.02, 0.03, 0.06, 0.11, 0.35, 0.11, 0.03, 0.02], 4, 0.35);
-    writeRow(hm, 4, [0.01, 0.02, 0.04, 0.08, 0.30, 0.09, 0.02, 0.01], 4, 0.30);
+    // Coherent rows: clean peaks at bin 4 with low sidelobe energy
+    writeRow(hm, 0, [0.01, 0.01, 0.01, 0.05, 0.45, 0.05, 0.01, 0.01], 4, 0.45);
+    writeRow(hm, 1, [0.01, 0.01, 0.01, 0.06, 0.50, 0.06, 0.01, 0.01], 4, 0.50);
+    // Isolated row 2: strong but noisy peak at bin 1
+    writeRow(hm, 2, [0.10, 0.85, 0.10, 0.08, 0.06, 0.08, 0.05, 0.05], 1, 0.85);
+    writeRow(hm, 3, [0.01, 0.01, 0.01, 0.06, 0.48, 0.06, 0.01, 0.01], 4, 0.48);
+    writeRow(hm, 4, [0.01, 0.01, 0.01, 0.04, 0.40, 0.04, 0.01, 0.01], 4, 0.40);
 
     const result = selectConsensusDirection(hm, {
       strengthGate: 0.05,

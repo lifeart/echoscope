@@ -20,7 +20,17 @@ const DEFAULT_CFAR: CfarConfig = {
 
 /**
  * Compute CFAR threshold multiplier alpha for CA-CFAR.
- * For exponential noise model: alpha = N * (Pfa^(-1/N) - 1)
+ *
+ * The profile is expected to be in the **amplitude** (magnitude) domain.
+ * Amplitude samples of complex Gaussian noise follow a Rayleigh distribution
+ * whose squared values are exponential. Working in the squared (power) domain
+ * is the standard for CA-CFAR, so the detector internally squares the profile
+ * bins for noise estimation and comparison, then returns thresholds in the
+ * original amplitude domain for caller convenience.
+ *
+ * Alpha is derived from the exponential CDF:
+ *   alpha = N * (Pfa^(-1/N) - 1)
+ * where N = 2 * trainingCellCount (both sides).
  */
 export function cfarAlpha(trainingCellCount: number, pfa: number): number {
   if (trainingCellCount <= 0 || pfa <= 0 || pfa >= 1) return 1;
@@ -28,9 +38,13 @@ export function cfarAlpha(trainingCellCount: number, pfa: number): number {
 }
 
 /**
- * Cell-Averaging CFAR detector.
- * For each cell, estimates noise from surrounding training cells (excluding guard cells),
- * then applies a threshold multiplier to determine if the cell contains a target.
+ * Cell-Averaging CFAR detector operating in the **power domain**.
+ *
+ * Input profile values are squared internally so that the exponential noise
+ * model (upon which the alpha formula is based) is properly applied to
+ * chi-squared / exponential samples rather than Rayleigh magnitudes.
+ * Returned thresholds are converted back to the amplitude domain so that
+ * callers can compare directly against the original profile values.
  */
 export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): CfarResult {
   const cfg: CfarConfig = { ...DEFAULT_CFAR, ...config };
@@ -45,6 +59,10 @@ export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): Cfa
   const train = Math.max(1, cfg.trainingCells);
   const alpha = cfarAlpha(2 * train, cfg.pfa);
 
+  // Pre-compute power (squared amplitude) for each bin
+  const power = new Float32Array(n);
+  for (let i = 0; i < n; i++) power[i] = profile[i] * profile[i];
+
   for (let i = 0; i < n; i++) {
     let sum = 0;
     let count = 0;
@@ -52,7 +70,7 @@ export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): Cfa
     // Left training cells
     for (let j = i - guard - train; j < i - guard; j++) {
       if (j >= 0 && j < n) {
-        sum += profile[j];
+        sum += power[j];
         count++;
       }
     }
@@ -60,16 +78,18 @@ export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): Cfa
     // Right training cells
     for (let j = i + guard + 1; j <= i + guard + train; j++) {
       if (j >= 0 && j < n) {
-        sum += profile[j];
+        sum += power[j];
         count++;
       }
     }
 
     const noiseEstimate = count > 0 ? sum / count : 0;
-    const threshold = Math.max(cfg.minThreshold, noiseEstimate * alpha);
-    thresholds[i] = threshold;
+    // Threshold in power domain, converted back to amplitude
+    const thresholdPower = Math.max(cfg.minThreshold * cfg.minThreshold, noiseEstimate * alpha);
+    const thresholdAmplitude = Math.sqrt(thresholdPower);
+    thresholds[i] = thresholdAmplitude;
 
-    if (profile[i] > threshold) {
+    if (profile[i] > thresholdAmplitude) {
       detections[i] = 1;
       detectionCount++;
     }

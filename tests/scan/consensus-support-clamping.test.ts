@@ -61,12 +61,12 @@ describe('consensus negative support clamping', () => {
 
     // Row 0: weak noise
     writeRow(hm, 0, [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01], -1, 0);
-    // Row 1: peak at bin 4 (coherent with row 2)
-    writeRow(hm, 1, [0.02, 0.02, 0.02, 0.1, 0.4, 0.1, 0.02, 0.02], 4, 0.4);
-    // Row 2: peak at bin 4 (target)
-    writeRow(hm, 2, [0.02, 0.02, 0.02, 0.1, 0.5, 0.1, 0.02, 0.02], 4, 0.5);
+    // Row 1: peak at bin 4 (coherent with row 2), clean profile
+    writeRow(hm, 1, [0.01, 0.01, 0.01, 0.05, 0.55, 0.05, 0.01, 0.01], 4, 0.55);
+    // Row 2: peak at bin 4 (target), clean profile
+    writeRow(hm, 2, [0.01, 0.01, 0.01, 0.06, 0.60, 0.06, 0.01, 0.01], 4, 0.60);
     // Row 3: peak at bin 1 (incoherent with row 2) — slightly weaker
-    writeRow(hm, 3, [0.1, 0.35, 0.1, 0.02, 0.02, 0.02, 0.02, 0.02], 1, 0.35);
+    writeRow(hm, 3, [0.10, 0.35, 0.10, 0.02, 0.02, 0.02, 0.02, 0.02], 1, 0.35);
     // Row 4: weak noise
     writeRow(hm, 4, [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01], -1, 0);
 

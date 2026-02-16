@@ -6,6 +6,16 @@ export interface GCCResult {
   confidence: number;
 }
 
+/**
+ * Generalized Cross-Correlation with Phase Transform (GCC-PHAT).
+ *
+ * Computes G12 = conj(X1) · X2 / |conj(X1) · X2|, then IFFT.
+ *
+ * Sign convention: a *positive* peakDelay means sig2 is *delayed*
+ * relative to sig1 (i.e. sig1 arrives first).  When used for DOA
+ * with mic-pair (i, j), a positive delay means the wavefront reaches
+ * mic[i] before mic[j].
+ */
 export function gccPhat(sig1: Float32Array, sig2: Float32Array, sampleRate: number): GCCResult {
   const L = sig1.length + sig2.length - 1;
   const N = nextPow2(L);

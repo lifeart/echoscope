@@ -1,3 +1,7 @@
+/**
+ * Normalize by absolute maximum.  **Mutates the input array in-place**
+ * and returns a reference to it. Clone first if the original is needed.
+ */
 export function absMaxNormalize(a: Float32Array): Float32Array {
   let mx = 0;
   for (let i = 0; i < a.length; i++) { const v = Math.abs(a[i]); if (v > mx) mx = v; }
@@ -7,6 +11,10 @@ export function absMaxNormalize(a: Float32Array): Float32Array {
   return a;
 }
 
+/**
+ * Normalize by positive peak.  **Mutates the input array in-place**
+ * and returns a reference to it. Clone first if the original is needed.
+ */
 export function peakNormalize(a: Float32Array): Float32Array {
   let mx = -Infinity;
   for (let i = 0; i < a.length; i++) if (a[i] > mx) mx = a[i];

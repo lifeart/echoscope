@@ -20,6 +20,7 @@ import { pingAndCaptureOneSide } from '../spatial/steering.js';
 import { buildRangePrior } from './range-prior.js';
 import { buildJointHeatmapFromLR } from './joint-lr.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
+import { fft, ifft, nextPow2 } from '../dsp/fft.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
 const perAngleProfileHistory = new Map<number, Float32Array[]>();
@@ -374,27 +375,44 @@ function selectBestRowByScores(scores: Float32Array): number {
 }
 
 /**
- * Interpolate a complex sample at a fractional index using linear interpolation.
- * Returns {real, imag} at the given (possibly fractional) sample position.
+ * Shift a complex signal by a fractional number of samples using an exact
+ * FFT phase-ramp.  This applies X_shifted[k] = X[k] · e^{-j 2π k Δ/N}
+ * and is exact (no interpolation error) for band-limited signals.
  */
-function interpolateComplexSample(
+export function fftFractionalShift(
   real: Float32Array,
   imag: Float32Array,
-  index: number,
-  len: number,
-): { r: number; i: number } {
-  if (index < 0 || index >= len - 1) {
-    // Clamp to edges
-    const clamped = Math.max(0, Math.min(len - 1, Math.round(index)));
-    return { r: real[clamped], i: imag[clamped] };
+  shiftSamples: number,
+): { real: Float32Array; imag: Float32Array } {
+  const len = real.length;
+  if (len === 0 || Math.abs(shiftSamples) < 1e-9) {
+    return { real: Float32Array.from(real), imag: Float32Array.from(imag) };
   }
-  const i0 = Math.floor(index);
-  const frac = index - i0;
-  const i1 = Math.min(i0 + 1, len - 1);
-  return {
-    r: real[i0] + (real[i1] - real[i0]) * frac,
-    i: imag[i0] + (imag[i1] - imag[i0]) * frac,
-  };
+
+  const N = nextPow2(len);
+  // Zero-pad to power of 2 for FFT
+  const rr = new Float32Array(N);
+  const ri = new Float32Array(N);
+  rr.set(real);
+  ri.set(imag);
+
+  fft(rr, ri);
+
+  // Apply phase ramp: e^{-j 2π k shift / N}
+  for (let k = 0; k < N; k++) {
+    const phase = -2 * Math.PI * k * shiftSamples / N;
+    const c = Math.cos(phase);
+    const s = Math.sin(phase);
+    const newR = rr[k] * c - ri[k] * s;
+    const newI = rr[k] * s + ri[k] * c;
+    rr[k] = newR;
+    ri[k] = newI;
+  }
+
+  ifft(rr, ri);
+
+  // Truncate back to original length
+  return { real: rr.subarray(0, len), imag: ri.subarray(0, len) };
 }
 
 function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null {
@@ -415,6 +433,9 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
   // align their correlation peaks before averaging. Without this alignment,
   // sub-sample tau0 jitter causes destructive interference at the peak,
   // degrading SNR instead of improving it.
+  //
+  // Alignment uses an exact FFT phase-ramp shift rather than linear
+  // interpolation, eliminating frequency-dependent interpolation error.
   const refTau0 = first.tau0;
 
   for (let i = 0; i < frames.length; i++) {
@@ -426,12 +447,15 @@ function coherentAverageRawFrames(frames: RawAngleFrame[]): RawAngleFrame | null
     const deltaTau = frame.tau0 - refTau0;
     const shiftSamples = deltaTau * frame.sampleRate;
 
+    // Apply exact fractional shift via FFT phase ramp
+    const shifted = fftFractionalShift(
+      frame.corrReal.subarray(0, len),
+      frame.corrImag.subarray(0, len),
+      shiftSamples,
+    );
     for (let n = 0; n < len; n++) {
-      // Read from the shifted position in this frame's correlation
-      const srcIndex = n + shiftSamples;
-      const sample = interpolateComplexSample(frame.corrReal, frame.corrImag, srcIndex, len);
-      corrReal[n] += sample.r;
-      corrImag[n] += sample.i;
+      corrReal[n] += shifted.real[n];
+      corrImag[n] += shifted.imag[n];
     }
   }
 

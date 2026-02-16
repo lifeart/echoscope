@@ -96,7 +96,7 @@ export function suppressStaticReflections(
     const cleaned = raw - strength * bg;
     out[i] = cleaned > 0 ? cleaned : 0;
 
-    const noveltyLikely = selectiveUpdate.enabled && out[i] > raw * effectiveNoveltyRatio;
+    const noveltyLikely = selectiveUpdate.enabled && raw > bg * (1 + effectiveNoveltyRatio);
     const alpha = noveltyLikely ? modelAlpha * 0.15 : modelAlpha;
     newModel[i] = bg + alpha * (raw - bg);
   }

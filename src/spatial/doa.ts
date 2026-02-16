@@ -48,16 +48,24 @@ export function srpPhatDOA(
       // Negative sign because a source at positive θ reaches the
       // further mic (j, if dx > 0) later, shortening its path.
       const expectedDelay = -(dx * Math.sin(theta)) / c;
-      // Look up GCC value at expected delay
-      const delaySamples = Math.round(expectedDelay * sampleRate);
+      // Fractional-sample lookup with linear interpolation for sub-sample
+      // precision.  Integer rounding on small arrays (55 mm spacing ≈ 7.7
+      // samples max delay at 48 kHz) introduces ±0.5 sample error ≈ ±7°.
+      const delaySamplesF = expectedDelay * sampleRate;
       const gcc = gccResults[p].gcc;
       const N = gcc.length;
-      // Handle wrap-around in GCC output
-      let idx = delaySamples;
-      if (idx < 0) idx += N;
-      if (idx >= 0 && idx < N) {
-        totalPower += gcc[idx];
-      }
+
+      // Wrap fractional delay into [0, N) range
+      let fracIdx = delaySamplesF;
+      if (fracIdx < 0) fracIdx += N;
+      if (fracIdx < 0 || fracIdx >= N) continue;
+
+      // Linear interpolation between adjacent GCC bins
+      const i0 = Math.floor(fracIdx);
+      const i1 = (i0 + 1) % N;
+      const frac = fracIdx - i0;
+      const gccVal = gcc[i0] * (1 - frac) + gcc[i1] * frac;
+      totalPower += gccVal;
     }
 
     if (totalPower > bestPower) {

@@ -38,9 +38,12 @@ export function computeProfileConfidence(
   }
   const sidelobeRatio = mainEnergy / Math.max(1e-12, sideEnergy);
 
+  // Use log-scale mapping for sidelobe ratio to maintain sensitivity
+  // across the full dynamic range.  Linear mapping saturates at ~3.4;
+  // log10 maps [1..1000] → [0..3] → clamp to [0..1].
   const normPsr = clamp((psr - 1.5) / 8, 0, 1);
   const normSharp = clamp(sharpness * 2.5, 0, 1);
-  const normSide = clamp((sidelobeRatio - 0.4) / 3, 0, 1);
+  const normSide = clamp(Math.log10(Math.max(1, sidelobeRatio)) / 3, 0, 1);
   const confidence = clamp(0.45 * normPsr + 0.25 * normSharp + 0.30 * normSide, 0, 1);
 
   return { psr, sharpness, sidelobeRatio, confidence };

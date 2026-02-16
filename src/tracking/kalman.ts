@@ -130,6 +130,10 @@ export function predict(target: TargetState, dt: number, config: KalmanConfig = 
     covariance: P_new,
     age: target.age + 1,
     missCount: target.missCount + 1,
+    // Exponential confidence decay on every prediction step (no measurement).
+    // Prevents stale tracks from retaining artificially high confidence
+    // that would bias the joint angle prior and target selection.
+    confidence: target.confidence * 0.92,
   };
 }
 

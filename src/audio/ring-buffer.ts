@@ -1,3 +1,12 @@
+/**
+ * Single-threaded circular buffer for multichannel audio capture.
+ *
+ * Thread-safety note: push() and read() are expected to run on the
+ * **same** JS thread (main thread, fed by AudioWorklet postMessage).
+ * If migrated to SharedArrayBuffer for lock-free worklet communication,
+ * writePos must be read/written via Atomics.load / Atomics.store and
+ * a memory barrier must separate data writes from the position update.
+ */
 export class RingBuffer {
   private buffers: Float32Array[];
   private length: number;

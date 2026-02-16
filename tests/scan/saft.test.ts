@@ -136,7 +136,13 @@ describe('saft core', () => {
 
     const frames: RawAngleFrame[] = angles.map((angleDeg) => {
       const shift = computeExpectedTauShift(targetAngle, angleDeg, targetRange, spacing, speedOfSound);
-      const phase = 2 * Math.PI * centerFreqHz * shift;
+      // Pre-rotate data by the fractional-sample phase that the code will
+      // later undo.  coherentSumCell applies phase correction only for the
+      // sub-sample residual, so the test data should match that.
+      const shiftSamples = shift * sampleRate;
+      const fracSamples = shiftSamples - Math.round(shiftSamples);
+      const fracSec = fracSamples / sampleRate;
+      const phase = 2 * Math.PI * centerFreqHz * fracSec;
 
       const corrReal = new Float32Array(corrLen);
       const corrImag = new Float32Array(corrLen);
@@ -234,7 +240,12 @@ describe('saft core', () => {
 
     function makeFrame(sourceAngle: number, desiredRotatedReal: number, quality: number): RawAngleFrame {
       const shift = computeExpectedTauShift(targetAngle, sourceAngle, range, spacing, c);
-      const phase = -2 * Math.PI * fc * shift;
+      // Pre-rotate using fractional-sample phase to match the code's
+      // fractional-only phase correction.
+      const shiftSamples = shift * 48000;
+      const fracSamples = shiftSamples - Math.round(shiftSamples);
+      const fracSec = fracSamples / 48000;
+      const phase = -2 * Math.PI * fc * fracSec;
       const sampleReal = desiredRotatedReal * Math.cos(phase);
       const sampleImag = -desiredRotatedReal * Math.sin(phase);
       return {
