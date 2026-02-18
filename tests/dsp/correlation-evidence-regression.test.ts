@@ -80,7 +80,7 @@ describe('correlation-evidence regression', () => {
         signal[40 + i] = ref[i] * 0.08;
       }
       const corr = correlate(signal, ref);
-      const ev = estimateCorrelationEvidence(corr, signal, ref);
+      estimateCorrelationEvidence(corr, signal, ref);
 
       // Verify conditions are met via custom options with very strict minPeakNorm
       // but keep defaults for the highProminence path

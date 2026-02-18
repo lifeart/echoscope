@@ -6,7 +6,7 @@
  * in the amplitude domain.
  */
 import { describe, it, expect } from 'vitest';
-import { caCfar, cfarAlpha } from '../../src/dsp/cfar.js';
+import { caCfar } from '../../src/dsp/cfar.js';
 
 describe('CFAR power-domain operation', () => {
   it('thresholds are in amplitude domain (comparable to input)', () => {

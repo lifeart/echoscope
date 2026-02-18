@@ -134,7 +134,7 @@ describe('aggregateProfiles: mixed zero and non-zero', () => {
     const zero2 = new Float32Array(5);
     const zero3 = new Float32Array(5);
 
-    const { averaged, bestBin, bestVal } = aggregateProfiles([zero1, zero2, zero3]);
+    const { averaged, bestVal } = aggregateProfiles([zero1, zero2, zero3]);
 
     for (let i = 0; i < averaged.length; i++) {
       expect(averaged[i]).toBe(0);

@@ -536,4 +536,5 @@ export interface AppEvents {
   'state:changed': { path: string; value: unknown };
   'audio:initialized': AudioState;
   'audio:samples': Float32Array;
+  'audio:closed': void;
 }

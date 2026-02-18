@@ -59,14 +59,18 @@ export interface DevicePreset {
 }
 
 export const DEVICE_PRESETS: Record<string, DevicePreset> = {
-  'mbp14':  { name: 'MacBook Pro 14\u2033',  d: 0.245, mic: { x: 0, y: 0.01 }, micSpacing: 0.055 },
-  'mbp16':  { name: 'MacBook Pro 16\u2033',  d: 0.275, mic: { x: 0, y: 0.01 }, micSpacing: 0.055 },
-  'mba13':  { name: 'MacBook Air 13\u2033',  d: 0.195, mic: { x: 0, y: 0.01 }, micSpacing: 0.045 },
-  'mba15':  { name: 'MacBook Air 15\u2033',  d: 0.235, mic: { x: 0, y: 0.01 }, micSpacing: 0.045 },
-  'iphone': { name: 'iPhone (portrait)',      d: 0.140, mic: { x: 0.05, y: 0.01 }, micSpacing: 0.070 },
-  'ipad11': { name: 'iPad Pro 11\u2033',      d: 0.180, mic: { x: 0, y: 0.005 }, micSpacing: 0.050 },
-  'ipad13': { name: 'iPad Pro 13\u2033',      d: 0.215, mic: { x: 0, y: 0.005 }, micSpacing: 0.065 },
-  'custom': { name: 'Custom',                 d: null,  mic: { x: null, y: null }, micSpacing: null },
+  'mbp14':     { name: 'MacBook Pro 14\u2033',  d: 0.245, mic: { x: 0, y: 0.01 },   micSpacing: 0.055 },
+  'mbp16':     { name: 'MacBook Pro 16\u2033',  d: 0.275, mic: { x: 0, y: 0.01 },   micSpacing: 0.055 },
+  'mba13':     { name: 'MacBook Air 13\u2033',  d: 0.195, mic: { x: 0, y: 0.01 },   micSpacing: 0.045 },
+  'mba15':     { name: 'MacBook Air 15\u2033',  d: 0.235, mic: { x: 0, y: 0.01 },   micSpacing: 0.045 },
+  'imac24':    { name: 'iMac 24\u2033',         d: 0.500, mic: { x: 0, y: 0.01 },   micSpacing: 0.075 },
+  'iphone':    { name: 'iPhone (portrait)',      d: 0.140, mic: { x: 0.05, y: 0.01 }, micSpacing: 0.070 },
+  'ipad11':    { name: 'iPad Pro 11\u2033',      d: 0.180, mic: { x: 0, y: 0.005 },  micSpacing: 0.050 },
+  'ipad13':    { name: 'iPad Pro 13\u2033',      d: 0.215, mic: { x: 0, y: 0.005 },  micSpacing: 0.065 },
+  'ipadair11': { name: 'iPad Air 11\u2033',      d: 0.170, mic: { x: 0, y: 0.005 },  micSpacing: 0.045 },
+  'ipadair13': { name: 'iPad Air 13\u2033',      d: 0.205, mic: { x: 0, y: 0.005 },  micSpacing: 0.060 },
+  'ipadmini':  { name: 'iPad mini',              d: 0.125, mic: { x: 0, y: 0.005 },  micSpacing: 0.035 },
+  'custom':    { name: 'Custom',                  d: null,  mic: { x: null, y: null }, micSpacing: null },
 };
 
 export const LAPTOP_PRESET_SCAN = {

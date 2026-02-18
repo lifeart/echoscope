@@ -419,9 +419,6 @@ describe('muted-speaker ping pipeline', () => {
       // Golay requires BOTH halves to pass TX evidence.
       // With muted speakers, each half has ~30% chance of noise passing.
       // AND gate: ~9% false positive vs OR gate: ~51%.
-      const refA = makeChirpRef(200);
-      const refB = makeChirpRef(200);
-
       // Simulate: half A passes (lucky noise), half B fails
       const txA = { pass: true, peakNorm: 0.045, medianNorm: 0.01, prominence: 4.5, peakIndex: 100, peakWidth: 3 };
       const txB = { pass: false, peakNorm: 0.028, medianNorm: 0.01, prominence: 2.8, peakIndex: 150, peakWidth: 2 };

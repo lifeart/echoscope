@@ -55,10 +55,13 @@ Built-in geometry presets for:
 
 - MacBook Pro 14" / 16"
 - MacBook Air 13" / 15"
+- iMac 24"
 - iPhone (portrait)
 - iPad Pro 11" / 13"
+- iPad Air 11" / 13"
+- iPad mini
 
-Speaker and microphone positions can be manually adjusted via the geometry wizard.
+The app auto-detects your device on load. Speaker and microphone positions can be manually adjusted via the geometry wizard or by selecting the **Custom** preset.
 
 ## Project Structure
 

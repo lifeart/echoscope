@@ -4,13 +4,25 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <meta name="theme-color" content="#111111"/>
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <title>Echolocation Lab (MBP + iPhone)</title>
-  <link rel="stylesheet" href="/src/styles/main.css">
+  <meta name="description" content="Browser-based active sonar echolocation system. Transmit acoustic signals, capture microphone echoes, and estimate target range and direction in real time using Web Audio."/>
+  <meta name="keywords" content="echolocation, sonar, acoustic sensing, Web Audio API, beamforming, cross-correlation, signal processing"/>
+  <meta name="author" content="Echoscope"/>
+  <meta property="og:title" content="Echoscope — Browser Sonar"/>
+  <meta property="og:description" content="Active sonar echolocation in the browser. Transmit chirps, MLS, or Golay pairs and build real-time 2D heatmaps of your surroundings."/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:image" content="icon-512.png"/>
+  <meta name="twitter:card" content="summary"/>
+  <meta name="twitter:title" content="Echoscope — Browser Sonar"/>
+  <meta name="twitter:description" content="Active sonar echolocation in the browser. Transmit chirps, MLS, or Golay pairs and build real-time 2D heatmaps of your surroundings."/>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+  <title>Echoscope — Browser Sonar</title>
+  <link rel="stylesheet" href="/src/styles/main.css"/>
 </head>
 <body>
 <header>
-  <h1>Echolocation Lab — Stereo TX steering + matched filter (MBP + iPhone)</h1>
+  <h1>Echoscope — Browser Sonar</h1>
 </header>
 
 <!-- Device answer QR — top-level so it's immediately visible on phone -->
@@ -69,9 +81,13 @@
             <option value="mbp16">MacBook Pro 16″</option>
             <option value="mba13">MacBook Air 13″</option>
             <option value="mba15">MacBook Air 15″</option>
+            <option value="imac24">iMac 24″</option>
             <option value="iphone">iPhone (portrait)</option>
             <option value="ipad11">iPad Pro 11″</option>
             <option value="ipad13">iPad Pro 13″</option>
+            <option value="ipadair11">iPad Air 11″</option>
+            <option value="ipadair13">iPad Air 13″</option>
+            <option value="ipadmini">iPad mini</option>
             <option value="custom">Custom</option>
           </select>
         </div>

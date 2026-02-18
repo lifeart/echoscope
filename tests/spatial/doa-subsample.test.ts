@@ -16,6 +16,7 @@ function makeStereoGeometry(spacingM: number, speedOfSound = 343): ArrayGeometry
       { x: spacingM / 2, y: 0, z: 0 },
     ],
     speakers: [{ x: 0, y: 0, z: 0 }],
+    spacing: spacingM,
     speedOfSound,
   };
 }
@@ -23,7 +24,7 @@ function makeStereoGeometry(spacingM: number, speedOfSound = 343): ArrayGeometry
 /** Create synthetic stereo signals with a known TDOA. */
 function makeStereoSignals(
   delaySamples: number,
-  sampleRate: number,
+  _sampleRate: number,
   length: number,
 ): Float32Array[] {
   const ch0 = new Float32Array(length);

@@ -21,6 +21,7 @@ import { buildRangePrior } from './range-prior.js';
 import { buildJointHeatmapFromLR } from './joint-lr.js';
 import { updateTrackingFromMeasurement } from '../tracking/engine.js';
 import { fft, ifft, nextPow2 } from '../dsp/fft.js';
+import { applyDisplayReflectionBlanking } from '../dsp/display-reflection-blanking.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
 const perAngleProfileHistory = new Map<number, Float32Array[]>();
@@ -374,6 +375,84 @@ function selectBestRowByScores(scores: Float32Array): number {
   return bestRow;
 }
 
+function pickBestBinInRange(profile: Float32Array, start: number, endExclusive: number): { bin: number; val: number } {
+  const s = Math.max(0, Math.min(profile.length, start | 0));
+  const e = Math.max(s, Math.min(profile.length, endExclusive | 0));
+  let bestBin = -1;
+  let bestVal = -Infinity;
+  for (let i = s; i < e; i++) {
+    const v = profile[i];
+    if (v > bestVal) {
+      bestVal = v;
+      bestBin = i;
+    }
+  }
+  if (bestBin < 0 || !Number.isFinite(bestVal)) return { bin: -1, val: 0 };
+  return { bin: bestBin, val: bestVal };
+}
+
+export function resolveBestDetectionFromRow(
+  heatmap: ReturnType<typeof createHeatmap>,
+  bestRow: number,
+  minR: number,
+  maxR: number,
+  preBlendRowBest?: { bestBin: Int16Array; bestVal: Float32Array },
+): { bestBin: number; bestStrength: number; bestRange: number } {
+  let bestStrength = 0;
+  let bestBin = -1;
+  let bestRange = NaN;
+
+  if (bestRow < 0 || bestRow >= heatmap.angles.length) {
+    return { bestBin, bestStrength, bestRange };
+  }
+
+  const profile = rowProfileView(heatmap, bestRow);
+
+  if (preBlendRowBest) {
+    const preBestBin = preBlendRowBest.bestBin[bestRow] ?? -1;
+    const preBestVal = preBlendRowBest.bestVal[bestRow] ?? 0;
+    if (preBestBin >= 0 && preBestVal > 0) {
+      // Prefer pre-blend gated peak: blending is for display stability and
+      // should not override the current scan's accepted detection.
+      bestBin = preBestBin;
+      bestStrength = preBestVal;
+    }
+  }
+
+  if (bestBin < 0) {
+    const inferredBest = pickBestFromProfile(profile);
+    bestStrength = Math.max(heatmap.bestVal[bestRow], inferredBest.val);
+    bestBin = heatmap.bestBin[bestRow] >= 0 ? heatmap.bestBin[bestRow] : inferredBest.bin;
+  }
+
+  // Near-edge peaks are often direct-path leakage or display reflections.
+  // Prefer a nearby interior peak when it is reasonably strong.
+  if (bestBin >= 0 && heatmap.bins > 4) {
+    const guardBins = Math.max(3, Math.floor(heatmap.bins * 0.03));
+    const nearEdge = bestBin <= guardBins || bestBin >= (heatmap.bins - 1 - guardBins);
+    if (nearEdge && guardBins + 2 < heatmap.bins - 1 - guardBins) {
+      const interior = pickBestBinInRange(profile, guardBins + 1, heatmap.bins - 1 - guardBins);
+      if (interior.bin >= 0 && interior.val > 0) {
+        const span = Math.max(1e-9, maxR - minR);
+        const binSpan = span / Math.max(1, heatmap.bins - 1);
+        const edgeRange = minR + bestBin * binSpan;
+        const nearMinRange = edgeRange <= (minR + Math.max(0.08, 2 * binSpan));
+        const ratio = nearMinRange ? 0.58 : 0.72;
+        if (interior.val >= bestStrength * ratio) {
+          bestBin = interior.bin;
+          bestStrength = interior.val;
+        }
+      }
+    }
+  }
+
+  if (bestBin >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
+    bestRange = minR + (bestBin / Math.max(1, heatmap.bins - 1)) * (maxR - minR);
+  }
+
+  return { bestBin, bestStrength, bestRange };
+}
+
 /**
  * Shift a complex signal by a fractional number of samples using an exact
  * FFT phase-ramp.  This applies X_shifted[k] = X[k] · e^{-j 2π k Δ/N}
@@ -698,18 +777,10 @@ async function doScanTxSteeringLegacy(): Promise<void> {
   });
   let bestRow = applyAngularContinuity(consensus.row, angles, consensus.scores);
 
-  let bestStrength = 0;
-  let bestBin = -1;
-  let bestRange = NaN;
-  if (bestRow >= 0) {
-    const profile = rowProfileView(heatmap, bestRow);
-    const inferredBest = pickBestFromProfile(profile);
-    bestStrength = Math.max(heatmap.bestVal[bestRow], inferredBest.val);
-    bestBin = heatmap.bestBin[bestRow] >= 0 ? heatmap.bestBin[bestRow] : inferredBest.bin;
-    if (bestBin >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
-      bestRange = minR + (bestBin / Math.max(1, heatBins - 1)) * (maxR - minR);
-    }
-  }
+  const resolvedBest = resolveBestDetectionFromRow(heatmap, bestRow, minR, maxR);
+  const bestStrength = resolvedBest.bestStrength;
+  const bestBin = resolvedBest.bestBin;
+  const bestRange = resolvedBest.bestRange;
 
   store.update(s => {
     if (bestRow >= 0 && bestStrength > config.strengthGate) {
@@ -923,6 +994,15 @@ export async function doScan(): Promise<void> {
     return;
   }
 
+  // Keep L/R scan preprocessing consistent with single-ping pipeline:
+  // when display blanking is enabled, suppress near-field bins before fusion.
+  const profileLForJoint = config.displayReflectionBlanking.enabled
+    ? applyDisplayReflectionBlanking(aggregatedL, minR, maxR, config.displayReflectionBlanking)
+    : aggregatedL;
+  const profileRForJoint = config.displayReflectionBlanking.enabled
+    ? applyDisplayReflectionBlanking(aggregatedR, minR, maxR, config.displayReflectionBlanking)
+    : aggregatedR;
+
   const stateBeforeJoint = store.get();
   const prior = buildRangePrior(
     stateBeforeJoint.targets,
@@ -933,8 +1013,8 @@ export async function doScan(): Promise<void> {
   const anglePrior = resolveJointAnglePrior(stateBeforeJoint.targets, lastStableDirectionAngle);
 
   const joint = buildJointHeatmapFromLR({
-    profileL: aggregatedL,
-    profileR: aggregatedR,
+    profileL: profileLForJoint,
+    profileR: profileRForJoint,
     anglesDeg: angles,
     minRange: minR,
     maxRange: maxR,
@@ -961,6 +1041,8 @@ export async function doScan(): Promise<void> {
   // The legacy TX-steering path applies CFAR inside doPingDetailed (before
   // any blending), so this ordering keeps both paths consistent.
   const rowScores = new Float32Array(angles.length);
+  const rowBestBinPreBlend = new Int16Array(angles.length).fill(-1);
+  const rowBestValPreBlend = new Float32Array(angles.length);
   for (let i = 0; i < angles.length; i++) {
     const profile = rowProfileView(heatmap, i);
     const bestBinI = heatmap.bestBin[i] >= 0 ? heatmap.bestBin[i] : pickBestFromProfile(profile).bin;
@@ -975,6 +1057,8 @@ export async function doScan(): Promise<void> {
     if (!cfarOk) continue;
 
     rowScores[i] = bestValI * confMetrics.confidence;
+    rowBestBinPreBlend[i] = bestBinI;
+    rowBestValPreBlend[i] = bestValI;
   }
 
   // Blend with previous scan data to stabilize targets across scans
@@ -983,18 +1067,16 @@ export async function doScan(): Promise<void> {
   const rowCandidate = selectBestRowByScores(rowScores);
   const bestRow = applyAngularContinuity(rowCandidate, angles, rowScores);
 
-  let bestStrength = 0;
-  let bestBin = -1;
-  let bestRange = NaN;
-  if (bestRow >= 0) {
-    const profile = rowProfileView(heatmap, bestRow);
-    const inferredBest = pickBestFromProfile(profile);
-    bestStrength = Math.max(heatmap.bestVal[bestRow], inferredBest.val);
-    bestBin = heatmap.bestBin[bestRow] >= 0 ? heatmap.bestBin[bestRow] : inferredBest.bin;
-    if (bestBin >= 0 && Number.isFinite(minR) && Number.isFinite(maxR) && maxR > minR) {
-      bestRange = minR + (bestBin / Math.max(1, heatBins - 1)) * (maxR - minR);
-    }
-  }
+  const resolvedBest = resolveBestDetectionFromRow(
+    heatmap,
+    bestRow,
+    minR,
+    maxR,
+    { bestBin: rowBestBinPreBlend, bestVal: rowBestValPreBlend },
+  );
+  const bestStrength = resolvedBest.bestStrength;
+  const bestBin = resolvedBest.bestBin;
+  const bestRange = resolvedBest.bestRange;
 
   store.update(s => {
     if (bestRow >= 0 && bestStrength > config.strengthGate) {

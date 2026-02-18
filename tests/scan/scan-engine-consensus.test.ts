@@ -1,5 +1,5 @@
 import { createHeatmap } from '../../src/scan/heatmap-data.js';
-import { selectConsensusDirection } from '../../src/scan/scan-engine.js';
+import { resolveBestDetectionFromRow, selectConsensusDirection } from '../../src/scan/scan-engine.js';
 
 function writeRow(hm: ReturnType<typeof createHeatmap>, row: number, bins: number[], bestBin: number, bestVal: number): void {
   for (let i = 0; i < bins.length; i++) {
@@ -30,5 +30,40 @@ describe('scan-engine consensus selector', () => {
     expect(result.row).not.toBe(2);
     expect(result.row).toBeGreaterThanOrEqual(0);
     expect(result.score).toBeGreaterThan(0);
+  });
+
+  it('uses pre-blend gated peak for final range when provided', () => {
+    const hm = createHeatmap([0], 8);
+    // Simulate a blended row where a stale near-range peak became stronger.
+    writeRow(hm, 0, [0, 0.35, 0, 0, 0, 0, 0.19, 0], 1, 0.35);
+
+    const resolved = resolveBestDetectionFromRow(
+      hm,
+      0,
+      0.3,
+      4.0,
+      {
+        bestBin: new Int16Array([6]),
+        bestVal: new Float32Array([0.30]),
+      },
+    );
+
+    expect(resolved.bestBin).toBe(6);
+    expect(resolved.bestStrength).toBeCloseTo(0.30, 6);
+    expect(resolved.bestRange).toBeGreaterThan(3.4);
+  });
+
+  it('falls back from edge peak to strong interior peak', () => {
+    const hm = createHeatmap([0], 64);
+    const row = new Array(64).fill(0);
+    row[1] = 1.0; // edge-like peak
+    row[28] = 0.80; // plausible interior target
+    writeRow(hm, 0, row, 1, 1.0);
+
+    const resolved = resolveBestDetectionFromRow(hm, 0, 0.3, 4.0);
+
+    expect(resolved.bestBin).toBe(28);
+    expect(resolved.bestStrength).toBeCloseTo(0.80, 6);
+    expect(resolved.bestRange).toBeGreaterThan(1.8);
   });
 });

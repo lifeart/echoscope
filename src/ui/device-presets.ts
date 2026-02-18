@@ -11,10 +11,13 @@ export function detectDevice(): string {
   if (/iPhone/.test(ua)) return 'iphone';
   if (/iPad/.test(ua) || (/Macintosh/.test(ua) && tp > 1)) {
     const larger = Math.max(w, h);
-    return larger >= 1200 ? 'ipad13' : 'ipad11';
+    if (larger < 1100) return 'ipadmini';
+    if (larger >= 1200) return 'ipad13';
+    return 'ipad11';
   }
   if (/Mac/.test(ua)) {
     const lw = Math.max(w, h);
+    if (lw >= 2200) return 'imac24';
     if (lw >= 1700) return 'mbp16';
     if (lw >= 1500) return 'mbp14';
     if (lw >= 1400) return 'mba15';
@@ -78,6 +81,10 @@ function applyLaptopScanPreset(): void {
     extraCalPings: String(lp.extraCalPings),
     envBaselineStrength: String(lp.envBaselineStrength),
     micArraySpacing: String(lp.micArraySpacing),
+    displayBlankingStartRange: '0.30',
+    displayBlankingEndRange: '0.85',
+    displayBlankingAttenuation: '0.80',
+    displayBlankingEdgeSoftness: '0.08',
   };
 
   for (const [id, val] of Object.entries(sets)) {
@@ -91,6 +98,10 @@ function applyLaptopScanPreset(): void {
   if (envOn) envOn.checked = true;
   const showTrace = document.getElementById('showTrace') as HTMLInputElement | null;
   if (showTrace) showTrace.checked = true;
+  const displayBlanking = document.getElementById('displayBlankingOn') as HTMLInputElement | null;
+  if (displayBlanking) displayBlanking.checked = true;
 
-  log(`[preset] laptop mode applied: golay, step=${lp.scanStep}\u00b0, passes=${lp.scanPasses}, gate=${lp.strengthGate}, clutter=${lp.clutterStrength}, quality=${lp.qualityAlgo}`);
+  log(
+    `[preset] laptop mode applied: golay, step=${lp.scanStep}\u00b0, passes=${lp.scanPasses}, gate=${lp.strengthGate}, clutter=${lp.clutterStrength}, quality=${lp.qualityAlgo}, blanking=on`,
+  );
 }
