@@ -25,9 +25,9 @@
 </head>
 <body>
 <header>
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <h1>Echoscope — Browser Sonar</h1>
-    <button id="btnHelp" type="button" class="help-btn" title="Show quick-start guide and keyboard shortcuts.">?</button>
+  <div class="header-row">
+    <h1>Echoscope <span class="header-sep">&mdash;</span> Browser Sonar</h1>
+    <button id="btnHelp" type="button" class="help-btn" title="Show quick-start guide and keyboard shortcuts." aria-label="Help">?</button>
   </div>
 </header>
 
@@ -56,7 +56,7 @@
         <span id="stereoIndicator" class="small indicator-ok" style="display:none;"></span>
       </div>
 
-      <p id="initHint" class="hint" style="color:#8dd0ff;font-weight:600;">
+      <p id="initHint" class="hint init-hint">
         &#x2192; Start by clicking <b>Init Audio</b> above to enable microphone access and the audio engine.
       </p>
       <p class="hint warn">
