@@ -124,6 +124,11 @@ export function initApp(): void {
       await refreshDeviceInfo();
       const audioState = store.get().audio;
       log(`[ok] audio initialized: sr=${audioState.actualSampleRate} Hz, capture=${audioState.captureMethod}, channels=${audioState.channelCount}`);
+      // Hide the init hint and show next-step guidance
+      const initHintEl = el('initHint');
+      if (initHintEl) {
+        initHintEl.textContent = '\u2192 Audio ready. Next: click Calibrate for best accuracy, or Scan to start immediately.';
+      }
       const stereoEl = el('stereoIndicator');
       if (stereoEl) {
         if (audioState.channelCount >= 2) {
@@ -141,7 +146,19 @@ export function initApp(): void {
     } catch (e: any) {
       if (btn) { btn.disabled = false; btn.textContent = 'Init Audio [I]'; }
       setStatus('error');
-      log('[err] init failed: ' + (e?.message || e));
+      const msg = e?.message || String(e);
+      if (/permission|denied|not allowed/i.test(msg)) {
+        log('[err] Microphone permission denied. Please allow mic access in your browser settings and try again.');
+      } else if (/not found|no device/i.test(msg)) {
+        log('[err] No audio input device found. Connect a microphone and try again.');
+      } else {
+        log('[err] init failed: ' + msg);
+      }
+      const initHintEl = el('initHint');
+      if (initHintEl) {
+        initHintEl.style.color = '#ffbf80';
+        initHintEl.textContent = '\u2192 Init failed. Check the Diagnostics log below for details, then retry Init Audio.';
+      }
     }
   });
 
@@ -198,6 +215,13 @@ export function initApp(): void {
         drawCalibSanityPlot(calib.sanity.curveL, calib.sanity.peakIndexL, calib.sanity.curveR, calib.sanity.peakIndexR, calib.sanity.earlyMs);
       }
       drawGeometry(store.get().config.minRange, store.get().config.maxRange);
+      // Update hint after successful calibration
+      const calibHintEl = el('initHint');
+      if (calibHintEl) {
+        const q = store.get().calibration?.quality ?? 0;
+        calibHintEl.style.color = q > 0.5 ? '#4caf50' : '#ffbf80';
+        calibHintEl.textContent = `\u2713 Calibrated (quality ${q.toFixed(2)}). Click Scan to start echolocation.`;
+      }
     } catch (e: any) {
       setStatus('error');
       log('[err] calibrate failed: ' + (e?.message || e));

@@ -78,16 +78,16 @@ export function applyDevicePreset(key: string, silent = false): void {
     }
   });
 
+  // Show "(detected)" hint on the selected preset option
+  const option = devicePresetEl?.querySelector(`option[value="${key}"]`);
+  if (option && !option.textContent?.includes('(detected)')) {
+    option.textContent += ' (detected)';
+  }
+
   if (!silent) {
     const dStr = preset.d !== null ? `d=${preset.d}m` : 'manual';
     const micStr = preset.mic.x !== null ? `mic\u2248(${preset.mic.x}, ${preset.mic.y})m` : 'manual';
     log(`[preset] ${preset.name}: ${dStr}, ${micStr}`);
-
-    // Show "(detected)" hint on auto-detected preset option
-    const option = devicePresetEl?.querySelector(`option[value="${key}"]`);
-    if (option && !option.textContent?.includes('(detected)')) {
-      option.textContent += ' (detected)';
-    }
   }
 
   // Apply laptop mode scan settings if checkbox is checked

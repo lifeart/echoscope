@@ -375,9 +375,35 @@ export function setButtonStates(audioReady: boolean, scanning: boolean): void {
   const btnCalibrate = el('btnCalibrate') as HTMLButtonElement | null;
   const btnRefreshDevices = el('btnRefreshDevices') as HTMLButtonElement | null;
 
-  if (btnPing) btnPing.disabled = !audioReady || scanning;
-  if (btnScan) btnScan.disabled = !audioReady || scanning;
-  if (btnStop) btnStop.disabled = !audioReady || !scanning;
-  if (btnCalibrate) btnCalibrate.disabled = !audioReady || scanning;
+  if (btnPing) {
+    btnPing.disabled = !audioReady || scanning;
+    btnPing.title = !audioReady
+      ? 'Requires Init Audio first. Runs a single measurement at the current steering angle.'
+      : scanning
+        ? 'Busy: a scan is in progress. Stop it first.'
+        : 'Run a single measurement at the current steering angle and update readouts.';
+  }
+  if (btnScan) {
+    btnScan.disabled = !audioReady || scanning;
+    btnScan.title = !audioReady
+      ? 'Requires Init Audio first. Runs a full angular sweep and builds the heatmap.'
+      : scanning
+        ? 'A scan is already running.'
+        : 'Run a full angular sweep using current scan settings and build the heatmap.';
+  }
+  if (btnStop) {
+    btnStop.disabled = !audioReady || !scanning;
+    btnStop.title = !scanning
+      ? 'No scan is running. Active only during a scan sweep.'
+      : 'Stop the active scan loop immediately.';
+  }
+  if (btnCalibrate) {
+    btnCalibrate.disabled = !audioReady || scanning;
+    btnCalibrate.title = !audioReady
+      ? 'Requires Init Audio first. Measures speaker-to-mic timing for accurate range.'
+      : scanning
+        ? 'Busy: a scan is in progress. Stop it first.'
+        : 'Run direct-path calibration to improve timing lock and range accuracy.';
+  }
   if (btnRefreshDevices) btnRefreshDevices.disabled = !audioReady;
 }

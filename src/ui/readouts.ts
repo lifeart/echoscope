@@ -5,10 +5,20 @@ function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  idle: 'idle — click Init Audio to begin',
+  initializing: 'initializing audio...',
+  ready: 'ready — audio active',
+  pinging: 'pinging...',
+  scanning: 'scanning...',
+  calibrating: 'calibrating...',
+  error: 'error — see Diagnostics log',
+};
+
 export function setStatus(msg: string): void {
   const statusEl = el('status');
   if (statusEl) {
-    statusEl.textContent = 'Status: ' + msg;
+    statusEl.textContent = 'Status: ' + (STATUS_LABELS[msg] ?? msg);
     statusEl.classList.toggle('status-error', msg === 'error');
   }
 }
