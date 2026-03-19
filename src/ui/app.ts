@@ -424,7 +424,7 @@ export function initApp(): void {
   // ---- Pointer crosshair wiring (supports touch) ----
   const profileCanvas = el('profile') as HTMLCanvasElement | null;
   if (profileCanvas) {
-    profileCanvas.style.touchAction = 'none';
+    profileCanvas.style.touchAction = 'pan-y';
     profileCanvas.addEventListener('pointermove', (ev) => {
       setProfileMouse(canvasPointerPos(profileCanvas, ev));
       const state = store.get();
@@ -441,7 +441,7 @@ export function initApp(): void {
 
   const heatmapCanvas = el('heatmap') as HTMLCanvasElement | null;
   if (heatmapCanvas) {
-    heatmapCanvas.style.touchAction = 'none';
+    heatmapCanvas.style.touchAction = 'pan-y';
     heatmapCanvas.addEventListener('pointermove', (ev) => {
       setHeatmapMouse(canvasPointerPos(heatmapCanvas, ev));
       redrawHeatmapCrosshair();
@@ -665,13 +665,25 @@ export function initApp(): void {
     }
   }
 
-  // Resize
+  // Resize + orientation change
   window.addEventListener('resize', () => {
     if (applyRetinaCanvases()) redrawAllCanvases();
+  });
+  // Some mobile browsers fire orientationchange without a resize event
+  window.addEventListener('orientationchange', () => {
+    // Delay slightly to let the browser finish layout reflow
+    setTimeout(() => {
+      if (applyRetinaCanvases()) redrawAllCanvases();
+    }, 150);
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') resumeIfSuspended().catch(() => {});
+  });
+
+  // iOS bfcache: page may be restored from cache with suspended AudioContext
+  window.addEventListener('pageshow', (ev) => {
+    if ((ev as PageTransitionEvent).persisted) resumeIfSuspended().catch(() => {});
   });
 
   // Initial render
