@@ -88,6 +88,12 @@
             <option value="ipadair11">iPad Air 11″</option>
             <option value="ipadair13">iPad Air 13″</option>
             <option value="ipadmini">iPad mini</option>
+            <option value="generic_laptop">Generic Laptop 14″</option>
+            <option value="generic_desktop">Generic Desktop</option>
+            <option value="android_phone">Android Phone (portrait)</option>
+            <option value="android_tablet">Android Tablet 10″</option>
+            <option value="surface">Surface Pro</option>
+            <option value="chromebook">Chromebook 14″</option>
             <option value="custom">Custom</option>
           </select>
         </div>
@@ -817,6 +823,24 @@
 
   </div>
 </main>
+
+<!-- Onboarding overlay (first visit only) -->
+<div id="onboardingOverlay" class="onboarding-overlay hidden">
+  <div class="onboarding-dialog">
+    <h2>Welcome to Echoscope</h2>
+    <p class="onboarding-subtitle">Browser-based active sonar echolocation. Transmit acoustic signals through your speakers, capture echoes with your microphone, and visualize your surroundings in real time.</p>
+    <ol class="onboarding-steps">
+      <li><b>Select your device</b> — pick your laptop or tablet from the <em>Device preset</em> dropdown so speaker/mic geometry is correct.</li>
+      <li><b>Init Audio</b> — click the button (or press <kbd>I</kbd>) to grant microphone access and start the audio engine.</li>
+      <li><b>Calibrate</b> — click <em>Calibrate</em> (or press <kbd>C</kbd>) to measure speaker-to-mic timing in your room.</li>
+      <li><b>Scan</b> — click <em>Scan</em> (or press <kbd>S</kbd>) to start echolocation and build a heatmap.</li>
+    </ol>
+    <div class="onboarding-actions">
+      <button id="onboardingDismiss" type="button">Get Started</button>
+      <a id="onboardingNeverShow" href="#" class="onboarding-skip">Don't show again</a>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

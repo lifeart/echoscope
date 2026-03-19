@@ -10,7 +10,7 @@
     "test:watch": "vitest"
   },
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "description": "Browser-based active sonar echolocation system",
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

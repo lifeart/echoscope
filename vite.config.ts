@@ -20,6 +20,7 @@ const lanIp = getLanIp();
 
 export default defineConfig({
   root: '.',
+  base: '/echoscope/',
   publicDir: 'public',
   define: {
     // Expose LAN IP to runtime so QR URLs can point to it

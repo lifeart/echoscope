@@ -70,6 +70,12 @@ export const DEVICE_PRESETS: Record<string, DevicePreset> = {
   'ipadair11': { name: 'iPad Air 11\u2033',      d: 0.170, mic: { x: 0, y: 0.005 },  micSpacing: 0.045 },
   'ipadair13': { name: 'iPad Air 13\u2033',      d: 0.205, mic: { x: 0, y: 0.005 },  micSpacing: 0.060 },
   'ipadmini':  { name: 'iPad mini',              d: 0.125, mic: { x: 0, y: 0.005 },  micSpacing: 0.035 },
+  'generic_laptop':  { name: 'Generic Laptop 14″',     d: 0.230, mic: { x: 0, y: 0.01 },   micSpacing: 0.045 },
+  'generic_desktop': { name: 'Generic Desktop',         d: 0.500, mic: { x: 0, y: 0.02 },   micSpacing: 0.070 },
+  'android_phone':   { name: 'Android Phone (portrait)', d: 0.135, mic: { x: 0.05, y: 0.01 }, micSpacing: 0.065 },
+  'android_tablet':  { name: 'Android Tablet 10″',      d: 0.170, mic: { x: 0, y: 0.005 },  micSpacing: 0.045 },
+  'surface':         { name: 'Surface Pro',              d: 0.200, mic: { x: 0, y: 0.008 },  micSpacing: 0.050 },
+  'chromebook':      { name: 'Chromebook 14″',           d: 0.225, mic: { x: 0, y: 0.01 },   micSpacing: 0.040 },
   'custom':    { name: 'Custom',                  d: null,  mic: { x: null, y: null }, micSpacing: null },
 };
 

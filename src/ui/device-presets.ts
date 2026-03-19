@@ -23,6 +23,28 @@ export function detectDevice(): string {
     if (lw >= 1400) return 'mba15';
     if (lw >= 1250) return 'mba13';
   }
+
+  // Android devices
+  if (/Android/.test(ua)) {
+    const larger = Math.max(w, h);
+    if (larger >= 1000 || (tp > 0 && Math.min(w, h) >= 600)) return 'android_tablet';
+    return 'android_phone';
+  }
+
+  // Surface devices (Windows + touch + mid-size screen)
+  if (/Windows/.test(ua) && /Surface/.test(ua)) return 'surface';
+
+  // ChromeOS / Chromebook
+  if (/CrOS/.test(ua)) return 'chromebook';
+
+  // Windows or Linux laptop (non-touch or small touch, moderate screen)
+  if (/Windows|Linux/.test(ua)) {
+    const lw = Math.max(w, h);
+    // Large screen without touch suggests desktop with external monitor
+    if (lw >= 2200 && tp === 0) return 'generic_desktop';
+    return 'generic_laptop';
+  }
+
   return 'custom';
 }
 

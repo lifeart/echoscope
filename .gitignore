@@ -1,6 +1,34 @@
-node_modules
-dist
-wasm/pkg
-wasm/target
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Rust/WASM
+wasm/pkg/
+wasm/target/
 *.wasm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+vite.config.ts.timestamp-*

@@ -21,6 +21,7 @@ import { drawSignalPreview, scheduleSignalPreview } from '../viz/signal-preview.
 import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
 import { setupPeerUI, syncPeerButtons, handleUrlOffer, handleUrlAnswer } from './peer-ui.js';
 import { getOfferFromUrl, getAnswerFromUrl, clearSignalFromUrl } from './url-params.js';
+import { initOnboarding } from './onboarding.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -649,4 +650,7 @@ export function initApp(): void {
 
   refreshDeviceInfo().catch(() => {});
   renderCalibInfo();
+
+  // Show onboarding overlay for first-time visitors
+  initOnboarding();
 }
