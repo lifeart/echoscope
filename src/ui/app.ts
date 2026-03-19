@@ -22,6 +22,7 @@ import { DEFAULT_HEAT_BINS, DEVICE_PRESETS } from '../constants.js';
 import { setupPeerUI, syncPeerButtons, handleUrlOffer, handleUrlAnswer } from './peer-ui.js';
 import { getOfferFromUrl, getAnswerFromUrl, clearSignalFromUrl } from './url-params.js';
 import { initOnboarding } from './onboarding.js';
+import { initPwaUpdateNotifier } from './pwa-update.js';
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id);
@@ -93,10 +94,8 @@ export function initApp(): void {
   el('mode')?.addEventListener('change', () => { syncModeUI(); readConfigFromDOM(); scheduleSignalPreview(); });
   syncModeUI();
 
-  // Service Worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
+  // PWA update notification
+  initPwaUpdateNotifier();
 
   // Angle slider
   el('angle')?.addEventListener('input', () => {

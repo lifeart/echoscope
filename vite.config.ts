@@ -51,6 +51,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,wasm,png}'],
+        // Ensure new SW activates immediately when user clicks "Reload"
+        skipWaiting: false, // controlled by SKIP_WAITING message from pwa-update.ts
+        clientsClaim: true,
         runtimeCaching: [
           {
             urlPattern: /\.(?:js|css|wasm)$/,
