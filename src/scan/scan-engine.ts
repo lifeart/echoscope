@@ -24,11 +24,14 @@ import { fft, ifft, nextPow2 } from '../dsp/fft.js';
 import { applyDisplayReflectionBlanking } from '../dsp/display-reflection-blanking.js';
 import type { AppConfig, RawAngleFrame } from '../types.js';
 
+// Module-level scan state. Call resetScanStabilityState() when scan
+// step or angle range changes to avoid stale cross-scan blending.
 const perAngleProfileHistory = new Map<number, Float32Array[]>();
 const perAngleCoherentHistory = new Map<number, RawAngleFrame[]>();
 let lastStableDirectionAngle: number | null = null;
 
-/** Snapshot of previous scan heatmap for inter-scan blending */
+/** Snapshot of previous scan heatmap for inter-scan blending.
+ *  Reset via resetScanStabilityState() when scan config changes. */
 let previousScanSnapshot: { data: Float32Array; bestBin: Int16Array; bestVal: Float32Array; angles: number[]; bins: number } | null = null;
 const INTER_SCAN_BLEND_ALPHA = 0.65; // weight for new scan data (0.65 new + 0.35 old)
 
@@ -302,7 +305,7 @@ async function captureOneSideRangeProfile(
   // TX evidence uses FILTERED mic signal — energy must match the correlation source.
   const txEvidence = estimateCorrelationEvidence(corr, micFiltered, ref);
   if (!txEvidence.pass) {
-    console.log(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} -> zero profile`);
+    console.debug(`[scan:corrEvidence] side=${side} txNorm=${txEvidence.peakNorm.toFixed(3)} txProm=${txEvidence.prominence.toFixed(2)} txWidth=${txEvidence.peakWidth} txPass=${txEvidence.pass} -> zero profile`);
     return new Float32Array(heatBins);
   }
   energyNormalize(corr, signalEnergy(ref));
@@ -346,7 +349,7 @@ async function captureOneSideRangeProfileGolay(
   // Require BOTH halves to pass — noise randomly passes ~30% per half,
   // OR gate gives ~50%+ false positive. AND gate: ~9%.
   if (!txEvidenceA.pass || !txEvidenceB.pass) {
-    console.log(`[scan:golayEvidence] side=${side} txA=${txEvidenceA.pass} txB=${txEvidenceB.pass} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} widthA=${txEvidenceA.peakWidth} widthB=${txEvidenceB.peakWidth} -> zero profile`);
+    console.debug(`[scan:golayEvidence] side=${side} txA=${txEvidenceA.pass} txB=${txEvidenceB.pass} normA=${txEvidenceA.peakNorm.toFixed(3)} normB=${txEvidenceB.peakNorm.toFixed(3)} widthA=${txEvidenceA.peakWidth} widthB=${txEvidenceB.peakWidth} -> zero profile`);
     return new Float32Array(heatBins);
   }
   const len = Math.min(corrA.length, corrB.length);
@@ -465,7 +468,7 @@ export function fftFractionalShift(
 ): { real: Float32Array; imag: Float32Array } {
   const len = real.length;
   if (len === 0 || Math.abs(shiftSamples) < 1e-9) {
-    return { real: Float32Array.from(real), imag: Float32Array.from(imag) };
+    return { real, imag };
   }
 
   const N = nextPow2(len);
@@ -605,11 +608,11 @@ export function applySaftHeatmapIfEnabled(
 
   if (!va.enabled) return false;
   if (rawFrames.length !== angles.length) {
-    console.log(`[doScan:saft] skipped (rawFrames=${rawFrames.length}, angles=${angles.length})`);
+    console.debug(`[doScan:saft] skipped (rawFrames=${rawFrames.length}, angles=${angles.length})`);
     return false;
   }
   if (angles.length < minRequiredRows) {
-    console.log(`[doScan:saft] skipped (angles=${angles.length} < required=${minRequiredRows})`);
+    console.debug(`[doScan:saft] skipped (angles=${angles.length} < required=${minRequiredRows})`);
     return false;
   }
 
@@ -631,7 +634,7 @@ export function applySaftHeatmapIfEnabled(
   heatmap.bestVal.set(saft.bestVal);
 
   const elapsedMs = Date.now() - t0;
-  console.log(`[doScan:saft] applied rows=${angles.length} bins=${heatmap.bins} halfWindow=${halfWindow} in ${elapsedMs}ms`);
+  console.debug(`[doScan:saft] applied rows=${angles.length} bins=${heatmap.bins} halfWindow=${halfWindow} in ${elapsedMs}ms`);
   return true;
 }
 
@@ -755,11 +758,11 @@ async function doScanTxSteeringLegacy(): Promise<void> {
   if (!store.get().scanning) {
     const state = store.get();
     store.set('status', state.audio.context ? 'ready' : 'idle');
-    bus.emit('scan:complete', undefined as unknown as void);
+    bus.emit('scan:complete');
     return;
   }
 
-  console.log(`[doScan] captured raw-angle frames=${rawFrames.length} of ${angles.length}`);
+  console.debug(`[doScan] captured raw-angle frames=${rawFrames.length} of ${angles.length}`);
   applySaftHeatmapIfEnabled(heatmap, rawFrames, angles, minR, maxR, config);
 
   // Cross-angle smoothing (median filter across adjacent angles)
@@ -831,7 +834,7 @@ async function doScanTxSteeringLegacy(): Promise<void> {
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
   saveScanSnapshot(heatmap);
 
-  bus.emit('scan:complete', undefined as unknown as void);
+  bus.emit('scan:complete');
 }
 
 export async function doScan(): Promise<void> {
@@ -950,14 +953,14 @@ export async function doScan(): Promise<void> {
   if (!store.get().scanning) {
     const state = store.get();
     store.set('status', state.audio.context ? 'ready' : 'idle');
-    bus.emit('scan:complete', undefined as unknown as void);
+    bus.emit('scan:complete');
     return;
   }
 
   if (leftProfiles.length === 0 || rightProfiles.length === 0) {
     store.set('scanning', false);
     store.set('status', 'ready');
-    bus.emit('scan:complete', undefined as unknown as void);
+    bus.emit('scan:complete');
     return;
   }
 
@@ -976,10 +979,10 @@ export async function doScan(): Promise<void> {
   let maxL = 0, maxR_ = 0;
   for (let i = 0; i < aggregatedL.length; i++) if (aggregatedL[i] > maxL) maxL = aggregatedL[i];
   for (let i = 0; i < aggregatedR.length; i++) if (aggregatedR[i] > maxR_) maxR_ = aggregatedR[i];
-  console.log(`[doScan:LR] aggregatedL max=${maxL.toExponential(3)} aggregatedR max=${maxR_.toExponential(3)}`);
+  console.debug(`[doScan:LR] aggregatedL max=${maxL.toExponential(3)} aggregatedR max=${maxR_.toExponential(3)}`);
 
   if (maxL < 1e-10 || maxR_ < 1e-10) {
-    console.log(`[doScan:LR] profile energy gate: L or R profile is essentially zero -> no detection`);
+    console.debug(`[doScan:LR] profile energy gate: L or R profile is essentially zero -> no detection`);
     store.update(s => {
       s.lastDirection.angle = NaN;
       s.lastDirection.strength = 0;
@@ -990,7 +993,7 @@ export async function doScan(): Promise<void> {
       s.status = 'ready';
     });
     updateTrackingFromMeasurement(null, Date.now());
-    bus.emit('scan:complete', undefined as unknown as void);
+    bus.emit('scan:complete');
     return;
   }
 
@@ -1114,7 +1117,7 @@ export async function doScan(): Promise<void> {
 
   if (bestRow >= 0) lastStableDirectionAngle = angles[bestRow];
   saveScanSnapshot(heatmap);
-  bus.emit('scan:complete', undefined as unknown as void);
+  bus.emit('scan:complete');
 }
 
 export function stopScan(): void {

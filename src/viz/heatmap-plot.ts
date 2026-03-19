@@ -7,8 +7,12 @@ import { drawTooltip } from './tooltip.js';
 import { canvasPixelScale } from './renderer.js';
 import { linearToDbNormalized } from '../dsp/normalize.js';
 
+/* ---- constants ---- */
+const DISPLAY_MIN_SIGNAL = 1e-7;
+
 /* ---- mouse state ---- */
 let heatMousePos: { x: number; y: number } | null = null;
+let cachedBitmap: ImageBitmap | null = null;
 let cachedImageData: ImageData | null = null;
 
 /* ---- tile cache state ---- */
@@ -19,6 +23,23 @@ let tilePlotDims: { pW: number; pH: number } | null = null;
 let tileColormap: string = '';
 let tileDbScale = false;
 let tileDynamicRange = 40;
+
+/* ---- rAF scheduling ---- */
+let heatmapRafPending = false;
+let pendingMinR = 0;
+let pendingMaxR = 0;
+
+export function scheduleDrawHeatmap(minR: number, maxR: number): void {
+  pendingMinR = minR;
+  pendingMaxR = maxR;
+  if (!heatmapRafPending) {
+    heatmapRafPending = true;
+    requestAnimationFrame(() => {
+      heatmapRafPending = false;
+      drawHeatmap(pendingMinR, pendingMaxR);
+    });
+  }
+}
 
 
 export function findDirtyColumns(data: Float32Array, cached: Float32Array | null, rows: number, cols: number): Set<number> {
@@ -71,9 +92,10 @@ export function drawHeatmap(minR: number, maxR: number): void {
     console.warn('[drawHeatmap] no canvas context');
     return;
   }
-  const { ctx, w, h, s } = r;
-  console.log(`[drawHeatmap] canvas w=${w} h=${h} scale=${s} minR=${minR} maxR=${maxR}`);
+  const { canvas, ctx, w, h, s } = r;
+  console.debug(`[drawHeatmap] canvas w=${w} h=${h} scale=${s} minR=${minR} maxR=${maxR}`);
   clearCanvas(ctx, w, h);
+  cachedBitmap = null;
   cachedImageData = null;
 
   const state = store.get();
@@ -83,12 +105,12 @@ export function drawHeatmap(minR: number, maxR: number): void {
     return;
   }
 
-  console.log(`[drawHeatmap] heatmap angles=${heatmap.angles.length} bins=${heatmap.bins} data.length=${heatmap.data.length} display.length=${heatmap.display.length}`);
+  console.debug(`[drawHeatmap] heatmap angles=${heatmap.angles.length} bins=${heatmap.bins} data.length=${heatmap.data.length} display.length=${heatmap.display.length}`);
 
   smoothHeatmapDisplay(heatmap);
 
   const { xPad, yPad, yBottom, plotW, plotH } = heatLayout(s, w, h);
-  console.log(`[drawHeatmap] layout xPad=${xPad} yPad=${yPad} yBottom=${yBottom} plotW=${plotW} plotH=${plotH}`);
+  console.debug(`[drawHeatmap] layout xPad=${xPad} yPad=${yPad} yBottom=${yBottom} plotW=${plotW} plotH=${plotH}`);
 
   // find max display value
   let dataMax = 0;
@@ -102,9 +124,9 @@ export function drawHeatmap(minR: number, maxR: number): void {
 
   // Gate: require meaningful signal level to render.
   // Without this, auto-scaling amplifies tiny noise residue into colored pixels.
-  const hasData = displayMax > 1e-7;
+  const hasData = displayMax > DISPLAY_MIN_SIGNAL;
 
-  console.log(`[drawHeatmap] dataMax=${dataMax.toExponential(3)} displayMax=${displayMax.toExponential(3)} nonZero=${nonZeroCount}/${heatmap.display.length} hasData=${hasData}`);
+  console.debug(`[drawHeatmap] dataMax=${dataMax.toExponential(3)} displayMax=${displayMax.toExponential(3)} nonZero=${nonZeroCount}/${heatmap.display.length} hasData=${hasData}`);
 
   const rows = heatmap.angles.length;
   const cols = heatmap.bins;
@@ -117,7 +139,7 @@ export function drawHeatmap(minR: number, maxR: number): void {
     const rowDen = Math.max(1, rows - 1);
     const colDen = Math.max(1, cols - 1);
 
-    console.log(`[drawHeatmap] creating ImageData pW=${pW} pH=${pH} rows=${rows} cols=${cols}`);
+    console.debug(`[drawHeatmap] creating ImageData pW=${pW} pH=${pH} rows=${rows} cols=${cols}`);
 
     const curColormap = state.config.colormap ?? 'inferno';
     const curDbScale = state.config.heatmapDbScale ?? false;
@@ -146,17 +168,16 @@ export function drawHeatmap(minR: number, maxR: number): void {
       const useDbScale = curDbScale;
       const dynamicRangeDb = curDynamicRange;
 
-      // Estimate noise floor for dB scaling (median of non-zero display values)
+      // Estimate noise floor for dB scaling (approximate median via half-mean)
       let noiseFloor = 0;
       if (useDbScale) {
-        const nonZero: number[] = [];
-        for (let i = 0; i < heatmap.display.length; i++) {
-          if (heatmap.display[i] > 1e-15) nonZero.push(heatmap.display[i]);
+        const total = heatmap.display.length;
+        let sum = 0, count = 0;
+        for (let i = 0; i < total; i++) {
+          const v = heatmap.display[i];
+          if (v > 1e-15) { sum += v; count++; }
         }
-        if (nonZero.length > 0) {
-          nonZero.sort((a, b) => a - b);
-          noiseFloor = nonZero[Math.floor(nonZero.length / 2)];
-        }
+        noiseFloor = count > 0 ? sum / count * 0.5 : 1e-10;
       }
 
       // Build set of dirty y-pixels from dirty data columns
@@ -198,12 +219,15 @@ export function drawHeatmap(minR: number, maxR: number): void {
           data[idx] = lut[lutIdx]; data[idx + 1] = lut[lutIdx + 1]; data[idx + 2] = lut[lutIdx + 2]; data[idx + 3] = 255;
         }
       }
-      console.log(`[drawHeatmap] pixel stats: min=${pixMin} max=${pixMax} nonZero=${pixNonZero} dirty=${dirtyColumns.size}/${cols} putImageData at (${xPad}, ${yPad})`);
+      console.debug(`[drawHeatmap] pixel stats: min=${pixMin} max=${pixMax} nonZero=${pixNonZero} dirty=${dirtyColumns.size}/${cols} putImageData at (${xPad}, ${yPad})`);
       ctx.putImageData(img, xPad, yPad);
 
       // Update tile cache
       tileImageData = img;
-      tileDisplaySnapshot = Float32Array.from(heatmap.display);
+      if (!tileDisplaySnapshot || tileDisplaySnapshot.length !== heatmap.display.length) {
+        tileDisplaySnapshot = new Float32Array(heatmap.display.length);
+      }
+      tileDisplaySnapshot.set(heatmap.display);
       tileDisplayMax = displayMax;
       tilePlotDims = { pW, pH };
       tileColormap = curColormap;
@@ -289,8 +313,14 @@ export function drawHeatmap(minR: number, maxR: number): void {
     ctx.fillText('low\u2192high confidence', xPad + 120 * s, yBottom + 28 * s);
   }
 
-  // Cache for crosshair overlay
+  // Cache for crosshair overlay — always capture ImageData synchronously as fallback,
+  // then upgrade to ImageBitmap (GPU-accelerated) when the async call resolves
   cachedImageData = ctx.getImageData(0, 0, w, h);
+  if (typeof createImageBitmap === 'function') {
+    createImageBitmap(canvas).then(bmp => {
+      cachedBitmap = bmp;
+    });
+  }
 
   // Draw crosshair if mouse is over
   drawHeatmapCrosshair(ctx, w, h, s, minR, maxR, heatmap);
@@ -342,11 +372,15 @@ export function redrawHeatmapCrosshair(): void {
   const r = getHeatmapCtx();
   if (!r) return;
   const { ctx, w, h, s } = r;
-  if (!cachedImageData) return;
+  if (!cachedBitmap && !cachedImageData) return;
   const state = store.get();
   const heatmap = state.heatmap;
   if (!heatmap || heatmap.angles.length === 0) return;
 
-  ctx.putImageData(cachedImageData, 0, 0);
+  if (cachedBitmap) {
+    ctx.drawImage(cachedBitmap, 0, 0);
+  } else if (cachedImageData) {
+    ctx.putImageData(cachedImageData, 0, 0);
+  }
   drawHeatmapCrosshair(ctx, w, h, s, state.config.minRange, state.config.maxRange, heatmap);
 }

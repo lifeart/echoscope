@@ -1,8 +1,37 @@
-import { fft, ifft, nextPow2, zeroPad } from './fft.js';
+import { fft, ifft, nextPow2 } from './fft.js';
 import type { CorrelationResult } from '../types.js';
 
 export interface ComplexCorrelationResult extends CorrelationResult {
   correlationImag: Float32Array;
+}
+
+interface CorrelateBuffers {
+  xR: Float32Array;
+  xI: Float32Array;
+  sR: Float32Array;
+  sI: Float32Array;
+  oR: Float32Array;
+  oI: Float32Array;
+}
+
+const bufferPool = new Map<number, CorrelateBuffers>();
+
+function getBuffers(N: number): CorrelateBuffers {
+  let b = bufferPool.get(N);
+  if (!b) {
+    b = {
+      xR: new Float32Array(N),
+      xI: new Float32Array(N),
+      sR: new Float32Array(N),
+      sI: new Float32Array(N),
+      oR: new Float32Array(N),
+      oI: new Float32Array(N),
+    };
+    bufferPool.set(N, b);
+  }
+  // Zero out before reuse
+  b.xR.fill(0); b.xI.fill(0); b.sR.fill(0); b.sI.fill(0); b.oR.fill(0); b.oI.fill(0);
+  return b;
 }
 
 export function fftCorrelateComplex(signal: Float32Array, reference: Float32Array, _sampleRate: number): ComplexCorrelationResult {
@@ -17,17 +46,22 @@ export function fftCorrelateComplex(signal: Float32Array, reference: Float32Arra
   const L = signal.length + reference.length - 1;
   const N = nextPow2(L);
 
-  const xReal = zeroPad(signal, N);
-  const xImag = new Float32Array(N);
-  const sReal = zeroPad(reference, N);
-  const sImag = new Float32Array(N);
+  const buf = getBuffers(N);
+  const xReal = buf.xR;
+  const xImag = buf.xI;
+  const sReal = buf.sR;
+  const sImag = buf.sI;
+
+  // Copy signal and reference into pooled buffers (already zeroed)
+  for (let i = 0; i < signal.length; i++) xReal[i] = signal[i];
+  for (let i = 0; i < reference.length; i++) sReal[i] = reference[i];
 
   fft(xReal, xImag);
   fft(sReal, sImag);
 
-  // Multiply X * conj(S)
-  const outReal = new Float32Array(N);
-  const outImag = new Float32Array(N);
+  // Multiply X * conj(S) into pooled output buffers
+  const outReal = buf.oR;
+  const outImag = buf.oI;
   for (let i = 0; i < N; i++) {
     outReal[i] = xReal[i] * sReal[i] + xImag[i] * sImag[i];
     outImag[i] = xImag[i] * sReal[i] - xReal[i] * sImag[i];

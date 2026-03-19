@@ -91,6 +91,8 @@ export const LAPTOP_PRESET_SCAN = {
   micArraySpacing: 0.055,
 };
 
+export const DISPLAY_MIN_SIGNAL_LEVEL = 1e-7;
+
 export const QUALITY_WEIGHTS = {
   mad: 0.50,
   peak: 0.35,

@@ -62,6 +62,11 @@ export function chipBinarySequence(seq: Int8Array, chipRate: number, sampleRate:
     const v = seq[i] * amplitude;
     for (let j = 0; j < chipSamps; j++) out[k++] = v;
   }
+  // NOTE: Linear fade modifies edge chips, breaking exact Golay complementary
+  // sidelobe cancellation. With FADE_SAMPLES=192 and chipRate=6000 at 48kHz,
+  // ~24 chips (~2.3% of sequence) are affected per end. The residual sidelobes
+  // are modest but non-zero. A matched window applied to both ref and capture
+  // would preserve the property but is not currently implemented.
   const fade = Math.min(FADE_SAMPLES, Math.floor(out.length / 2));
   for (let i = 0; i < fade; i++) {
     const g = i / fade;

@@ -281,10 +281,16 @@ export function readConfigFromDOM(): void {
     s.config.temporalIirAlpha = clamp(inputVal('temporalIirAlpha', current.temporalIirAlpha), 0.01, 1);
     s.config.outlierHistoryN = Math.floor(clamp(inputVal('outlierHistoryN', current.outlierHistoryN), 3, 9));
     s.config.continuityBins = Math.floor(clamp(inputVal('continuityBins', current.continuityBins), 1, 64));
-    s.config.qualityAlgo = selectVal('qualityAlgo') as any;
+    const qualityAlgo = selectVal('qualityAlgo');
+    if (['auto', 'fast', 'balanced', 'max'].includes(qualityAlgo)) {
+      s.config.qualityAlgo = qualityAlgo as typeof s.config.qualityAlgo;
+    }
     s.config.adaptiveQuality.enabled = adaptiveQualityEl ? adaptiveQualityEl.checked : current.adaptiveQuality.enabled;
     s.config.adaptiveQuality.hysteresisMs = Math.floor(clamp(inputVal('adaptiveQualityHysteresisMs', current.adaptiveQuality.hysteresisMs), 250, 10000));
-    s.config.directionAxis = selectVal('dirAxis') as any;
+    const directionAxis = selectVal('dirAxis');
+    if (directionAxis === 'horizontal' || directionAxis === 'vertical') {
+      s.config.directionAxis = directionAxis;
+    }
     s.config.clutterSuppression.enabled = checkVal('scanClutterOn');
     s.config.clutterSuppression.strength = inputVal('scanClutterStrength');
     s.config.displayReflectionBlanking.enabled = checkVal('displayBlankingOn');

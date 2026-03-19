@@ -66,9 +66,13 @@ describe('caCfar', () => {
     profile[len - 1] = 1.0;
 
     const result = caCfar(profile);
-    // Edge cells should still be evaluable (fewer training cells on one side)
-    expect(result.detections[0]).toBe(1);
-    expect(result.detections[len - 1]).toBe(1);
+    // Edge bins are skipped (alpha assumes full 2*train cells; incomplete
+    // windows would produce incorrect thresholds), so no detection at edges.
+    expect(result.detections[0]).toBe(0);
+    expect(result.detections[len - 1]).toBe(0);
+    // Thresholds at edges are Infinity (suppressed — prevents false CFAR pass)
+    expect(result.thresholds[0]).toBe(Infinity);
+    expect(result.thresholds[len - 1]).toBe(Infinity);
   });
 
   it('detects two separated peaks', () => {

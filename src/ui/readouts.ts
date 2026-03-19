@@ -7,7 +7,10 @@ function el(id: string): HTMLElement | null {
 
 export function setStatus(msg: string): void {
   const statusEl = el('status');
-  if (statusEl) statusEl.textContent = 'Status: ' + msg;
+  if (statusEl) {
+    statusEl.textContent = 'Status: ' + msg;
+    statusEl.classList.toggle('status-error', msg === 'error');
+  }
 }
 
 export function log(msg: string): void {

@@ -16,12 +16,18 @@ export class EventBus {
     this.listeners.get(event as string)?.delete(handler as Handler<unknown>);
   }
 
-  emit<K extends keyof AppEvents>(event: K, data: AppEvents[K]): void {
+  emit<K extends keyof AppEvents>(event: K, ...args: AppEvents[K] extends void ? [] : [data: AppEvents[K]]): void {
+    const data = (args as unknown[])[0] as AppEvents[K];
     const handlers = this.listeners.get(event as string);
     if (!handlers) return;
     for (const fn of handlers) {
       try { fn(data); } catch (e) { console.error(`EventBus error in '${event as string}':`, e); }
     }
+  }
+
+  subscribe<K extends keyof AppEvents>(event: K, handler: Handler<AppEvents[K]>): () => void {
+    this.on(event, handler);
+    return () => { this.off(event, handler); };
   }
 
   clear(): void {

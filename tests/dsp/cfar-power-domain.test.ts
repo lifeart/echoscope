@@ -20,7 +20,12 @@ describe('CFAR power-domain operation', () => {
     // Thresholds should be comparable to the input amplitude values
     // (not squared values). For uniform noise at 0.1, threshold should
     // be somewhere around 0.1-0.5 (not 0.01-0.25).
-    for (let i = 0; i < len; i++) {
+    // Edge bins (within guard+train of array boundary) are skipped and have
+    // threshold 0 because alpha assumes full 2*train cells.
+    const guard = 2;
+    const train = 8;
+    const edge = guard + train;
+    for (let i = edge; i < len - edge; i++) {
       if (i === 50) continue;
       expect(result.thresholds[i]).toBeGreaterThan(0.01);
       expect(result.thresholds[i]).toBeLessThan(5);

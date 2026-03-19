@@ -1,5 +1,7 @@
 import { clamp } from '../utils.js';
 import {
+  blendTowardRaw,
+  computeBackoffLevel,
   evaluateSubtractionGuard,
   type SubtractionBackoffOptions,
   type SubtractionGuardStats,
@@ -29,15 +31,6 @@ export interface NoiseKalmanBackoffResult {
   profile: Float32Array;
   guard: SubtractionGuardStats | null;
   backoffLevel: number;
-}
-
-function blendTowardRaw(raw: Float32Array, cleaned: Float32Array, backoffLevel: number): Float32Array {
-  const out = new Float32Array(raw.length);
-  const k = clamp(backoffLevel, 0, 1);
-  for (let i = 0; i < raw.length; i++) {
-    out[i] = cleaned[i] * (1 - k) + raw[i] * k;
-  }
-  return out;
 }
 
 export function createNoiseKalmanState(
@@ -147,15 +140,7 @@ export function guardBackoff(
     return { profile: cleaned, guard, backoffLevel: 0 };
   }
 
-  const collapseDeficit = Math.max(
-    0,
-    (backoff.collapseThreshold - guard.collapseRatio) / Math.max(1e-6, backoff.collapseThreshold),
-  );
-  const peakDeficit = Math.max(
-    0,
-    (backoff.peakDropThreshold - guard.peakRetention) / Math.max(1e-6, backoff.peakDropThreshold),
-  );
-  const backoffLevel = Math.max(collapseDeficit, peakDeficit);
+  const backoffLevel = computeBackoffLevel(guard, backoff);
 
   return {
     profile: blendTowardRaw(raw, cleaned, backoffLevel),

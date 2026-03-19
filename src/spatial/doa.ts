@@ -56,8 +56,7 @@ export function srpPhatDOA(
       const N = gcc.length;
 
       // Wrap fractional delay into [0, N) range
-      let fracIdx = delaySamplesF;
-      if (fracIdx < 0) fracIdx += N;
+      let fracIdx = ((delaySamplesF % N) + N) % N;
       if (fracIdx < 0 || fracIdx >= N) continue;
 
       // Linear interpolation between adjacent GCC bins

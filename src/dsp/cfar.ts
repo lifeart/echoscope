@@ -83,6 +83,12 @@ export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): Cfa
       }
     }
 
+    // Suppress edge bins where full training window is unavailable (alpha assumes N = 2*train cells)
+    if (count < 2 * train) {
+      thresholds[i] = Infinity;
+      continue;
+    }
+
     const noiseEstimate = count > 0 ? sum / count : 0;
     // Threshold in power domain, converted back to amplitude
     const thresholdPower = Math.max(cfg.minThreshold * cfg.minThreshold, noiseEstimate * alpha);
@@ -100,6 +106,7 @@ export function caCfar(profile: Float32Array, config?: Partial<CfarConfig>): Cfa
 
 /**
  * Apply CFAR filter: zero out non-detected bins.
+ * Primarily used as a test utility; production code calls caCfar() directly.
  */
 export function applyCfarFilter(
   profile: Float32Array,

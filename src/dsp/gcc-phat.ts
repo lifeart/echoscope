@@ -58,11 +58,11 @@ export function gccPhat(sig1: Float32Array, sig2: Float32Array, sampleRate: numb
   const delaySamples = peakIdx <= N / 2 ? peakIdx : peakIdx - N;
   const peakDelay = delaySamples / sampleRate;
 
-  // Confidence: peak normalized by N for size-independent metric
-  let sum = 0;
-  for (let i = 0; i < N; i++) sum += Math.abs(outR[i]);
-  const mean = sum / N;
-  const confidence = mean > 1e-12 ? peakVal / mean : 0;
+  // Confidence: energy concentration ratio (size-independent).
+  // peakVal^2 / sum(gcc^2) measures what fraction of total energy is in the peak.
+  let sumSquared = 0;
+  for (let i = 0; i < N; i++) sumSquared += outR[i] * outR[i];
+  const confidence = sumSquared > 1e-24 ? (peakVal * peakVal) / sumSquared : 0;
 
   return { gcc: outR, peakDelay, confidence: Math.min(1, confidence) };
 }

@@ -60,12 +60,22 @@ function redrawAllCanvases(): void {
   drawSignalPreview();
 }
 
-/* ---- canvas mouse → pixel coords ---- */
-function canvasMousePos(canvas: HTMLCanvasElement, ev: MouseEvent): { x: number; y: number } {
+/* ---- canvas pointer → pixel coords ---- */
+function canvasPointerPos(canvas: HTMLCanvasElement, ev: PointerEvent | MouseEvent): { x: number; y: number } {
   const rect = canvas.getBoundingClientRect();
   const sx = canvas.width / Math.max(1, rect.width);
   const sy = canvas.height / Math.max(1, rect.height);
   return { x: (ev.clientX - rect.left) * sx, y: (ev.clientY - rect.top) * sy };
+}
+
+/* ---- rAF-based config debounce ---- */
+let configRafId = 0;
+function scheduleReadConfig(): void {
+  if (configRafId) return;
+  configRafId = requestAnimationFrame(() => {
+    configRafId = 0;
+    readConfigFromDOM();
+  });
 }
 
 /* ---- ping stats ---- */
@@ -93,7 +103,7 @@ export function initApp(): void {
     const angleEl = el('angle') as HTMLInputElement;
     const angleValEl = el('angleVal');
     if (angleValEl) angleValEl.textContent = angleEl.value;
-    readConfigFromDOM();
+    scheduleReadConfig();
     drawGeometry(store.get().config.minRange, store.get().config.maxRange);
   });
 
@@ -102,10 +112,13 @@ export function initApp(): void {
 
   // Button wiring
   el('btnInit')?.addEventListener('click', async () => {
+    const btn = el('btnInit') as HTMLButtonElement | null;
     try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Initializing...'; }
       setStatus('initializing');
       readConfigFromDOM();
       await initAudio();
+      if (btn) { btn.textContent = 'Init Audio [I]'; }
       setButtonStates(true, false);
       renderCalibInfo();
       await refreshDeviceInfo();
@@ -126,6 +139,7 @@ export function initApp(): void {
       initMicSpectrogram();
       drawSignalPreview();
     } catch (e: any) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Init Audio [I]'; }
       setStatus('error');
       log('[err] init failed: ' + (e?.message || e));
     }
@@ -146,6 +160,7 @@ export function initApp(): void {
   });
 
   el('btnScan')?.addEventListener('click', async () => {
+    if (store.get().status === 'calibrating') return;
     try {
       readConfigFromDOM();
       setButtonStates(true, true);
@@ -169,6 +184,7 @@ export function initApp(): void {
   });
 
   el('btnCalibrate')?.addEventListener('click', async () => {
+    if (store.get().scanning) return;
     try {
       readConfigFromDOM();
       await calibrateRefinedWithSanity();
@@ -275,17 +291,17 @@ export function initApp(): void {
     'multiplexCalibrationCandidates',
   ];
   for (const id of paramInputIds) {
-    el(id)?.addEventListener('input', () => { readConfigFromDOM(); scheduleSignalPreview(); });
+    el(id)?.addEventListener('input', () => { scheduleReadConfig(); scheduleSignalPreview(); });
   }
   const paramSelectIds = ['multiplexFusion', 'multiplexUseCalibrated', 'multiplexFallbackToChirp'];
   for (const id of paramSelectIds) {
-    el(id)?.addEventListener('change', () => { readConfigFromDOM(); scheduleSignalPreview(); });
+    el(id)?.addEventListener('change', () => { scheduleReadConfig(); scheduleSignalPreview(); });
   }
 
   // Computed config inputs — update derived labels live
   const configInputIds = ['temperature', 'maxR', 'spacing'];
   for (const id of configInputIds) {
-    el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
+    el(id)?.addEventListener('input', () => { scheduleReadConfig(); });
   }
 
   const liveConfigControlIds = [
@@ -311,7 +327,7 @@ export function initApp(): void {
       ? 'change'
       : 'input';
     control.addEventListener(eventName, () => {
-      readConfigFromDOM();
+      scheduleReadConfig();
     });
   }
 
@@ -322,16 +338,16 @@ export function initApp(): void {
     'displayBlankingEdgeSoftness',
   ];
   for (const id of displayBlankingInputIds) {
-    el(id)?.addEventListener('input', () => { readConfigFromDOM(); });
+    el(id)?.addEventListener('input', () => { scheduleReadConfig(); });
   }
   el('displayBlankingOn')?.addEventListener('change', () => {
-    readConfigFromDOM();
+    scheduleReadConfig();
   });
 
   const trackVizInputIds = ['trackTrailMaxPoints', 'trackFadeMissCount', 'trackTrailMinAlpha', 'trackTrailMaxAlpha', 'trackMinConfidenceFloor'];
   for (const id of trackVizInputIds) {
     el(id)?.addEventListener('input', () => {
-      readConfigFromDOM();
+      scheduleReadConfig();
       drawGeometry(store.get().config.minRange, store.get().config.maxRange);
     });
   }
@@ -381,16 +397,16 @@ export function initApp(): void {
     applyTrackVizPreset(trackVizRecommended);
   });
 
-  // ---- Mouse crosshair wiring ----
+  // ---- Pointer crosshair wiring (supports touch) ----
   const profileCanvas = el('profile') as HTMLCanvasElement | null;
   if (profileCanvas) {
-    profileCanvas.addEventListener('mousemove', (ev) => {
-      setProfileMouse(canvasMousePos(profileCanvas, ev));
+    profileCanvas.addEventListener('pointermove', (ev) => {
+      setProfileMouse(canvasPointerPos(profileCanvas, ev));
       const state = store.get();
       const lp = state.lastProfile;
       if (lp.corr && lp.corr.length) drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
     });
-    profileCanvas.addEventListener('mouseleave', () => {
+    profileCanvas.addEventListener('pointerleave', () => {
       setProfileMouse(null);
       const state = store.get();
       const lp = state.lastProfile;
@@ -400,11 +416,11 @@ export function initApp(): void {
 
   const heatmapCanvas = el('heatmap') as HTMLCanvasElement | null;
   if (heatmapCanvas) {
-    heatmapCanvas.addEventListener('mousemove', (ev) => {
-      setHeatmapMouse(canvasMousePos(heatmapCanvas, ev));
+    heatmapCanvas.addEventListener('pointermove', (ev) => {
+      setHeatmapMouse(canvasPointerPos(heatmapCanvas, ev));
       redrawHeatmapCrosshair();
     });
-    heatmapCanvas.addEventListener('mouseleave', () => {
+    heatmapCanvas.addEventListener('pointerleave', () => {
       setHeatmapMouse(null);
       redrawHeatmapCrosshair();
     });
@@ -470,7 +486,10 @@ export function initApp(): void {
     const progress = totalPasses > 1
       ? (index * totalPasses + pass + 1) / (total * totalPasses)
       : (index + 1) / total;
-    if (fillEl) fillEl.style.width = `${progress * 100}%`;
+    if (fillEl) {
+      fillEl.style.width = `${progress * 100}%`;
+      fillEl.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+    }
   });
 
   bus.on('scan:complete', () => {
@@ -479,7 +498,10 @@ export function initApp(): void {
     const fillEl = el('scanProgressFill');
     progressEl?.classList.add('is-hidden');
     if (textEl) textEl.textContent = 'Scanning...';
-    if (fillEl) fillEl.style.width = '0%';
+    if (fillEl) {
+      fillEl.style.width = '0%';
+      fillEl.setAttribute('aria-valuenow', '0');
+    }
 
     // Final update of profile/geometry/readouts after consensus is computed.
     // During scanning these were suppressed per-ping to avoid target jumping.
@@ -508,7 +530,7 @@ export function initApp(): void {
   });
 
   bus.on('ping:complete', ({ angleDeg, profile }) => {
-    console.log(`[ping:complete] angleDeg=${angleDeg} bestBin=${profile.bestBin} bestStrength=${profile.bestStrength.toExponential(3)} binsLen=${profile.bins.length}`);
+    console.debug(`[ping:complete] angleDeg=${angleDeg} bestBin=${profile.bestBin} bestStrength=${profile.bestStrength.toExponential(3)} binsLen=${profile.bins.length}`);
 
     // Debug: log profile bins stats
     let bMin = Infinity, bMax = -Infinity, bNonZero = 0;
@@ -517,7 +539,7 @@ export function initApp(): void {
       if (profile.bins[i] > bMax) bMax = profile.bins[i];
       if (profile.bins[i] > 1e-15) bNonZero++;
     }
-    console.log(`[ping:complete] bins min=${bMin.toExponential(3)} max=${bMax.toExponential(3)} nonZero=${bNonZero}/${profile.bins.length}`);
+    console.debug(`[ping:complete] bins min=${bMin.toExponential(3)} max=${bMax.toExponential(3)} nonZero=${bNonZero}/${profile.bins.length}`);
 
     const state = store.get();
     const isScanning = state.scanning;
@@ -534,10 +556,10 @@ export function initApp(): void {
           if (Math.abs(lp.corr[i]) > 1e-12) { corrHasSignal = true; break; }
         }
         if (corrHasSignal) {
-          console.log(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
+          console.debug(`[ping:complete] drawing profile corr.length=${lp.corr.length} tau0=${lp.tau0} c=${lp.c}`);
           drawProfile(lp.corr, lp.tau0, lp.c, lp.minR, lp.maxR);
         } else {
-          console.log('[ping:complete] no TX detected — showing placeholder');
+          console.debug('[ping:complete] no TX detected — showing placeholder');
           drawProfilePlaceholder();
         }
       } else {
@@ -550,13 +572,13 @@ export function initApp(): void {
     const heatmap = state.heatmap;
     if (heatmap) {
       const rowIdx = heatmap.angles.indexOf(angleDeg);
-      console.log(`[ping:complete] heatmap lookup: angleDeg=${angleDeg} rowIdx=${rowIdx} angles=${JSON.stringify(heatmap.angles)}`);
+      console.debug(`[ping:complete] heatmap lookup: angleDeg=${angleDeg} rowIdx=${rowIdx} angles=${JSON.stringify(heatmap.angles)}`);
       if (rowIdx >= 0) {
         // Skip heatmap update if profile is empty (no valid detection)
         if (profile.bestBin >= 0 && profile.bestStrength > 1e-12) {
           updateHeatmapRow(heatmap, rowIdx, profile.bins, profile.bestBin, profile.bestStrength);
         } else {
-          console.log(`[ping:complete] skipping heatmap update — no valid detection (bestBin=${profile.bestBin}, bestStrength=${profile.bestStrength.toExponential(3)})`);
+          console.debug(`[ping:complete] skipping heatmap update — no valid detection (bestBin=${profile.bestBin}, bestStrength=${profile.bestStrength.toExponential(3)})`);
         }
       } else {
         console.warn(`[ping:complete] angle ${angleDeg} not found in heatmap angles`);

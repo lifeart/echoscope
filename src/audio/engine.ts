@@ -4,6 +4,9 @@ import { RingBuffer } from './ring-buffer.js';
 import { DEFAULT_BUFFER_SECONDS } from '../constants.js';
 
 let ringBuffer: RingBuffer | null = null;
+let micStream: MediaStream | null = null;
+let micSource: MediaStreamAudioSourceNode | null = null;
+let micTapNode: AudioNode | null = null;
 
 function describeMediaError(error: unknown): string {
   if (error instanceof Error) {
@@ -80,14 +83,13 @@ export async function initAudio(): Promise<void> {
   if (ac.state !== 'running') await ac.resume();
   const sampleRate = ac.sampleRate;
 
-  const micStream = await requestMicrophoneStream();
+  micStream = await requestMicrophoneStream();
 
-  const micSource = ac.createMediaStreamSource(micStream);
+  micSource = ac.createMediaStreamSource(micStream);
   const actualChannels = micSource.channelCount;
   ringBuffer = new RingBuffer(actualChannels, Math.floor(sampleRate * DEFAULT_BUFFER_SECONDS));
 
   let captureMethod: 'worklet' | 'script-processor' = 'script-processor';
-  let micTapNode: AudioNode;
 
   try {
     const workletCode = `
@@ -143,10 +145,7 @@ export async function initAudio(): Promise<void> {
     captureMethod = 'script-processor';
   }
 
-  // Keep reference to prevent GC
-  (ac as any)._micStream = micStream;
-  (ac as any)._micSource = micSource;
-  (ac as any)._micTapNode = micTapNode;
+  // micStream, micSource, micTapNode are stored as module-level variables
 
   await resumeIfSuspended();
 
@@ -177,39 +176,35 @@ export function getSampleRate(): number {
 export async function closeAudio(): Promise<void> {
   const state = store.get();
   const ctx = state.audio.context;
-  
+
   if (!ctx) return;
-  
+
   // Stop and release microphone stream tracks
-  const micStream = (ctx as any)._micStream as MediaStream | undefined;
   if (micStream) {
     micStream.getTracks().forEach(track => track.stop());
   }
-  
+
   // Disconnect audio nodes
-  const micSource = (ctx as any)._micSource as MediaStreamAudioSourceNode | undefined;
-  const micTapNode = (ctx as any)._micTapNode as AudioNode | undefined;
-  
   try {
     if (micSource) micSource.disconnect();
     if (micTapNode) micTapNode.disconnect();
   } catch {
     // Ignore disconnection errors
   }
-  
+
   // Close the audio context
   try {
     await ctx.close();
   } catch {
     // Ignore close errors
   }
-  
+
   // Clear references
-  (ctx as any)._micStream = null;
-  (ctx as any)._micSource = null;
-  (ctx as any)._micTapNode = null;
+  micStream = null;
+  micSource = null;
+  micTapNode = null;
   ringBuffer = null;
-  
+
   // Update store
   store.update(s => {
     s.audio.context = null;
@@ -218,6 +213,6 @@ export async function closeAudio(): Promise<void> {
     s.audio.captureMethod = 'worklet';
     s.status = 'idle';
   });
-  
-  bus.emit('audio:closed', undefined as unknown as void);
+
+  bus.emit('audio:closed');
 }

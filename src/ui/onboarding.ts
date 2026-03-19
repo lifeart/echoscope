@@ -13,16 +13,25 @@ export function initOnboarding(): void {
 
   overlay.classList.remove('hidden');
 
+  // Remember previously focused element to restore on dismiss
+  const previouslyFocused = document.activeElement as HTMLElement | null;
+
   const dismiss = () => {
     overlay.classList.add('hidden');
     localStorage.setItem(STORAGE_KEY, '1');
+    // Return focus to previously focused element
+    if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+      previouslyFocused.focus();
+    }
   };
 
   // "Get Started" button
-  el('onboardingDismiss')?.addEventListener('click', dismiss);
+  const dismissBtn = el('onboardingDismiss');
+  dismissBtn?.addEventListener('click', dismiss);
 
   // "Don't show again" link — same effect
-  el('onboardingNeverShow')?.addEventListener('click', (ev) => {
+  const neverShowLink = el('onboardingNeverShow');
+  neverShowLink?.addEventListener('click', (ev) => {
     ev.preventDefault();
     dismiss();
   });
@@ -31,4 +40,41 @@ export function initOnboarding(): void {
   overlay.addEventListener('click', (ev) => {
     if (ev.target === overlay) dismiss();
   });
+
+  // Escape key dismisses the dialog
+  overlay.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      ev.stopPropagation();
+      dismiss();
+      return;
+    }
+
+    // Focus trap: cycle Tab between interactive elements
+    if (ev.key === 'Tab') {
+      const focusable = overlay.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (ev.shiftKey) {
+        if (document.activeElement === first) {
+          ev.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          ev.preventDefault();
+          first.focus();
+        }
+      }
+    }
+  });
+
+  // Move focus to the "Get Started" button when dialog opens
+  if (dismissBtn) {
+    requestAnimationFrame(() => {
+      (dismissBtn as HTMLElement).focus();
+    });
+  }
 }

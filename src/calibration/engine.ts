@@ -1,9 +1,8 @@
 import { store } from '../core/store.js';
 import { bus } from '../core/event-bus.js';
-import { sleep, median, mad } from '../utils.js';
+import { sleep, median, mad, signalEnergy, energyNormalize } from '../utils.js';
 import { clamp } from '../utils.js';
 import { fftCorrelate } from '../dsp/fft-correlate.js';
-import { absMaxNormalize } from '../dsp/normalize.js';
 import { measureRoundTripLatency } from '../audio/latency.js';
 import { findPeakAbs, estimateBestFromProfile } from '../dsp/peak.js';
 import { buildRangeProfileFromCorrelation } from '../dsp/profile.js';
@@ -37,6 +36,20 @@ import type {
   MultibandInfo,
   MultiplexConfig,
 } from '../types.js';
+
+let calibrationAborted = false;
+
+export function abortCalibration(): void {
+  calibrationAborted = true;
+}
+
+function checkCalibrationAborted(): void {
+  if (calibrationAborted) {
+    calibrationAborted = false;
+    store.set('status', 'ready');
+    throw new Error('Calibration aborted by user');
+  }
+}
 
 interface GolaySumResult {
   corr: Float32Array;
@@ -450,7 +463,10 @@ function golaySumCorrelation(
     if (v > rawPeak) rawPeak = v;
   }
 
-  absMaxNormalize(sum);
+  // Energy normalization consistent with the ping-cycle pipeline.
+  // absMaxNormalize made noise indistinguishable from echoes (peak always 1.0).
+  const totalEnergy = signalEnergy(a) + signalEnergy(b);
+  energyNormalize(sum, totalEnergy);
   return { corr: sum, rawPeak };
 }
 
@@ -738,6 +754,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
   const rawPilotCaptures: RawPingCapture[] = [];
   const rawRepeatCaptures: RawPingCapture[] = [];
 
+  calibrationAborted = false;
+
   console.debug(`[calib] pilot: capturing ${PILOT_PINGS} L/R pings, tauMinAcoustic=${(TAU_MIN_ACOUSTIC * 1000).toFixed(1)}ms...`);
   for (let pp = 0; pp < PILOT_PINGS; pp++) {
     const pCapLA = await pingAndCaptureOneSide(a, 'L', gain, listenMs);
@@ -780,6 +798,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     console.debug(`[calib] pilot #${pp + 1}: ${pCandsL.length}×${pCandsR.length} candidates, total pairs so far: ${pilotMeasurements.length}`);
     await sleep(repeatGap);
   }
+
+  checkCalibrationAborted();
 
   // Two-pass pilot clustering
   let pilotTau: number;
@@ -968,6 +988,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     await sleep(repeatGap);
   }
 
+  checkCalibrationAborted();
+
   // --- Cluster valid repeats by mean-tau proximity ---
   // Finds the largest group of repeats whose mean arrival times all satisfy
   // |meanTau - clusterCenter| ≤ window (diameter constraint, not single-linkage).
@@ -1120,6 +1142,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
     monoAssessment: mono2,
   };
 
+  checkCalibrationAborted();
+
   // Env baseline
   let envBaselineRaw: Float32Array | null = null;
   let envBaselineFiltered: Float32Array | null = null;
@@ -1206,6 +1230,8 @@ export async function calibrateRefinedWithSanity(): Promise<CalibrationResult> {
       console.debug(`[calib] ambient noise: pings=${ambientNoisePings} rawPeakMed=${ambientNoiseRawPeakMedian.toExponential(3)} rawPeakMAD=${ambientNoiseRawPeakMad.toExponential(3)} txContrast=${Number.isFinite(txContrast) ? txContrast.toFixed(2) : 'n/a'}`);
     }
   }
+
+  checkCalibrationAborted();
 
   // Mark calibration invalid only when timing measurements are clearly unreliable.
   // Geometry/TDOA consistency is evaluated separately via angleReliable, because

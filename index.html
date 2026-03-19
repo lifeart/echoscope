@@ -27,7 +27,7 @@
 
 <!-- Device answer QR — top-level so it's immediately visible on phone -->
 <div id="peerDeviceQrBox" class="hidden" style="padding:20px;text-align:center;">
-  <canvas id="peerDeviceQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
+  <canvas id="peerDeviceQrCanvas" width="256" height="256" role="img" aria-label="QR code for device pairing" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
   <p id="peerDeviceQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
 </div>
 
@@ -40,11 +40,12 @@
         <button id="btnPing" disabled title="Run a single measurement at the current steering angle and update readouts.">Ping <kbd>P</kbd></button>
         <button id="btnScan" disabled title="Run a full angular sweep using current scan settings and build the heatmap.">Scan <kbd>S</kbd></button>
         <button id="btnStop" disabled title="Stop the active scan loop immediately.">Stop <kbd>Esc</kbd></button>
+        <button id="btnCalibrate" disabled title="Run direct-path calibration to improve timing lock and range accuracy.">Calibrate <kbd>C</kbd></button>
       </div>
 
       <div id="levelMeterWrap" style="display:none" class="level-meter-wrap">
         <span class="small">Mic</span>
-        <canvas id="levelMeter" width="200" height="16"></canvas>
+        <canvas id="levelMeter" width="200" height="16" role="img" aria-label="Audio input level meter"></canvas>
         <span class="small" id="levelDb"></span>
         <span id="stereoIndicator" class="small" style="display:none; color:#4caf50;"></span>
       </div>
@@ -58,7 +59,7 @@
 
       <div class="row">
         <div>
-          <label>Mode</label>
+          <label for="mode">Mode</label>
           <select id="mode" title="Select probing waveform: chirp, MLS, Golay, or multiplex.">
             <option value="chirp">Chirp</option>
             <option value="mls">MLS (PRBS)</option>
@@ -68,32 +69,25 @@
         </div>
 
         <div>
-          <label>Angle θ (deg): <span id="angleVal">0</span></label>
-          <input id="angle" type="range" min="-60" max="60" step="1" value="0" title="Steering angle in degrees. Negative is left/down, positive is right/up."/>
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label>Device preset</label>
+          <label for="devicePreset">Device preset</label>
           <select id="devicePreset" title="Apply known device geometry defaults for speaker spacing and mic position.">
-            <option value="mbp14">MacBook Pro 14″</option>
-            <option value="mbp16">MacBook Pro 16″</option>
-            <option value="mba13">MacBook Air 13″</option>
-            <option value="mba15">MacBook Air 15″</option>
-            <option value="imac24">iMac 24″</option>
+            <option value="mbp14">MacBook Pro 14&#x2033;</option>
+            <option value="mbp16">MacBook Pro 16&#x2033;</option>
+            <option value="mba13">MacBook Air 13&#x2033;</option>
+            <option value="mba15">MacBook Air 15&#x2033;</option>
+            <option value="imac24">iMac 24&#x2033;</option>
             <option value="iphone">iPhone (portrait)</option>
-            <option value="ipad11">iPad Pro 11″</option>
-            <option value="ipad13">iPad Pro 13″</option>
-            <option value="ipadair11">iPad Air 11″</option>
-            <option value="ipadair13">iPad Air 13″</option>
+            <option value="ipad11">iPad Pro 11&#x2033;</option>
+            <option value="ipad13">iPad Pro 13&#x2033;</option>
+            <option value="ipadair11">iPad Air 11&#x2033;</option>
+            <option value="ipadair13">iPad Air 13&#x2033;</option>
             <option value="ipadmini">iPad mini</option>
-            <option value="generic_laptop">Generic Laptop 14″</option>
+            <option value="generic_laptop">Generic Laptop 14&#x2033;</option>
             <option value="generic_desktop">Generic Desktop</option>
             <option value="android_phone">Android Phone (portrait)</option>
-            <option value="android_tablet">Android Tablet 10″</option>
+            <option value="android_tablet">Android Tablet 10&#x2033;</option>
             <option value="surface">Surface Pro</option>
-            <option value="chromebook">Chromebook 14″</option>
+            <option value="chromebook">Chromebook 14&#x2033;</option>
             <option value="custom">Custom</option>
           </select>
         </div>
@@ -106,34 +100,60 @@
       </div>
       <p class="hint">Presets set speaker spacing and mic position for known devices. Your selection is remembered across sessions.</p>
 
+      <details class="section-group" style="margin-top:10px">
+        <summary style="font-size:13px">Scan parameters</summary>
+
       <div class="row" style="margin-top:10px">
         <div>
-          <label title="Distance between L/R speakers. Steering delay &amp; TDOA gating depend on this. Must be > 0.02 m.">Speaker spacing d (m)</label>
-          <input id="spacing" type="number" step="0.01" min="0.02" value="0.20" title="Distance between left and right speakers in meters; affects steering delay and minimum range logic.">
-        </div>
-        <div>
-          <label title="Distance between microphones for RX beamforming. Set 0 to disable. Typical laptop ~0.05 m.">Mic spacing (m)</label>
-          <input id="micArraySpacing" type="number" step="0.001" min="0" value="0" title="Distance between microphones in meters for RX beamforming; set 0 to disable array processing.">
-        </div>
-        <div>
-          <label title="Air temperature (°C). Computes speed of sound: c = 331.3 + 0.606 × T.">Temperature (°C)</label>
-          <input id="temperature" type="number" step="1" min="18" max="42" value="25" title="Ambient temperature in °C used to compute speed of sound.">
-          <span class="small">c = <span id="computedC">346.5</span> m/s</span>
-        </div>
-        <div>
-          <label title="Volume for transmitted pings. Keep low to avoid feedback.">Output gain</label>
-          <input id="gain" type="number" step="0.01" min="0" max="1" value="0.22" title="Transmit output gain (0..1); higher values improve SNR but increase feedback risk.">
+          <label for="angle">Angle &#x3b8; (deg): <span id="angleVal">0</span></label>
+          <input id="angle" type="range" min="-60" max="60" step="1" value="0" title="Steering angle in degrees. Negative is left/down, positive is right/up."/>
         </div>
       </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="maxR" title="Maximum detection range.">Max range (m)</label>
+          <input id="maxR" type="number" step="0.1" value="4.0" title="Maximum detection range in meters; increases listen window and scan dwell.">
+        </div>
+        <div>
+          <span class="small">Listen: <span id="computedListenMs">73</span> ms | Min range: <span id="computedMinR">0.30</span> m</span>
+        </div>
+      </div>
+
+      <p class="hint">Scan controls: angular resolution, dwell time, and post-processing quality.</p>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="scanStep" title="Angular resolution of sweep. Smaller = finer but slower.">Scan step (deg)</label>
+          <input id="scanStep" type="number" step="1" value="10" title="Angular step in degrees between scan positions.">
+        </div>
+        <div>
+          <label for="scanPasses" title="Pings per angle averaged together. More = better SNR (~3dB per doubling). 1-8.">Scan passes</label>
+          <input id="scanPasses" type="number" step="1" min="1" max="8" value="1" title="Number of repeated pings per angle to aggregate.">
+        </div>
+        <div>
+          <label for="dirAxis" title="Whether angle is horizontal (L/R) or vertical (T/B).">Direction axis</label>
+          <select id="dirAxis" title="Select whether scan/steering angles map to horizontal or vertical axis.">
+            <option value="horizontal" selected>Horizontal (L/R)</option>
+            <option value="vertical">Vertical (T/B)</option>
+          </select>
+        </div>
+        <div>
+          <span class="small">Scan dwell: <span id="computedScanDwell">73</span> ms</span>
+        </div>
+      </div>
+
+      </details>
+
       <details id="probeSettings" class="section-group" style="margin-top:10px">
         <summary style="font-size:13px">Probe parameters</summary>
         <p class="hint" style="margin:6px 0 0">Tune probe parameters only when you need higher quality or speed.</p>
 
       <div id="chirpBox" style="margin-top:10px">
-        <details class="mode-desc">
+        <details>
           <summary>About Chirp mode</summary>
           <p class="hint" style="margin:6px 0 0">
-            <b>Linear FM sweep</b> — transmits a sinusoidal tone that sweeps from frequency f1 up to f2 over duration T.
+            <b>Linear FM sweep</b> &#x2014; transmits a sinusoidal tone that sweeps from frequency f1 up to f2 over duration T.
             Cross-correlation with the reference produces a sharp peak at each echo delay.
           </p>
           <p class="hint" style="margin:4px 0 0">
@@ -148,33 +168,33 @@
             <b>Settings:</b>
           </p>
           <ul class="hint" style="margin:0 0 6px; padding-left:18px; line-height:1.5">
-            <li><b>f1</b> — start frequency (Hz). Lower values penetrate obstacles better but may be audible. Default 2000 Hz.</li>
-            <li><b>f2</b> — end frequency (Hz). Higher values give finer range resolution. Default 9000 Hz. Bandwidth = f2 &minus; f1.</li>
-            <li><b>T</b> — chirp duration (ms). Longer = higher SNR but slower ping cycle. Default 7 ms.</li>
+            <li><b>f1</b> &#x2014; start frequency (Hz). Lower values penetrate obstacles better but may be audible. Default 2000 Hz.</li>
+            <li><b>f2</b> &#x2014; end frequency (Hz). Higher values give finer range resolution. Default 9000 Hz. Bandwidth = f2 &minus; f1.</li>
+            <li><b>T</b> &#x2014; chirp duration (ms). Longer = higher SNR but slower ping cycle. Default 7 ms.</li>
           </ul>
         </details>
         <div class="row" style="margin-top:8px">
           <div>
-            <label>Chirp f1 (Hz)</label>
+            <label for="f1">Chirp f1 (Hz)</label>
             <input id="f1" type="number" step="10" value="2000" title="Chirp start frequency in Hz.">
           </div>
           <div>
-            <label>Chirp f2 (Hz)</label>
+            <label for="f2">Chirp f2 (Hz)</label>
             <input id="f2" type="number" step="10" value="9000" title="Chirp end frequency in Hz.">
           </div>
           <div>
-            <label>Chirp T (ms)</label>
+            <label for="T">Chirp T (ms)</label>
             <input id="T" type="number" step="1" value="7" title="Chirp duration in milliseconds.">
           </div>
         </div>
-        <canvas id="previewChirp" width="400" height="80" style="margin-top:6px"></canvas>
+        <canvas id="previewChirp" width="400" height="80" role="img" aria-label="Signal preview for chirp" style="margin-top:6px"></canvas>
       </div>
 
       <div id="mlsBox" style="display:none; margin-top:10px">
-        <details class="mode-desc">
+        <details>
           <summary>About MLS (PRBS) mode</summary>
           <p class="hint" style="margin:6px 0 0">
-            <b>Maximum Length Sequence</b> — transmits a pseudo-random binary sequence (PRBS) generated by a linear-feedback shift register (LFSR).
+            <b>Maximum Length Sequence</b> &#x2014; transmits a pseudo-random binary sequence (PRBS) generated by a linear-feedback shift register (LFSR).
             Each chip is held for <code>1/chipRate</code> seconds, producing a wideband noise-like signal.
             The circular auto-correlation of an MLS is a near-perfect impulse (flat sidelobes at &minus;1/L).
           </p>
@@ -191,28 +211,28 @@
             <b>Settings:</b>
           </p>
           <ul class="hint" style="margin:0 0 6px; padding-left:18px; line-height:1.5">
-            <li><b>Order (m)</b> — LFSR register size. Sequence length = 2^m &minus; 1 chips. Higher m = longer signal = better SNR but more compute and latency. Range 2&ndash;16, default 12 (4095 chips).</li>
-            <li><b>Chip rate</b> — chips per second (Hz). Higher = wider bandwidth = finer range resolution, but requires higher sample rate headroom. Default 4000 Hz.</li>
+            <li><b>Order (m)</b> &#x2014; LFSR register size. Sequence length = 2^m &minus; 1 chips. Higher m = longer signal = better SNR but more compute and latency. Range 2&ndash;16, default 12 (4095 chips).</li>
+            <li><b>Chip rate</b> &#x2014; chips per second (Hz). Higher = wider bandwidth = finer range resolution, but requires higher sample rate headroom. Default 4000 Hz.</li>
           </ul>
         </details>
         <div class="row" style="margin-top:8px">
           <div>
-            <label>MLS order (m)</label>
+            <label for="mlsOrder">MLS order (m)</label>
             <input id="mlsOrder" type="number" step="1" value="12" title="MLS register order m; sequence length is 2^m - 1.">
           </div>
           <div>
-            <label>Chip rate (Hz)</label>
+            <label for="chipRate">Chip rate (Hz)</label>
             <input id="chipRate" type="number" step="50" value="4000" title="Chip rate in Hz for MLS mode.">
           </div>
         </div>
-        <canvas id="previewMls" width="400" height="80" style="margin-top:6px"></canvas>
+        <canvas id="previewMls" width="400" height="80" role="img" aria-label="Signal preview for MLS" style="margin-top:6px"></canvas>
       </div>
 
       <div id="golayBox" style="display:none; margin-top:10px">
-        <details class="mode-desc">
+        <details>
           <summary>About Golay pair (A+B) mode</summary>
           <p class="hint" style="margin:6px 0 0">
-            <b>Complementary Golay sequences</b> — transmits two binary sequences (A then B) separated by a short gap.
+            <b>Complementary Golay sequences</b> &#x2014; transmits two binary sequences (A then B) separated by a short gap.
             Their individual auto-correlations have sidelobes of opposite sign, so summing <code>corr(A) + corr(B)</code>
             produces a <em>perfect</em> impulse with zero sidelobes. This is the cleanest impulse response achievable.
           </p>
@@ -229,33 +249,33 @@
             <b>Settings:</b>
           </p>
           <ul class="hint" style="margin:0 0 6px; padding-left:18px; line-height:1.5">
-            <li><b>Order (n)</b> — sequence length = 2^n chips per half (A and B each). Higher n = longer signal = better SNR. Range 1&ndash;14, default 10 (1024 chips).</li>
-            <li><b>Chip rate</b> — chips per second (Hz). Controls bandwidth and range resolution, same as MLS. Default 5000 Hz.</li>
-            <li><b>Gap A&rarr;B</b> — pause between transmitting A and B (ms). Must be long enough for reverb from A to decay before B starts, but short enough to assume static scene. Default 12 ms.</li>
+            <li><b>Order (n)</b> &#x2014; sequence length = 2^n chips per half (A and B each). Higher n = longer signal = better SNR. Range 1&ndash;14, default 10 (1024 chips).</li>
+            <li><b>Chip rate</b> &#x2014; chips per second (Hz). Controls bandwidth and range resolution, same as MLS. Default 5000 Hz.</li>
+            <li><b>Gap A&rarr;B</b> &#x2014; pause between transmitting A and B (ms). Must be long enough for reverb from A to decay before B starts, but short enough to assume static scene. Default 12 ms.</li>
           </ul>
         </details>
         <div class="row" style="margin-top:8px">
           <div>
-            <label>Golay order (n)</label>
+            <label for="golayOrder">Golay order (n)</label>
             <input id="golayOrder" type="number" step="1" value="10" title="Golay order n; each sequence has length 2^n chips.">
           </div>
           <div>
-            <label>Chip rate (Hz)</label>
+            <label for="golayChipRate">Chip rate (Hz)</label>
             <input id="golayChipRate" type="number" step="50" value="5000" title="Chip rate in Hz for Golay mode.">
           </div>
           <div>
-            <label>Gap A→B (ms)</label>
+            <label for="golayGapMs">Gap A&#x2192;B (ms)</label>
             <input id="golayGapMs" type="number" step="1" value="12" title="Gap between Golay A and B transmissions in milliseconds.">
           </div>
         </div>
-        <canvas id="previewGolay" width="400" height="80" style="margin-top:6px"></canvas>
+        <canvas id="previewGolay" width="400" height="80" role="img" aria-label="Signal preview for Golay" style="margin-top:6px"></canvas>
       </div>
 
       <div id="multiplexBox" style="display:none; margin-top:10px">
-        <details class="mode-desc">
+        <details>
           <summary>About Multiplex (multi-carrier) mode</summary>
           <p class="hint" style="margin:6px 0 0">
-            <b>Frequency-division probing</b> — transmits several orthogonal tones in one symbol and demultiplexes them with FFT/correlation.
+            <b>Frequency-division probing</b> &#x2014; transmits several orthogonal tones in one symbol and demultiplexes them with FFT/correlation.
             This reduces sweep time by evaluating multiple spectral channels in parallel.
           </p>
           <p class="hint" style="margin:4px 0 0">
@@ -267,37 +287,37 @@
         </details>
         <div class="row" style="margin-top:8px">
           <div>
-            <label>Carriers (K)</label>
+            <label for="multiplexCarrierCount">Carriers (K)</label>
             <input id="multiplexCarrierCount" type="number" step="1" min="1" max="16" value="6" title="Number of active multiplex carriers.">
           </div>
           <div>
-            <label>fStart (Hz)</label>
+            <label for="multiplexFStart">fStart (Hz)</label>
             <input id="multiplexFStart" type="number" step="10" value="2200" title="Lower bound of multiplex carrier band in Hz.">
           </div>
           <div>
-            <label>fEnd (Hz)</label>
+            <label for="multiplexFEnd">fEnd (Hz)</label>
             <input id="multiplexFEnd" type="number" step="10" value="8800" title="Upper bound of multiplex carrier band in Hz.">
           </div>
           <div>
-            <label>Symbol (ms)</label>
+            <label for="multiplexSymbolMs">Symbol (ms)</label>
             <input id="multiplexSymbolMs" type="number" step="1" min="2" max="40" value="8" title="Symbol duration in milliseconds for multiplex probing.">
           </div>
         </div>
         <div class="row" style="margin-top:8px">
           <div>
-            <label>Guard (Hz)</label>
+            <label for="multiplexGuardHz">Guard (Hz)</label>
             <input id="multiplexGuardHz" type="number" step="10" min="20" max="2000" value="180" title="Guard band in Hz from band edges to first/last carrier.">
           </div>
           <div>
-            <label>Min spacing (Hz)</label>
+            <label for="multiplexMinSpacingHz">Min spacing (Hz)</label>
             <input id="multiplexMinSpacingHz" type="number" step="10" min="20" max="3000" value="220" title="Minimum carrier spacing in Hz to reduce leakage.">
           </div>
           <div>
-            <label>Calibration candidates</label>
+            <label for="multiplexCalibrationCandidates">Calibration candidates</label>
             <input id="multiplexCalibrationCandidates" type="number" step="1" min="4" max="32" value="12" title="Number of candidate frequencies evaluated during carrier calibration.">
           </div>
           <div>
-            <label>Fusion mode</label>
+            <label for="multiplexFusion">Fusion mode</label>
             <select id="multiplexFusion" title="Fusion strategy for combining per-carrier measurements.">
               <option value="snrWeighted" selected>SNR weighted</option>
               <option value="median">Median</option>
@@ -319,47 +339,37 @@
             </label>
           </div>
         </div>
-        <canvas id="previewMultiplex" width="400" height="80" style="margin-top:6px"></canvas>
+        <canvas id="previewMultiplex" width="400" height="80" role="img" aria-label="Signal preview for multiplex" style="margin-top:6px"></canvas>
       </div>
       </details>
 
+      <details class="section-group" style="margin-top:10px">
+        <summary style="font-size:13px">Advanced</summary>
       <div class="row" style="margin-top:10px">
         <div>
-          <label title="Maximum detection range.">Max range (m)</label>
-          <input id="maxR" type="number" step="0.1" value="4.0" title="Maximum detection range in meters; increases listen window and scan dwell.">
+          <label for="spacing" title="Distance between L/R speakers. Steering delay &amp; TDOA gating depend on this. Must be > 0.02 m.">Speaker spacing d (m)</label>
+          <input id="spacing" type="number" step="0.01" min="0.02" value="0.20" title="Distance between left and right speakers in meters; affects steering delay and minimum range logic.">
         </div>
         <div>
-          <span class="small">Listen: <span id="computedListenMs">73</span> ms | Min range: <span id="computedMinR">0.30</span> m</span>
+          <label for="micArraySpacing" title="Distance between microphones for RX beamforming. Set 0 to disable. Typical laptop ~0.05 m.">Mic spacing (m)</label>
+          <input id="micArraySpacing" type="number" step="0.001" min="0" value="0" title="Distance between microphones in meters for RX beamforming; set 0 to disable array processing.">
+        </div>
+        <div>
+          <label for="temperature" title="Air temperature. Computes speed of sound: c = 331.3 + 0.606 x T.">Temperature (C)</label>
+          <input id="temperature" type="number" step="1" min="18" max="42" value="25" title="Ambient temperature in C used to compute speed of sound.">
+          <span class="small">c = <span id="computedC">346.5</span> m/s</span>
+        </div>
+        <div>
+          <label for="gain" title="Volume for transmitted pings. Keep low to avoid feedback.">Output gain</label>
+          <input id="gain" type="number" step="0.01" min="0" max="1" value="0.22" title="Transmit output gain (0..1); higher values improve SNR but increase feedback risk.">
         </div>
       </div>
-
-      <p class="hint">Scan controls: angular resolution, dwell time, and post-processing quality.</p>
-
-      <div class="row" style="margin-top:10px">
-        <div>
-          <label title="Angular resolution of sweep. Smaller = finer but slower.">Scan step (deg)</label>
-          <input id="scanStep" type="number" step="1" value="10" title="Angular step in degrees between scan positions.">
-        </div>
-        <div>
-          <label title="Pings per angle averaged together. More = better SNR (~3dB per doubling). 1–8.">Scan passes</label>
-          <input id="scanPasses" type="number" step="1" min="1" max="8" value="1" title="Number of repeated pings per angle to aggregate.">
-        </div>
-        <div>
-          <label title="Whether angle is horizontal (L/R) or vertical (T/B).">Direction axis</label>
-          <select id="dirAxis" title="Select whether scan/steering angles map to horizontal or vertical axis.">
-            <option value="horizontal" selected>Horizontal (L/R)</option>
-            <option value="vertical">Vertical (T/B)</option>
-          </select>
-        </div>
-        <div>
-          <span class="small">Scan dwell: <span id="computedScanDwell">73</span> ms</span>
-        </div>
-      </div>
+      </details>
 
       </details>
 
       <details id="expertSettings" class="section-group" style="margin-top:10px">
-        <summary style="font-size:13px">Expert scan & tracking</summary>
+        <summary style="font-size:13px">Expert scan &amp; tracking</summary>
 
       <details style="margin-top:10px">
         <summary style="font-size:13px">Microphone spectrogram</summary>
@@ -371,23 +381,23 @@
             </label>
           </div>
           <div>
-            <label title="STFT size (power of two).">FFT size</label>
+            <label for="spectrogramFftSize" title="STFT size (power of two).">FFT size</label>
             <input id="spectrogramFftSize" type="number" step="128" min="128" max="2048" value="512" title="STFT FFT size.">
           </div>
           <div>
-            <label title="Hop size between STFT frames.">Hop size</label>
+            <label for="spectrogramHopSize" title="Hop size between STFT frames.">Hop size</label>
             <input id="spectrogramHopSize" type="number" step="16" min="1" max="2048" value="128" title="STFT hop size in samples.">
           </div>
           <div>
-            <label title="Lower dB bound for color mapping.">Min dB</label>
+            <label for="spectrogramMinDb" title="Lower dB bound for color mapping.">Min dB</label>
             <input id="spectrogramMinDb" type="number" step="1" min="-140" max="0" value="-90" title="Lower dB bound for spectrogram color mapping.">
           </div>
           <div>
-            <label title="Upper dB bound for color mapping.">Max dB</label>
+            <label for="spectrogramMaxDb" title="Upper dB bound for color mapping.">Max dB</label>
             <input id="spectrogramMaxDb" type="number" step="1" min="-120" max="20" value="-20" title="Upper dB bound for spectrogram color mapping.">
           </div>
           <div>
-            <label title="Render frame-rate limit for spectrogram updates.">Spectrogram FPS</label>
+            <label for="spectrogramFps" title="Render frame-rate limit for spectrogram updates.">Spectrogram FPS</label>
             <input id="spectrogramFps" type="number" step="1" min="5" max="60" value="24" title="Render FPS limit for spectrogram.">
           </div>
         </div>
@@ -397,15 +407,15 @@
         <summary style="font-size:13px">Advanced scan settings</summary>
         <div class="row" style="margin-top:10px">
           <div>
-            <label title="Min correlation strength to report target. 0–1. Lower = more sensitive but noisier.">Min strength gate</label>
+            <label for="strengthGate" title="Min correlation strength to report target. 0-1. Lower = more sensitive but noisier.">Min strength gate</label>
             <input id="strengthGate" type="number" step="0.0001" min="0" max="1" value="0.0001" title="Minimum correlation strength required to consider a detection.">
           </div>
           <div>
-            <label title="Primary confidence gate (PSR + sharpness + sidelobe checks).">Confidence gate</label>
+            <label for="confidenceGate" title="Primary confidence gate (PSR + sharpness + sidelobe checks).">Confidence gate</label>
             <input id="confidenceGate" type="number" step="0.01" min="0" max="1" value="0.38" title="Minimum composite confidence required to keep a target.">
           </div>
           <div>
-            <label title="CFAR false-alarm probability. Higher = more sensitive CFAR detection.">CFAR Pfa</label>
+            <label for="cfarPfa" title="CFAR false-alarm probability. Higher = more sensitive CFAR detection.">CFAR Pfa</label>
             <input id="cfarPfa" type="number" step="0.0005" min="0.000001" max="0.5" value="0.001" title="Cell-averaging CFAR false-alarm probability used for detection thresholding.">
           </div>
           <div>
@@ -415,11 +425,11 @@
             </label>
           </div>
           <div>
-            <label title="Subtracts repeating clutter across scans. Strength 0–1.2.">Static suppression</label>
+            <label for="scanClutterStrength" title="Subtracts repeating clutter across scans. Strength 0-1.2.">Static suppression</label>
             <input id="scanClutterStrength" type="number" step="0.05" min="0" max="1.2" value="0.65" title="Strength of static clutter subtraction.">
           </div>
           <div>
-            <label title="Fast: raw. Balanced: median+smooth. Max: +floor suppress. Auto: adapts.">Quality algorithm</label>
+            <label for="qualityAlgo" title="Fast: raw. Balanced: median+smooth. Max: +floor suppress. Auto: adapts.">Quality algorithm</label>
             <select id="qualityAlgo" title="Select profile post-processing quality preset.">
               <option value="auto">Auto</option>
               <option value="fast">Fast</option>
@@ -428,7 +438,7 @@
             </select>
           </div>
           <div>
-            <label title="How multiping combines repeated pings per angle.">Pass aggregation</label>
+            <label for="scanAggregateMode" title="How multiping combines repeated pings per angle.">Pass aggregation</label>
             <select id="scanAggregateMode" title="Method used to combine multiple passes at each angle.">
               <option value="mean">Mean</option>
               <option value="median">Median</option>
@@ -436,22 +446,22 @@
             </select>
           </div>
           <div>
-            <label title="Trim fraction per side for trimmed mean.">Trim fraction</label>
+            <label for="scanTrimFraction" title="Trim fraction per side for trimmed mean.">Trim fraction</label>
             <input id="scanTrimFraction" type="number" step="0.05" min="0" max="0.45" value="0.20" title="Per-side trim ratio used for trimmed-mean aggregation.">
           </div>
         </div>
 
         <div class="row" style="margin-top:10px">
           <div>
-            <label title="Temporal data integration alpha for heatmap.data updates.">Temporal IIR alpha</label>
+            <label for="temporalIirAlpha" title="Temporal data integration alpha for heatmap.data updates.">Temporal IIR alpha</label>
             <input id="temporalIirAlpha" type="number" step="0.02" min="0.01" max="1" value="0.18" title="Temporal smoothing factor for heatmap updates; lower is smoother.">
           </div>
           <div>
-            <label title="Per-angle profile history length for outlier rejection.">Outlier history (N)</label>
+            <label for="outlierHistoryN" title="Per-angle profile history length for outlier rejection.">Outlier history (N)</label>
             <input id="outlierHistoryN" type="number" step="1" min="3" max="9" value="7" title="History size for per-angle outlier rejection.">
           </div>
           <div>
-            <label title="Allowed neighboring peak-bin mismatch for consensus/continuity.">Continuity bins</label>
+            <label for="continuityBins" title="Allowed neighboring peak-bin mismatch for consensus/continuity.">Continuity bins</label>
             <input id="continuityBins" type="number" step="1" min="1" max="64" value="8" title="Maximum allowed peak-bin mismatch for continuity checks.">
           </div>
           <div>
@@ -461,7 +471,7 @@
             </label>
           </div>
           <div>
-            <label title="Minimum time between auto-quality mode switches.">Auto hysteresis (ms)</label>
+            <label for="adaptiveQualityHysteresisMs" title="Minimum time between auto-quality mode switches.">Auto hysteresis (ms)</label>
             <input id="adaptiveQualityHysteresisMs" type="number" step="50" min="250" max="10000" value="1200" title="Minimum interval between adaptive quality mode switches.">
           </div>
         </div>
@@ -474,11 +484,11 @@
             </label>
           </div>
           <div>
-            <label title="If after/before energy drops below this ratio, reduce subtraction.">Collapse threshold</label>
+            <label for="subtractionCollapseThreshold" title="If after/before energy drops below this ratio, reduce subtraction.">Collapse threshold</label>
             <input id="subtractionCollapseThreshold" type="number" step="0.02" min="0.01" max="1" value="0.24" title="Energy-ratio threshold that triggers subtraction backoff.">
           </div>
           <div>
-            <label title="If peak retention ratio drops below this, reduce subtraction.">Peak retention threshold</label>
+            <label for="subtractionPeakDropThreshold" title="If peak retention ratio drops below this, reduce subtraction.">Peak retention threshold</label>
             <input id="subtractionPeakDropThreshold" type="number" step="0.02" min="0.01" max="1" value="0.30" title="Peak-retention threshold that triggers subtraction backoff.">
           </div>
         </div>
@@ -491,15 +501,15 @@
             </label>
           </div>
           <div>
-            <label title="Kalman process noise q (higher = faster baseline adaptation).">Kalman q</label>
+            <label for="noiseKalmanQ" title="Kalman process noise q (higher = faster baseline adaptation).">Kalman q</label>
             <input id="noiseKalmanQ" type="number" step="0.00001" min="0.00000001" max="1" value="0.00001" title="Process noise q for per-bin Kalman filter.">
           </div>
           <div>
-            <label title="Kalman measurement noise r (higher = slower updates).">Kalman r</label>
+            <label for="noiseKalmanR" title="Kalman measurement noise r (higher = slower updates).">Kalman r</label>
             <input id="noiseKalmanR" type="number" step="0.0001" min="0.00000001" max="2" value="0.0005" title="Measurement noise r for per-bin Kalman filter.">
           </div>
           <div>
-            <label title="How strongly the estimated floor is subtracted from profile bins.">Floor subtraction</label>
+            <label for="noiseKalmanStrength" title="How strongly the estimated floor is subtracted from profile bins.">Floor subtraction</label>
             <input id="noiseKalmanStrength" type="number" step="0.05" min="0" max="1.5" value="0.55" title="Strength of noise-floor subtraction.">
           </div>
           <div>
@@ -509,15 +519,15 @@
             </label>
           </div>
           <div>
-            <label title="Confidence threshold used by freeze mode.">Freeze conf gate</label>
+            <label for="noiseKalmanHighConfGate" title="Confidence threshold used by freeze mode.">Freeze conf gate</label>
             <input id="noiseKalmanHighConfGate" type="number" step="0.01" min="0" max="1" value="0.68" title="Confidence gate for freeze-on-target mode.">
           </div>
           <div>
-            <label title="Lower clamp for estimated noise-floor bins.">Floor min</label>
+            <label for="noiseKalmanMinFloor" title="Lower clamp for estimated noise-floor bins.">Floor min</label>
             <input id="noiseKalmanMinFloor" type="number" step="0.01" min="0" max="2" value="0" title="Minimum value for estimated noise floor.">
           </div>
           <div>
-            <label title="Upper clamp for estimated noise-floor bins.">Floor max</label>
+            <label for="noiseKalmanMaxFloor" title="Upper clamp for estimated noise-floor bins.">Floor max</label>
             <input id="noiseKalmanMaxFloor" type="number" step="0.01" min="0" max="3" value="1" title="Maximum value for estimated noise floor.">
           </div>
         </div>
@@ -530,19 +540,19 @@
             </label>
           </div>
           <div>
-            <label title="Range where attenuation starts (m).">Blanking start (m)</label>
+            <label for="displayBlankingStartRange" title="Range where attenuation starts (m).">Blanking start (m)</label>
             <input id="displayBlankingStartRange" type="number" step="0.01" min="0" value="0.30" title="Range in meters where blanking attenuation begins.">
           </div>
           <div>
-            <label title="Range where attenuation ends (m).">Blanking end (m)</label>
+            <label for="displayBlankingEndRange" title="Range where attenuation ends (m).">Blanking end (m)</label>
             <input id="displayBlankingEndRange" type="number" step="0.01" min="0" value="0.90" title="Range in meters where blanking attenuation ends.">
           </div>
           <div>
-            <label title="How strongly to suppress selected range (0..1).">Blanking attenuation</label>
+            <label for="displayBlankingAttenuation" title="How strongly to suppress selected range (0..1).">Blanking attenuation</label>
             <input id="displayBlankingAttenuation" type="number" step="0.05" min="0" max="1" value="0.85" title="Attenuation strength inside blanking window (0..1).">
           </div>
           <div>
-            <label title="Soft transition width at window edges (m).">Edge softness (m)</label>
+            <label for="displayBlankingEdgeSoftness" title="Soft transition width at window edges (m).">Edge softness (m)</label>
             <input id="displayBlankingEdgeSoftness" type="number" step="0.01" min="0" max="1.5" value="0.08" title="Soft transition width at blanking window edges in meters.">
           </div>
         </div>
@@ -550,23 +560,23 @@
 
       <div class="row" style="margin-top:10px">
         <div>
-          <label title="How many historical positions are kept per track trail. Higher values show longer motion history but can clutter the geometry view. Typical range: 16–32.">Track trail points</label>
+          <label for="trackTrailMaxPoints" title="How many historical positions are kept per track trail.">Track trail points</label>
           <input id="trackTrailMaxPoints" type="number" step="1" min="4" max="80" value="22" title="Maximum number of points kept in each track trail.">
         </div>
         <div>
-          <label title="Maximum consecutive missed tracker updates before a track is hidden. Lower values remove stale tracks faster; higher values keep tracks visible longer through dropouts.">Track fade misses</label>
+          <label for="trackFadeMissCount" title="Maximum consecutive missed tracker updates before a track is hidden.">Track fade misses</label>
           <input id="trackFadeMissCount" type="number" step="1" min="1" max="60" value="8" title="Number of consecutive missed updates before a track fades out.">
         </div>
         <div>
-          <label title="Opacity of the oldest trail segments (0 = invisible, 1 = fully opaque). Lower values create smoother fading tails and reduce visual clutter.">Trail alpha min</label>
+          <label for="trackTrailMinAlpha" title="Opacity of the oldest trail segments (0 = invisible, 1 = fully opaque).">Trail alpha min</label>
           <input id="trackTrailMinAlpha" type="number" step="0.01" min="0" max="1" value="0.08" title="Opacity for oldest trail segment.">
         </div>
         <div>
-          <label title="Opacity of the newest trail segments. Higher values emphasize recent motion; keep >= Trail alpha min for a valid fade gradient.">Trail alpha max</label>
+          <label for="trackTrailMaxAlpha" title="Opacity of the newest trail segments.">Trail alpha max</label>
           <input id="trackTrailMaxAlpha" type="number" step="0.01" min="0" max="1" value="0.55" title="Opacity for newest trail segment.">
         </div>
         <div>
-          <label title="Minimum tracker confidence required to draw a track marker/trail. Increase to hide noisy low-confidence tracks; decrease to see weaker tentative tracks.">Track confidence floor</label>
+          <label for="trackMinConfidenceFloor" title="Minimum tracker confidence required to draw a track marker/trail.">Track confidence floor</label>
           <input id="trackMinConfidenceFloor" type="number" step="0.0001" min="0" max="1" value="0.0001" title="Minimum confidence required to render a track.">
         </div>
       </div>
@@ -586,18 +596,18 @@
             </label>
           </div>
           <div>
-            <label title="Half-window in angle rows for coherent aperture sum (0 = disabled behavior).">SAFT half-window</label>
+            <label for="vaHalfWindow" title="Half-window in angle rows for coherent aperture sum (0 = disabled behavior).">SAFT half-window</label>
             <input id="vaHalfWindow" type="number" step="1" min="0" max="12" value="3" title="Half-window size in angle rows used for SAFT accumulation.">
           </div>
           <div>
-            <label title="Aperture taper used during coherent summation.">SAFT window</label>
+            <label for="vaWindow" title="Aperture taper used during coherent summation.">SAFT window</label>
             <select id="vaWindow" title="Window function used in SAFT aperture weighting.">
               <option value="hann" selected>Hann</option>
               <option value="gaussian">Gaussian</option>
             </select>
           </div>
           <div>
-            <label title="Below this coherence, blend toward incoherent magnitude for stability.">SAFT coherence floor</label>
+            <label for="vaCoherenceFloor" title="Below this coherence, blend toward incoherent magnitude for stability.">SAFT coherence floor</label>
             <input id="vaCoherenceFloor" type="number" step="0.05" min="0" max="1" value="0.25" title="Coherence floor below which result blends toward incoherent magnitude.">
           </div>
         </div>
@@ -606,8 +616,8 @@
       </details>
 
       <div class="row" style="margin-top:10px">
-        <div class="pill"><span id="bestReadout">Best: —</span></div>
-        <div class="pill"><span id="dirReadout">Direction: —</span></div>
+        <div class="pill"><span id="bestReadout">Best: &#x2014;</span></div>
+        <div class="pill"><span id="dirReadout">Direction: &#x2014;</span></div>
         <div class="pill" id="pingStats" style="display:none"></div>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="showTrace" type="checkbox" checked title="Overlay current best-target trajectory on the heatmap/geometry views.">
@@ -615,14 +625,13 @@
         </label>
       </div>
 
-      <p class="hint">Use <b>Horizontal (L/R)</b> for left/right and <b>Vertical (T/B)</b> when your speaker axis is rotated 90°.</p>
+      <p class="hint">Use <b>Horizontal (L/R)</b> for left/right and <b>Vertical (T/B)</b> when your speaker axis is rotated 90 degrees.</p>
 
       <hr/>
 
       <!-- Calibration -->
       <p class="hint">Calibration measures speaker-to-mic distances to lock direct-path timing and improve range accuracy.</p>
       <div class="row" style="justify-content:space-between">
-        <button id="btnCalibrate" disabled title="Run direct-path calibration to improve timing lock and range accuracy.">Calibrate <kbd>C</kbd></button>
         <label style="display:flex; align-items:center; gap:8px; margin:0;">
           <input id="useCalib" type="checkbox" checked title="Use calibration data to constrain direct-path search and reduce ambiguity.">
           Use calibration to lock direct-path search
@@ -637,19 +646,19 @@
         <summary style="font-size:13px">Advanced calibration settings</summary>
         <div class="row" style="margin-top:10px">
           <div>
-            <label title="Independent L/R measurement pairs. 1–9. More = more robust.">Calibration repeats (N)</label>
+            <label for="calRepeats" title="Independent L/R measurement pairs. 1-9. More = more robust.">Calibration repeats (N)</label>
             <input id="calRepeats" type="number" step="1" min="1" max="9" value="5" title="Number of repeated left/right calibration measurements.">
           </div>
           <div>
-            <label title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>
+            <label for="calRepeatGapMs" title="Delay between repeats. Min 30 ms. Allows reverb decay.">Inter-repeat gap (ms)</label>
             <input id="calRepeatGapMs" type="number" step="10" min="30" value="120" title="Delay in milliseconds between calibration repeats.">
           </div>
           <div>
-            <label title="Additional pings for environmental baseline. 0–12.">Extra env pings</label>
+            <label for="extraCalPings" title="Additional pings for environmental baseline. 0-12.">Extra env pings</label>
             <input id="extraCalPings" type="number" step="1" min="0" max="12" value="4" title="Additional baseline pings captured for environmental subtraction.">
           </div>
           <div>
-            <label title="Subtraction strength for ambient clutter. 0–1.2.">Env baseline subtract</label>
+            <label for="envBaselineStrength" title="Subtraction strength for ambient clutter. 0-1.2.">Env baseline subtract</label>
             <input id="envBaselineStrength" type="number" step="0.05" min="0" max="1.2" value="0.55" title="Strength of environmental baseline subtraction.">
           </div>
           <div>
@@ -675,7 +684,7 @@
         <p class="hint">
           Shows early (<b>60ms</b>) Golay-summed correlations for <b>L-only</b> and <b>R-only</b>, with peak markers and mono decision breakdown.
         </p>
-        <canvas id="calibPlot" width="1000" height="260"></canvas>
+        <canvas id="calibPlot" width="1000" height="260" role="img" aria-label="Calibration sanity check plot"></canvas>
         <div class="mono" id="sanityText" style="margin-top:10px; border:1px solid #222; border-radius:12px; padding:10px; background:#0a0a0a;"></div>
       </details>
 
@@ -706,20 +715,19 @@
             Use remote captures in ping/scan
           </label>
           <div>
-            <label title="How long to wait for peer capture responses before continuing.">Remote capture timeout (ms)</label>
+            <label for="distributedCaptureTimeoutMs" title="How long to wait for peer capture responses before continuing.">Remote capture timeout (ms)</label>
             <input id="distributedCaptureTimeoutMs" type="number" step="50" min="50" max="4000" value="300" title="Timeout for peer responses. Increase on high-latency networks.">
           </div>
         </div>
         <p class="hint" style="margin-top:6px">Calibration is local-only per device. Run calibration on each device if needed.</p>
 
-        <!-- Host offer QR stays in WebRTC section (near pairing controls) -->
         <div id="peerHostQrBox" class="hidden" style="margin-top:10px; text-align:center;">
-          <canvas id="peerHostQrCanvas" width="256" height="256" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
+          <canvas id="peerHostQrCanvas" width="256" height="256" role="img" aria-label="QR code for host offer" style="display:inline-block;max-width:256px;image-rendering:pixelated;border-radius:12px;"></canvas>
           <p id="peerHostQrLabel" class="hint" style="margin:8px 0 0;font-size:14px;"></p>
         </div>
 
         <div id="peerSignalBox" style="display:none; margin-top:10px;">
-          <label id="peerSignalLabel">Signal:</label>
+          <label id="peerSignalLabel" for="peerSignalText">Signal:</label>
           <textarea id="peerSignalText" class="mono" rows="3" title="Paste incoming signaling payload here, or copy the generated payload to send to another device." style="width:100%; font-size:11px; background:#111; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; resize:vertical;"></textarea>
           <div class="row" style="margin-top:6px">
             <button id="btnPeerCopySignal" title="Copy the current signaling payload to clipboard.">Copy</button>
@@ -727,7 +735,6 @@
           </div>
         </div>
 
-        <!-- QR scanner (webcam) -->
         <div id="peerScanBox" class="hidden" style="margin-top:10px;">
           <video id="peerScanVideo" autoplay playsinline muted
                  style="max-width:320px;display:block;margin:0.5em 0;border-radius:4px;"></video>
@@ -749,13 +756,13 @@
 
     <section class="card viz-pane">
       <div class="row" style="justify-content:space-between">
-        <div class="small" id="status">Status: idle</div>
+        <div class="small" id="status" aria-live="polite" role="status">Status: idle</div>
       </div>
 
       <div id="scanProgress" class="scan-progress is-hidden" aria-live="polite">
         <div class="scan-progress-row">
           <span class="small scan-progress-text" id="scanProgressText">Scanning...</span>
-          <div class="progress-bar-bg"><div class="progress-bar-fill" id="scanProgressFill"></div></div>
+          <div class="progress-bar-bg"><div class="progress-bar-fill" id="scanProgressFill" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
         </div>
       </div>
 
@@ -764,7 +771,7 @@
         <p class="hint" style="margin:4px 0 8px">
           Main scan view: bright spots show stronger reflections by angle and range.
         </p>
-        <canvas id="heatmap" width="1000" height="520"></canvas>
+        <canvas id="heatmap" width="1000" height="520" role="img" aria-label="Angle versus range heatmap showing echo strength"></canvas>
         <div class="row" style="margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <label style="font-size:12px;color:#bdbdbd">Colormap
             <select id="colormapSelect" title="Choose color mapping for heatmap intensity rendering.">
@@ -787,7 +794,7 @@
         <p class="hint" style="margin:4px 0 8px">
           Correlation vs range for the latest ping/scan row.
         </p>
-        <canvas id="profile" width="1000" height="260"></canvas>
+        <canvas id="profile" width="1000" height="260" role="img" aria-label="Correlation profile showing echo strength vs range"></canvas>
       </details>
 
       <details id="micSpectrogramDetails" style="margin-top:10px">
@@ -798,7 +805,7 @@
         <div class="row" style="margin:0 0 8px; justify-content:flex-end;">
           <span id="micSpectrogramMode" class="small">Mode: RAW</span>
         </div>
-        <canvas id="micSpectrogram" width="1000" height="220"></canvas>
+        <canvas id="micSpectrogram" width="1000" height="220" role="img" aria-label="Real-time microphone spectrogram"></canvas>
       </details>
 
       <details id="geometryDetails" style="margin-top:10px">
@@ -806,7 +813,7 @@
         <p class="hint" style="margin:4px 0 8px">
           Device layout and target position estimate in top view.
         </p>
-        <canvas id="geometry" width="1000" height="280"></canvas>
+        <canvas id="geometry" width="1000" height="280" role="img" aria-label="Geometry view showing speaker and microphone positions"></canvas>
         <div class="row" style="margin-top:8px">
           <label style="display:flex; align-items:center; gap:8px; margin:0;">
             <input id="geomWizardOn" type="checkbox" title="Enable interactive geometry editing by dragging handles on the geometry plot.">
@@ -825,15 +832,15 @@
 </main>
 
 <!-- Onboarding overlay (first visit only) -->
-<div id="onboardingOverlay" class="onboarding-overlay hidden">
+<div id="onboardingOverlay" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-label="Welcome to Echoscope">
   <div class="onboarding-dialog">
     <h2>Welcome to Echoscope</h2>
     <p class="onboarding-subtitle">Browser-based active sonar echolocation. Transmit acoustic signals through your speakers, capture echoes with your microphone, and visualize your surroundings in real time.</p>
     <ol class="onboarding-steps">
-      <li><b>Select your device</b> — pick your laptop or tablet from the <em>Device preset</em> dropdown so speaker/mic geometry is correct.</li>
-      <li><b>Init Audio</b> — click the button (or press <kbd>I</kbd>) to grant microphone access and start the audio engine.</li>
-      <li><b>Calibrate</b> — click <em>Calibrate</em> (or press <kbd>C</kbd>) to measure speaker-to-mic timing in your room.</li>
-      <li><b>Scan</b> — click <em>Scan</em> (or press <kbd>S</kbd>) to start echolocation and build a heatmap.</li>
+      <li><b>Select your device</b> &#x2014; pick your laptop or tablet from the <em>Device preset</em> dropdown so speaker/mic geometry is correct.</li>
+      <li><b>Init Audio</b> &#x2014; click the button (or press <kbd>I</kbd>) to grant microphone access and start the audio engine.</li>
+      <li><b>Calibrate</b> &#x2014; click <em>Calibrate</em> (or press <kbd>C</kbd>) to measure speaker-to-mic timing in your room.</li>
+      <li><b>Scan</b> &#x2014; click <em>Scan</em> (or press <kbd>S</kbd>) to start echolocation and build a heatmap.</li>
     </ol>
     <div class="onboarding-actions">
       <button id="onboardingDismiss" type="button">Get Started</button>

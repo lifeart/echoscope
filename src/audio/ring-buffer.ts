@@ -38,9 +38,9 @@ export class RingBuffer {
     for (let c = 0; c < chCount; c++) {
       const buf = this.buffers[c];
       const data = channelData[c];
-      for (let i = 0; i < n; i++) {
-        buf[(this.writePos + i) % this.length] = data[i];
-      }
+      const first = Math.min(n, this.length - this.writePos);
+      buf.set(data.subarray(0, first), this.writePos);
+      if (first < n) buf.set(data.subarray(first), 0);
     }
     this.writePos = (this.writePos + n) % this.length;
   }
@@ -52,12 +52,11 @@ export class RingBuffer {
   read(endOffset: number, length: number, channel = 0): Float32Array {
     const out = new Float32Array(length);
     const buf = this.buffers[channel];
-    let idx = (endOffset - length) % this.length;
-    if (idx < 0) idx += this.length;
-    for (let i = 0; i < length; i++) {
-      out[i] = buf[idx];
-      idx = (idx + 1) % this.length;
-    }
+    let start = (endOffset - length) % this.length;
+    if (start < 0) start += this.length;
+    const first = Math.min(length, this.length - start);
+    out.set(buf.subarray(start, start + first));
+    if (first < length) out.set(buf.subarray(0, length - first), first);
     return out;
   }
 

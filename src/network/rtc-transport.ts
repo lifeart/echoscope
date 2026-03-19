@@ -41,6 +41,9 @@ export class RTCTransport {
     await pc.setLocalDescription(offer);
     await this.waitForIceGathering(pc);
 
+    const desc = pc.localDescription;
+    if (!desc) throw new Error('ICE gathering produced no local description');
+
     this.peers.set(peerId, {
       id: peerId,
       connection: pc,
@@ -51,7 +54,7 @@ export class RTCTransport {
       state: 'connecting',
     });
 
-    return pc.localDescription!;
+    return desc;
   }
 
   async acceptOffer(
@@ -82,6 +85,9 @@ export class RTCTransport {
       lastHeartbeat: Date.now(),
       state: 'connecting',
     };
+    const desc = pc.localDescription;
+    if (!desc) throw new Error('ICE gathering produced no local description');
+
     this.peers.set(peerId, peerNode);
 
     // Patch in the data channel once it arrives (background, non-blocking).
@@ -92,7 +98,7 @@ export class RTCTransport {
       peerNode.dataChannel = channel;
     };
 
-    return pc.localDescription!;
+    return desc;
   }
 
   async acceptAnswer(peerId: string, answer: RTCSessionDescriptionInit): Promise<void> {

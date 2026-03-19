@@ -7,6 +7,9 @@ import type { TargetState, Measurement } from '../types.js';
 
 const STATE_DIM = 4;
 
+/** Per-prediction-step confidence decay factor (no measurement received). */
+const CONFIDENCE_DECAY = 0.92;
+
 function matMul4x4(A: Float64Array, B: Float64Array): Float64Array {
   const C = new Float64Array(16);
   for (let i = 0; i < 4; i++) {
@@ -39,12 +42,12 @@ function identity4x4(): Float64Array {
   return I;
 }
 
-// Invert 2x2 matrix [a b; c d]
-function inv2x2(a: number, b: number, c: number, d: number): [number, number, number, number] {
+// Invert 2x2 matrix [a b; c d]. Returns null if near-singular.
+function inv2x2(a: number, b: number, c: number, d: number): [number, number, number, number] | null {
   const det = a * d - b * c;
   if (Math.abs(det) < 1e-15) {
-    console.warn('[kalman] inv2x2: near-singular innovation covariance, falling back to identity');
-    return [1, 0, 0, 1];
+    console.warn('[kalman] inv2x2: near-singular innovation covariance, skipping update');
+    return null;
   }
   const inv = 1 / det;
   return [d * inv, -b * inv, -c * inv, a * inv];
@@ -133,7 +136,7 @@ export function predict(target: TargetState, dt: number, config: KalmanConfig = 
     // Exponential confidence decay on every prediction step (no measurement).
     // Prevents stale tracks from retaining artificially high confidence
     // that would bias the joint angle prior and target selection.
-    confidence: target.confidence * 0.92,
+    confidence: target.confidence * CONFIDENCE_DECAY,
   };
 }
 
@@ -160,7 +163,9 @@ export function update(
   const S11 = P[5] + R_angle;
 
   // Kalman gain: K = P*H^T * S^-1
-  const [Si00, Si01, Si10, Si11] = inv2x2(S00, S01, S10, S11);
+  const Sinv = inv2x2(S00, S01, S10, S11);
+  if (!Sinv) return target; // skip update on singular innovation covariance
+  const [Si00, Si01, Si10, Si11] = Sinv;
 
   // K is 4x2
   const K = new Float64Array(8);
@@ -218,7 +223,9 @@ export function mahalanobisDistance(target: TargetState, measurement: Measuremen
   const S10 = P[4];
   const S11 = P[5] + R_angle;
 
-  const [Si00, Si01, Si10, Si11] = inv2x2(S00, S01, S10, S11);
+  const Sinv = inv2x2(S00, S01, S10, S11);
+  if (!Sinv) return Infinity; // singular → treat as infinite distance
+  const [Si00, Si01, Si10, Si11] = Sinv;
 
   const d2 = yRange * (Si00 * yRange + Si01 * yAngle) +
     yAngle * (Si10 * yRange + Si11 * yAngle);

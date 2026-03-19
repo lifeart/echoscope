@@ -1,4 +1,5 @@
 import { bus } from '../core/event-bus.js';
+import { resizeCanvasForDPR } from './renderer.js';
 
 let smoothedRms = 0;
 let rafPending = false;
@@ -11,6 +12,12 @@ export function initLevelMeter(): void {
 
   const wrap = document.getElementById('levelMeterWrap');
   if (wrap) wrap.style.display = 'flex';
+
+  const canvas = document.getElementById('levelMeter') as HTMLCanvasElement | null;
+  if (canvas) {
+    resizeCanvasForDPR(canvas);
+    cachedGradient = null; // invalidate gradient after resize
+  }
 
   bus.on('audio:samples', onSamples);
 }

@@ -55,13 +55,27 @@ export function evaluateSubtractionGuard(
   return { collapseRatio, peakRetention, shouldBackoff };
 }
 
-function blendTowardRaw(raw: Float32Array, cleaned: Float32Array, backoffLevel: number): Float32Array {
+export function blendTowardRaw(raw: Float32Array, cleaned: Float32Array, backoffLevel: number): Float32Array {
   const out = new Float32Array(raw.length);
   const k = Math.max(0, Math.min(1, backoffLevel));
   for (let i = 0; i < raw.length; i++) {
     out[i] = cleaned[i] * (1 - k) + raw[i] * k;
   }
   return out;
+}
+
+/**
+ * Compute backoff level from guard stats and backoff options.
+ * Measures how far below the collapse/peak thresholds the guard stats are,
+ * returning the worst-case deficit as the blending level.
+ */
+export function computeBackoffLevel(
+  guard: SubtractionGuardStats,
+  backoff: SubtractionBackoffOptions,
+): number {
+  const collapseDeficit = Math.max(0, (backoff.collapseThreshold - guard.collapseRatio) / Math.max(1e-6, backoff.collapseThreshold));
+  const peakDeficit = Math.max(0, (backoff.peakDropThreshold - guard.peakRetention) / Math.max(1e-6, backoff.peakDropThreshold));
+  return Math.max(collapseDeficit, peakDeficit);
 }
 
 export function suppressStaticReflections(
@@ -104,9 +118,7 @@ export function suppressStaticReflections(
   if (options.backoff?.enabled) {
     const guard = evaluateSubtractionGuard(profile, out, options.backoff);
     if (guard.shouldBackoff) {
-      const collapseDeficit = Math.max(0, (options.backoff.collapseThreshold - guard.collapseRatio) / Math.max(1e-6, options.backoff.collapseThreshold));
-      const peakDeficit = Math.max(0, (options.backoff.peakDropThreshold - guard.peakRetention) / Math.max(1e-6, options.backoff.peakDropThreshold));
-      const backoffLevel = Math.max(collapseDeficit, peakDeficit);
+      const backoffLevel = computeBackoffLevel(guard, options.backoff);
       return {
         profile: blendTowardRaw(profile, out, backoffLevel),
         clutterState: { model: clutterState.model },
@@ -135,8 +147,6 @@ export function applyEnvBaseline(
   const guard = evaluateSubtractionGuard(profile, out, backoff);
   if (!guard.shouldBackoff) return out;
 
-  const collapseDeficit = Math.max(0, (backoff.collapseThreshold - guard.collapseRatio) / Math.max(1e-6, backoff.collapseThreshold));
-  const peakDeficit = Math.max(0, (backoff.peakDropThreshold - guard.peakRetention) / Math.max(1e-6, backoff.peakDropThreshold));
-  const backoffLevel = Math.max(collapseDeficit, peakDeficit);
+  const backoffLevel = computeBackoffLevel(guard, backoff);
   return blendTowardRaw(profile, out, backoffLevel);
 }

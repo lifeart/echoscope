@@ -1,6 +1,7 @@
 import type { HeatmapData } from '../types.js';
 import { pickBestFromProfile } from '../dsp/peak.js';
-import { median } from '../utils.js';
+
+const DECAY_SNAP_THRESHOLD = 1e-10;
 
 export interface HeatmapRowUpdateOptions {
   decayFactor?: number;
@@ -46,7 +47,7 @@ export function updateHeatmapRow(
     if (profile[b] > pMax) pMax = profile[b];
     if (profile[b] > 1e-15) pNonZero++;
   }
-  console.log(`[updateHeatmapRow] row=${rowIndex} profileLen=${profile.length} heatmapBins=${bins} profileMin=${pMin.toExponential(3)} profileMax=${pMax.toExponential(3)} nonZero=${pNonZero}/${profile.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)}`);
+  console.debug(`[updateHeatmapRow] row=${rowIndex} profileLen=${profile.length} heatmapBins=${bins} profileMin=${pMin.toExponential(3)} profileMax=${pMax.toExponential(3)} nonZero=${pNonZero}/${profile.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)}`);
 
   // Check if the incoming profile is entirely zero (weak/rejected ping).
   // In that case, apply pure decay instead of max-accumulating noise residue.
@@ -63,7 +64,7 @@ export function updateHeatmapRow(
       // Snap to zero once negligible to avoid infinite decay tail.
       // Threshold 1e-10 ensures zero is reached in ~170 iterations of 0.90 decay
       // (well below the display hasData threshold of 1e-7).
-      if (data[idx] < 1e-10) data[idx] = 0;
+      if (data[idx] < DECAY_SNAP_THRESHOLD) data[idx] = 0;
     } else if (temporalIirAlpha != null && temporalIirAlpha > 0) {
       const decayed = data[idx] * decayFactor;
       const alpha = Math.max(0.01, Math.min(1, temporalIirAlpha));
@@ -90,7 +91,7 @@ export function updateHeatmapRow(
     if (v > dMax) dMax = v;
     if (v > 1e-15) dNonZero++;
   }
-  console.log(`[updateHeatmapRow] after: dataMax=${dMax.toExponential(3)} dataNonZero=${dNonZero}/${bins}`);
+  console.debug(`[updateHeatmapRow] after: dataMax=${dMax.toExponential(3)} dataNonZero=${dNonZero}/${bins}`);
 }
 
 export function averageProfiles(
@@ -112,7 +113,7 @@ export function aggregateProfiles(
   }
   if (profiles.length === 1) {
     const best = pickBestFromProfile(profiles[0]);
-    return { averaged: profiles[0], bestBin: best.bin, bestVal: best.val };
+    return { averaged: new Float32Array(profiles[0]), bestBin: best.bin, bestVal: best.val };
   }
   const len = profiles[0].length;
   const averaged = new Float32Array(len);
@@ -129,7 +130,8 @@ export function aggregateProfiles(
     for (let i = 0; i < len; i++) {
       for (let p = 0; p < n; p++) values[p] = profiles[p][i];
       if (mode === 'median') {
-        averaged[i] = median(values);
+        values.sort((a, b) => a - b);
+        averaged[i] = n % 2 ? values[(n >> 1)] : 0.5 * (values[(n >> 1) - 1] + values[(n >> 1)]);
       } else {
         values.sort((a, b) => a - b);
         const trim = Math.min(Math.floor(n * trimFraction), Math.floor((n - 1) / 2));
@@ -152,6 +154,7 @@ export function crossAngleSmooth(heatmap: HeatmapData, radius = 1): void {
   if (rows < 3) return; // Not enough rows to smooth
 
   const temp = new Float32Array(rows);
+  const windowBuf = new Float64Array(2 * radius + 1);
   for (let b = 0; b < bins; b++) {
     // Collect column values
     for (let r = 0; r < rows; r++) {
@@ -161,15 +164,16 @@ export function crossAngleSmooth(heatmap: HeatmapData, radius = 1): void {
     for (let r = 0; r < rows; r++) {
       const lo = Math.max(0, r - radius);
       const hi = Math.min(rows - 1, r + radius);
-      const window: number[] = [];
+      const count = hi - lo + 1;
       for (let nr = lo; nr <= hi; nr++) {
-        window.push(temp[nr]);
+        windowBuf[nr - lo] = temp[nr];
       }
-      window.sort((a, b2) => a - b2);
-      const mid = Math.floor(window.length / 2);
-      heatmap.data[r * bins + b] = window.length % 2 === 0
-        ? 0.5 * (window[mid - 1] + window[mid])
-        : window[mid];
+      const windowSlice = windowBuf.subarray(0, count);
+      windowSlice.sort();
+      const mid = count >> 1;
+      heatmap.data[r * bins + b] = count % 2 === 0
+        ? 0.5 * (windowSlice[mid - 1] + windowSlice[mid])
+        : windowSlice[mid];
     }
   }
 
@@ -199,5 +203,5 @@ export function smoothHeatmapDisplay(heatmap: HeatmapData, alpha = 0.22): void {
   for (let i = 0; i < display.length; i++) {
     if (display[i] > dispMaxAfter) dispMaxAfter = display[i];
   }
-  console.log(`[smoothHeatmapDisplay] alpha=${alpha} dataMax=${dMax.toExponential(3)} displayMaxBefore=${dispMaxBefore.toExponential(3)} displayMaxAfter=${dispMaxAfter.toExponential(3)}`);
+  console.debug(`[smoothHeatmapDisplay] alpha=${alpha} dataMax=${dMax.toExponential(3)} displayMaxBefore=${dispMaxBefore.toExponential(3)} displayMaxAfter=${dispMaxAfter.toExponential(3)}`);
 }

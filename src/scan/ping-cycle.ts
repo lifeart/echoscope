@@ -42,6 +42,26 @@ let clutterState: ClutterState = { model: null };
 let noiseKalmanState: NoiseKalmanState | null = null;
 let nextPingId = 1;
 
+const DETECTION_WEIGHTS = {
+  confidence: 0.30,
+  strength: 0.25,
+  cfar: 0.25,
+  track: 0.10,
+  prior: 0.10,
+} as const;
+const DETECTION_THRESHOLD = 0.55;
+const TRACKING_CANDIDATE_THRESHOLD = 0.50;
+const EDGE_PENALTY = 0.4;
+
+function profileStats(prof: Float32Array): { max: number; nonZero: number } {
+  let max = 0, nonZero = 0;
+  for (let i = 0; i < prof.length; i++) {
+    if (prof[i] > max) max = prof[i];
+    if (prof[i] > 1e-15) nonZero++;
+  }
+  return { max, nonZero };
+}
+
 interface PeakCandidate {
   bin: number;
   value: number;
@@ -524,7 +544,8 @@ export async function doPingDetailed(
       }
     }
   } else {
-    const ref = probe.ref!;
+    const ref = probe.ref;
+    if (!ref) throw new Error('probe.ref is null for non-golay/multiplex mode');
 
     // Distributed: broadcast capture request before local ping
     const pingId = nextPingId++;
@@ -573,12 +594,9 @@ export async function doPingDetailed(
   }
 
   // Debug: raw profile stats
-  let rawMax = 0;
-  {
-    let rawNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > rawMax) rawMax = profFinal[i]; if (profFinal[i] > 1e-15) rawNZ++; }
-    console.debug(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawNZ}/${profFinal.length}`);
-  }
+  const rawStats = profileStats(profFinal);
+  const rawMax = rawStats.max;
+  console.debug(`[doPing:raw] angle=${angleDeg} rawMax=${rawMax.toExponential(3)} nonZero=${rawStats.nonZero}/${profFinal.length}`);
 
   if (config.displayReflectionBlanking.enabled) {
     profFinal = applyDisplayReflectionBlanking(
@@ -587,9 +605,8 @@ export async function doPingDetailed(
       maxR,
       config.displayReflectionBlanking,
     );
-    let dMax = 0, dNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > dMax) dMax = profFinal[i]; if (profFinal[i] > 1e-15) dNZ++; }
-    console.debug(`[doPing:displayBlank] max=${dMax.toExponential(3)} nonZero=${dNZ}/${profFinal.length}`);
+    const dStats = profileStats(profFinal);
+    console.debug(`[doPing:displayBlank] max=${dStats.max.toExponential(3)} nonZero=${dStats.nonZero}/${profFinal.length}`);
   }
 
   // Apply env baseline
@@ -602,11 +619,10 @@ export async function doPingDetailed(
       config.envBaseline.strength,
       config.subtractionBackoff,
     );
-    let eMax = 0, eNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > eMax) eMax = profFinal[i]; if (profFinal[i] > 1e-15) eNZ++; }
-    console.debug(`[doPing:envBaseline] max=${eMax.toExponential(3)} nonZero=${eNZ}/${profFinal.length}`);
+    const eStats = profileStats(profFinal);
+    console.debug(`[doPing:envBaseline] max=${eStats.max.toExponential(3)} nonZero=${eStats.nonZero}/${profFinal.length}`);
     // Safeguard: if envBaseline removed ALL signal but raw had data, fall back
-    if (eMax < 1e-15 && rawMax > 1e-15) {
+    if (eStats.max < 1e-15 && rawMax > 1e-15) {
       console.warn('[doPing] envBaseline zeroed out entire profile — falling back to raw profile');
       profFinal = beforeBaseline;
     }
@@ -644,12 +660,8 @@ export async function doPingDetailed(
     const kalmanBackoff = guardBackoff(profFinal, kalmanSubtracted, config.subtractionBackoff);
     profFinal = kalmanBackoff.profile;
 
-    let nkMax = 0, nkNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) {
-      if (profFinal[i] > nkMax) nkMax = profFinal[i];
-      if (profFinal[i] > 1e-15) nkNZ++;
-    }
-    console.debug(`[doPing:noiseKalman] freeze=${freeze} updBins=${kalmanUpdate.updatedBins} meanK=${kalmanUpdate.meanGain.toFixed(4)} backoff=${kalmanBackoff.backoffLevel.toFixed(3)} max=${nkMax.toExponential(3)} nonZero=${nkNZ}/${profFinal.length}`);
+    const nkStats = profileStats(profFinal);
+    console.debug(`[doPing:noiseKalman] freeze=${freeze} updBins=${kalmanUpdate.updatedBins} meanK=${kalmanUpdate.meanGain.toFixed(4)} backoff=${kalmanBackoff.backoffLevel.toFixed(3)} max=${nkStats.max.toExponential(3)} nonZero=${nkStats.nonZero}/${profFinal.length}`);
   }
 
   // Apply static clutter suppression during scanning
@@ -663,9 +675,8 @@ export async function doPingDetailed(
     });
     profFinal = result.profile;
     clutterState = result.clutterState;
-    let cMax = 0, cNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > cMax) cMax = profFinal[i]; if (profFinal[i] > 1e-15) cNZ++; }
-    console.debug(`[doPing:clutter] max=${cMax.toExponential(3)} nonZero=${cNZ}/${profFinal.length}`);
+    const cStats = profileStats(profFinal);
+    console.debug(`[doPing:clutter] max=${cStats.max.toExponential(3)} nonZero=${cStats.nonZero}/${profFinal.length}`);
   }
 
   // Apply quality algorithms
@@ -682,9 +693,8 @@ export async function doPingDetailed(
   }
   profFinal = applyQualityAlgorithms(profFinal, algoName);
   {
-    let qMax = 0, qNZ = 0;
-    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] > qMax) qMax = profFinal[i]; if (profFinal[i] > 1e-15) qNZ++; }
-    console.debug(`[doPing:quality] algo=${algoName} max=${qMax.toExponential(3)} nonZero=${qNZ}/${profFinal.length}`);
+    const qStats = profileStats(profFinal);
+    console.debug(`[doPing:quality] algo=${algoName} max=${qStats.max.toExponential(3)} nonZero=${qStats.nonZero}/${profFinal.length}`);
   }
 
   const bestPost = estimateBestFromProfile(profFinal, minR, maxR);
@@ -770,25 +780,25 @@ export async function doPingDetailed(
   const priorScore = mapPeak
     ? Math.max(0, 1 - mapPeak.zScore / 2.0)
     : 0.3; // no prior = neutral
-  const edgePenalty = isEdgePeak ? 0.4 : 0;
+  const edgePenalty = isEdgePeak ? EDGE_PENALTY : 0;
 
   // Weighted detection score: needs >= 0.55 to pass.
   // Core factors alone (conf+strength+cfar) max out at 0.80,
   // so the threshold must be below that to allow first-ping detection
   // before any tracking history exists.
   const detectionScore =
-    0.30 * confScore +
-    0.25 * strengthScore +
-    0.25 * cfarScore +
-    0.10 * trackScore +
-    0.10 * priorScore -
+    DETECTION_WEIGHTS.confidence * confScore +
+    DETECTION_WEIGHTS.strength * strengthScore +
+    DETECTION_WEIGHTS.cfar * cfarScore +
+    DETECTION_WEIGHTS.track * trackScore +
+    DETECTION_WEIGHTS.prior * priorScore -
     edgePenalty;
 
-  const isWeak = !(bestBin >= 0) || !txEvidence.pass || detectionScore < 0.55;
+  const isWeak = !(bestBin >= 0) || !txEvidence.pass || detectionScore < DETECTION_THRESHOLD;
   const trackingCandidate = Number.isFinite(bestR)
     && bestBin >= 0
     && txEvidence.pass
-    && detectionScore >= 0.50;
+    && detectionScore >= TRACKING_CANDIDATE_THRESHOLD;
 
   const topPeaksText = topPeaks
     .map((p, idx) => `#${idx + 1}@b${p.bin}/r${p.range.toFixed(2)}m/v${p.value.toExponential(2)}`)
@@ -872,13 +882,12 @@ export async function doPingDetailed(
   }
 
   // Debug: log profile stats before emitting
-  let profMin = Infinity, profMax = -Infinity, profNonZero = 0;
-  for (let i = 0; i < profFinal.length; i++) {
-    if (profFinal[i] < profMin) profMin = profFinal[i];
-    if (profFinal[i] > profMax) profMax = profFinal[i];
-    if (profFinal[i] > 1e-15) profNonZero++;
+  {
+    let profMin = Infinity;
+    for (let i = 0; i < profFinal.length; i++) { if (profFinal[i] < profMin) profMin = profFinal[i]; }
+    const finalStats = profileStats(profFinal);
+    console.debug(`[doPing] angle=${angleDeg} profLen=${profFinal.length} profMin=${profMin.toExponential(3)} profMax=${finalStats.max.toExponential(3)} nonZero=${finalStats.nonZero}/${profFinal.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)} bestR=${bestR.toFixed(3)} isWeak=${isWeak} tau0=${tau0Final.toFixed(6)}`);
   }
-  console.debug(`[doPing] angle=${angleDeg} profLen=${profFinal.length} profMin=${profMin.toExponential(3)} profMax=${profMax.toExponential(3)} nonZero=${profNonZero}/${profFinal.length} bestBin=${bestBin} bestVal=${bestVal.toExponential(3)} bestR=${bestR.toFixed(3)} isWeak=${isWeak} tau0=${tau0Final.toFixed(6)}`);
 
   const rangeProfile: RangeProfile = {
     bins: profFinal,

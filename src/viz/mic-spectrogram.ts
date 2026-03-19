@@ -5,7 +5,6 @@ import { fft } from '../dsp/fft.js';
 import { getColormapLUT } from './colors.js';
 
 let initialized = false;
-let renderLoopStarted = false;
 let lastRenderMs = 0;
 let isEnabled = true;
 let fftSize = 512;
@@ -29,6 +28,8 @@ let spectralFloor = new Float32Array(0);
 let spectralFloorVar = new Float32Array(0);
 let lastFilteringActive = false;
 let modeLabel: 'off' | 'raw' | 'filtered' = 'raw';
+
+let rafId = 0;
 
 const infernoLut = getColormapLUT('inferno');
 
@@ -230,16 +231,27 @@ function onSamples(samples: Float32Array): void {
   }
 }
 
-function renderLoop(ts: number): void {
-  requestAnimationFrame(renderLoop);
-  if (!isEnabled || !framePending) return;
+function startRenderLoop(): void {
+  if (rafId) return;
+  function renderLoop(ts: number): void {
+    rafId = requestAnimationFrame(renderLoop);
+    if (!isEnabled || !framePending) return;
 
-  const minInterval = 1000 / Math.max(1, targetFps);
-  if (ts - lastRenderMs < minInterval) return;
+    const minInterval = 1000 / Math.max(1, targetFps);
+    if (ts - lastRenderMs < minInterval) return;
 
-  lastRenderMs = ts;
-  framePending = false;
-  drawLatestColumn();
+    lastRenderMs = ts;
+    framePending = false;
+    drawLatestColumn();
+  }
+  rafId = requestAnimationFrame(renderLoop);
+}
+
+function stopRenderLoop(): void {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
 }
 
 export function initMicSpectrogram(): void {
@@ -249,8 +261,18 @@ export function initMicSpectrogram(): void {
   readConfig(true);
   bus.on('audio:samples', onSamples);
 
-  if (!renderLoopStarted) {
-    renderLoopStarted = true;
-    requestAnimationFrame(renderLoop);
+  const detailsEl = document.getElementById('micSpectrogramDetails') as HTMLDetailsElement | null;
+  if (detailsEl && typeof detailsEl.addEventListener === 'function') {
+    detailsEl.addEventListener('toggle', () => {
+      if (detailsEl.open) startRenderLoop();
+      else stopRenderLoop();
+    });
+    // Start the loop only if the details element is already open
+    if (detailsEl.open) {
+      startRenderLoop();
+    }
+  } else {
+    // No details element found or not a real HTMLDetailsElement — always run
+    startRenderLoop();
   }
 }

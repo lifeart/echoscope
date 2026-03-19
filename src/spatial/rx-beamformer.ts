@@ -35,7 +35,9 @@ export function delayAndSum(
   for (let ch = 0; ch < nChannels; ch++) {
     const mic = mics[ch] ?? mics[0];
     const dx = mic.x - centerX;
-    // Delay in samples for plane wave at angle theta
+    // Compensation delay: positive for mic that receives signal first (needs
+    // more delay to align). This is the negation of the DOA expected-TDOA
+    // formula in doa.ts because we are *undoing* the propagation delay.
     const delaySec = (dx * Math.sin(theta)) / c + (channelDelaySec?.[ch] ?? 0);
     delays.push(delaySec * sampleRate);
   }

@@ -95,7 +95,7 @@ describe('averageProfiles', () => {
   it('returns single profile unchanged', () => {
     const p = new Float32Array([0.1, 0.5, 0.9, 0.3]);
     const { averaged, bestBin, bestVal } = averageProfiles([p]);
-    expect(averaged).toBe(p); // same reference, no copy
+    expect(averaged).toEqual(p); // returns a defensive copy
     expect(bestBin).toBe(2);
     expect(bestVal).toBeCloseTo(0.9);
   });

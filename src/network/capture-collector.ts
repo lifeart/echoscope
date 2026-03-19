@@ -75,6 +75,14 @@ export function setupCaptureResponseHandler(): void {
   });
 }
 
+export function clearPendingCaptures(): void {
+  for (const [, entry] of pending) {
+    clearTimeout(entry.timer);
+    entry.resolve(entry.responses);
+  }
+  pending.clear();
+}
+
 function onCaptureResponse(response: CaptureResponse): void {
   const entry = pending.get(response.pingId);
   if (!entry) return;

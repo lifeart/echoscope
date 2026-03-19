@@ -177,6 +177,14 @@ export class Store {
 
   update(fn: (state: AppState) => void): void {
     fn(this.state);
+    // Notify all path-specific subscribers (update mutates state arbitrarily,
+    // so we cannot know which paths changed — notify all of them).
+    for (const [path, listeners] of this.subscribers) {
+      const value = getByPath(this.state, path);
+      for (const fn of listeners) {
+        try { fn(value); } catch (e) { console.error(`Store listener error for '${path}':`, e); }
+      }
+    }
     this.notifyGlobal();
   }
 
