@@ -400,6 +400,7 @@ export function initApp(): void {
   // ---- Pointer crosshair wiring (supports touch) ----
   const profileCanvas = el('profile') as HTMLCanvasElement | null;
   if (profileCanvas) {
+    profileCanvas.style.touchAction = 'none';
     profileCanvas.addEventListener('pointermove', (ev) => {
       setProfileMouse(canvasPointerPos(profileCanvas, ev));
       const state = store.get();
@@ -416,6 +417,7 @@ export function initApp(): void {
 
   const heatmapCanvas = el('heatmap') as HTMLCanvasElement | null;
   if (heatmapCanvas) {
+    heatmapCanvas.style.touchAction = 'none';
     heatmapCanvas.addEventListener('pointermove', (ev) => {
       setHeatmapMouse(canvasPointerPos(heatmapCanvas, ev));
       redrawHeatmapCrosshair();

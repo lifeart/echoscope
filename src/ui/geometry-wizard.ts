@@ -119,7 +119,8 @@ export function setupGeometryPointerHandlers(): void {
     const handles = state.geomWizard.handles;
     const config = state.config;
     const frame = getGeometryFrame(handles, config.minRange, config.maxRange, canvas);
-    const pickR = 14 * s;
+    const isTouch = ev.pointerType === 'touch';
+    const pickR = (isTouch ? 28 : 14) * s;
 
     let bestName: string | null = null;
     let bestDist2 = Infinity;
