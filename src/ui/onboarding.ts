@@ -4,13 +4,36 @@ function el(id: string): HTMLElement | null {
   return document.getElementById(id);
 }
 
-function setupOverlayBehavior(overlay: HTMLElement, dismiss: () => void): void {
+let overlayInitialized = false;
+
+/** Wire up overlay dismiss behavior exactly once. */
+function ensureOverlayWired(overlay: HTMLElement): void {
+  if (overlayInitialized) return;
+  overlayInitialized = true;
+
+  const dismiss = () => {
+    overlay.classList.add('hidden');
+    localStorage.setItem(STORAGE_KEY, '1');
+    if (savedFocus && typeof savedFocus.focus === 'function') {
+      savedFocus.focus();
+    }
+  };
+
+  // "Get Started" button
+  el('onboardingDismiss')?.addEventListener('click', dismiss);
+
+  // "Don't show again" link
+  el('onboardingNeverShow')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    dismiss();
+  });
+
   // Click outside the dialog box to dismiss
   overlay.addEventListener('click', (ev) => {
     if (ev.target === overlay) dismiss();
   });
 
-  // Escape key dismisses the dialog
+  // Escape key + focus trap
   overlay.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') {
       ev.stopPropagation();
@@ -18,7 +41,6 @@ function setupOverlayBehavior(overlay: HTMLElement, dismiss: () => void): void {
       return;
     }
 
-    // Focus trap: cycle Tab between interactive elements
     if (ev.key === 'Tab') {
       const focusable = overlay.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -41,57 +63,28 @@ function setupOverlayBehavior(overlay: HTMLElement, dismiss: () => void): void {
   });
 }
 
-/** Show the onboarding overlay and wire dismiss behavior. */
+let savedFocus: HTMLElement | null = null;
+
+/** Show the onboarding overlay. */
 function showOverlay(): void {
   const overlay = el('onboardingOverlay');
   if (!overlay) return;
 
-  // Remember previously focused element to restore on dismiss
-  const previouslyFocused = document.activeElement as HTMLElement | null;
-
+  savedFocus = document.activeElement as HTMLElement | null;
+  ensureOverlayWired(overlay);
   overlay.classList.remove('hidden');
 
-  const dismiss = () => {
-    overlay.classList.add('hidden');
-    localStorage.setItem(STORAGE_KEY, '1');
-    // Return focus to previously focused element
-    if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
-      previouslyFocused.focus();
-    }
-  };
-
-  // "Get Started" button
   const dismissBtn = el('onboardingDismiss');
-  dismissBtn?.addEventListener('click', dismiss);
-
-  // "Don't show again" link — same effect
-  const neverShowLink = el('onboardingNeverShow');
-  neverShowLink?.addEventListener('click', (ev) => {
-    ev.preventDefault();
-    dismiss();
-  });
-
-  setupOverlayBehavior(overlay, dismiss);
-
-  // Move focus to the "Get Started" button when dialog opens
   if (dismissBtn) {
-    requestAnimationFrame(() => {
-      (dismissBtn as HTMLElement).focus();
-    });
+    requestAnimationFrame(() => dismissBtn.focus());
   }
 }
 
 /** Show onboarding overlay on first visit. No-op if already dismissed. */
 export function initOnboarding(): void {
   // Wire up the Help (?) button so it always re-shows the overlay
-  const helpBtn = el('btnHelp');
-  if (helpBtn) {
-    helpBtn.addEventListener('click', () => {
-      showOverlay();
-    });
-  }
+  el('btnHelp')?.addEventListener('click', () => showOverlay());
 
   if (localStorage.getItem(STORAGE_KEY)) return;
-
   showOverlay();
 }

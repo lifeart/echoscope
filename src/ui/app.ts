@@ -114,11 +114,11 @@ export function initApp(): void {
   el('btnInit')?.addEventListener('click', async () => {
     const btn = el('btnInit') as HTMLButtonElement | null;
     try {
-      if (btn) { btn.disabled = true; btn.textContent = 'Initializing...'; }
+      if (btn) { btn.disabled = true; btn.innerHTML = 'Initializing\u2026'; }
       setStatus('initializing');
       readConfigFromDOM();
       await initAudio();
-      if (btn) { btn.textContent = 'Init Audio [I]'; }
+      if (btn) { btn.innerHTML = 'Init Audio <kbd>I</kbd>'; }
       setButtonStates(true, false);
       renderCalibInfo();
       await refreshDeviceInfo();
@@ -144,7 +144,7 @@ export function initApp(): void {
       initMicSpectrogram();
       drawSignalPreview();
     } catch (e: any) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Init Audio [I]'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = 'Init Audio <kbd>I</kbd>'; }
       setStatus('error');
       const msg = e?.message || String(e);
       if (/permission|denied|not allowed/i.test(msg)) {
@@ -474,6 +474,8 @@ export function initApp(): void {
   document.addEventListener('keydown', (ev) => {
     const tag = (ev.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    // Space on a focused button should activate that button, not trigger Ping
+    if (tag === 'BUTTON' && ev.key === ' ') return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return;
 
     switch (ev.key) {

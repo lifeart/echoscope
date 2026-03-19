@@ -273,6 +273,9 @@
             <label for="golayGapMs">Gap A&#x2192;B (ms)</label>
             <input id="golayGapMs" type="number" step="1" value="12" title="Gap between Golay A and B transmissions in milliseconds.">
           </div>
+          <div>
+            <span class="small">Min gap: <span id="computedMinGolayGap">&#x2014;</span> ms</span>
+          </div>
         </div>
         <canvas id="previewGolay" width="400" height="80" role="img" aria-label="Signal preview for Golay" style="margin-top:6px"></canvas>
       </div>
@@ -361,7 +364,7 @@
           <input id="micArraySpacing" type="number" step="0.001" min="0" value="0" title="Distance between microphones in meters for RX beamforming; set 0 to disable array processing.">
         </div>
         <div>
-          <label for="temperature" title="Air temperature. Computes speed of sound: c = 331.3 + 0.606 x T.">Temperature (C)</label>
+          <label for="temperature" title="Air temperature. Computes speed of sound: c = 331.3 * sqrt(1 + T/273.15).">Temperature (&#xb0;C)</label>
           <input id="temperature" type="number" step="1" min="18" max="42" value="25" title="Ambient temperature in C used to compute speed of sound.">
           <span class="small">c = <span id="computedC">346.5</span> m/s</span>
         </div>

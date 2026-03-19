@@ -92,7 +92,8 @@ export function applyDevicePreset(key: string, silent = false): void {
 
   // Apply laptop mode scan settings if checkbox is checked
   const shouldApplyScanPreset = store.get().config.presetApplyScan;
-  if (shouldApplyScanPreset && key.startsWith('mb')) {
+  const laptopKeys = ['mb', 'imac', 'generic_laptop', 'surface', 'chromebook'];
+  if (shouldApplyScanPreset && laptopKeys.some(prefix => key.startsWith(prefix))) {
     applyLaptopScanPreset();
   }
 }
